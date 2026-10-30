@@ -228,7 +228,7 @@ body.tabsopen #townTabs{display:flex}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mvvbib34";</script>
+<script>window.NII_BUILD = "mvvbnrtz";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -319,7 +319,8 @@ function paintTab() { const ov = $('townSnap'); if (!ov || !MT.sel) return; cons
   const s = live ? MT.opts.liveSnap() : snapOf(MT.sel), n = ov.querySelector('.tsNote');
   MT.live = drawSnap(ov.querySelector('canvas'), s, 56, 74, MT.vw);
   if (!n.classList.contains('flash')) n.textContent = own ? `${TOWNS[MT.sel].name} map: tap a track to send the engine, tap a switch to throw it` : !s ? `${TOWNS[MT.sel].name}: no map yet` : `${TOWNS[MT.sel].name} (view only)` + (s.cars ? (s.t ? ' · as of your last visit' : '') : ' · cars show after your first visit'); }
-function showTabs(cur, opts) { tabsEl(); MT.cur = cur; MT.sel = cur; MT.opts = opts || {}; MT.vw = { k: 1, dx: 0, dy: 0 }; document.body.classList.add('tabsopen'); paintTab(); }
+function showTabs(cur, opts) { tabsEl(); MT.cur = cur; MT.sel = cur; MT.opts = opts || {}; MT.vw = { k: 1, dx: 0, dy: 0 }; document.body.classList.add('tabsopen'); paintTab(); placeTabs(); }
+function placeTabs() { const el = tabsEl(), m = $('map'), r = m && m.getBoundingClientRect(); if (r && r.height > 120) { el.style.top = Math.round(r.top + 64) + 'px'; el.style.bottom = 'auto'; } else { el.style.top = ''; el.style.bottom = ''; } } // sit at the top of the map, clear of the cab panel
 function hideTabs() { MT.sel = null; MT.live = null; document.body.classList.remove('tabsopen'); const ov = $('townSnap'); if (ov) ov.classList.remove('show'); }
 function selectTab(id) { if (!TOWNS[id]) return; if (MT.sel !== id) MT.vw = { k: 1, dx: 0, dy: 0 }; MT.sel = id; paintTab(); if (MT.opts && MT.opts.onSelect) MT.opts.onSelect(id); }
 const mapTabs = { show: showTabs, hide: hideTabs, select: selectTab, repaint: paintTab, get sel() { return MT.sel; }, put: putSnap, snap: snapOf, draw: drawSnap };
