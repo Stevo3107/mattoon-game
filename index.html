@@ -1648,8 +1648,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
       if (R4() < 0.75) { const t = HTREES[Math.floor(R4() * HTREES.length)], tx = left ? x0 + lw - 8 : x0 + 8, ty = y0 + 8 + R4() * 40; SCENERY.push({ key: ty, x0: tx - t[1], x1: tx + t[1], y: ty, draw: g => art2(g, t[0], tx - t[1], ty) || tree(g, tx, ty, 30, 0) }); }
       hx = x0 + lw;
     } }
-  // railroad pole line along the main, outside the yard
-  { const skip = x => x > -40 && x < P.iM[0] + 60; for (let px = -700; px < P.nE[0] + 200; px += 120) { if (skip(px)) continue; const p0 = px; SCENERY.push({ key: 22, x0: p0 - 6, x1: p0 + 126, y: 22, draw: g => pole(g, p0, 22, skip(p0 + 120) ? p0 : p0 + 120) }); } } // none over the yard or the IC tracks
+  // (railroad pole line along the main removed at Stephen's request, Oct 30; backup checks/scene.js.prewires)
   // the old passenger depot north of the yard
   SCENERY.push({ key: 34, x0: -300, x1: -215, y: 34, draw: g => depot(g, -300, -215, 34) });
   groundDecals.push([-305, -210, 26, 34, '#b9b2a4']);
