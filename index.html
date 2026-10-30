@@ -1034,7 +1034,7 @@ const unloadsInYard = v => roadOf(v) === 'IC' && v.loaded; // an IC car ordered 
 function taskText(t, v) { const nm = `<b>${roadOf(v)} ${v.num}</b>`, st = v.loaded ? 'loaded' : 'empty', hot = v.hot && v.loaded ? ' 🔥 hot' : '';
   return t.type === 'spot' ? `Spot ${st} ${nm}${hot} at <b>${SPOTS[t.spot].name}</b>.` : t.type === 'house' ? `Spot ${st} ${nm}${hot} at the <b>freight house</b> door.`
     : t.type === 'yard' ? (carWhere(v).icIn ? `Pull ${st} ${nm} off IC Inbound and leave it on <b>Yard ${t.yard}</b>.` : `Move ${st} ${nm} to <b>Yard ${t.yard}</b>.`) : `Take ${st} ${nm} to <b>IC Outbound</b> (tag IC-INT).`; }
-function taskRep(t, v) { return t.type === 'icout' ? 0 : t.type === 'yard' && !unloadsInYard(v) ? 0 : REP.SPOT + (v.hot && v.loaded ? REP.HOT : 0); }
+function taskRep(t, v) { return t.type === 'icout' || roadOf(v) === 'NII' ? 0 : t.type === 'yard' && !unloadsInYard(v) ? 0 : REP.SPOT + (v.hot && v.loaded ? REP.HOT : 0); }
 function taskRepLabel(t) { return t.type === 'icout' ? `+${REP.CUT} per cut at IC pickup` : t.rep ? `+${t.rep} today${t.rep > REP.SPOT ? ' (hot)' : ''}` : 'no rep'; }
 function syncTasks() {
   if (!state.tasks) state.tasks = []; const today = dayNo(), live = new Set();
