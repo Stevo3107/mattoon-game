@@ -782,7 +782,7 @@ const SPEED = { main: 25, other: 10 };
 const isMainSeg = si => /^M/.test(SEG[si].name);
 const trackLimit = c => { const l = locoOf(c); return (isMainSeg(l.f.s) ? SPEED.main : SPEED.other) * FTS; };
 // ---- 1970s rule: a train needs a caboose outside yard limits. Signs at x YL.n (north) and YL.s (south, same spots as scene.js)
-const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: false, warnFt: 100 };
+const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: true, warnFt: 100 };
 const YL = { n: -476, s: P.iM[0] + 326 };
 // the rule is about the REAR of the move (the end away from the direction of travel): it must be the caboose once that end
 // is past a board. The leading end may go past freely (shoves, run-arounds, long cuts). A light engine has no caboose.
