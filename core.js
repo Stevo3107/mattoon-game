@@ -1120,7 +1120,7 @@ function departTo(to) { const c = locoCons(); if (!c) return; hideModal();
   state.ap = null; state.ctl.notch = 0; state.ctl.brake = 1; live = { slip: false, slide: false, eq: 0 }; reindex();
   const run = NII.runInfo('mattoon', to); state.awayTrain = { town: to, veh: train, left: state.time };
   state.time += run.sec;
-  try { NII.saveTown('mattoon', state); } catch (e) { } paused = true;
+  putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } paused = true;
   NII.travel('mattoon', to, train);
 }
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
@@ -1132,7 +1132,16 @@ function trainHome() { // back from another town: the train comes in on the sout
   delete state.awayTrain; accrueHire(away); if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
 }
 // ---------------------------------------------------------------- save / load
-function save() { if (state && state.awayTrain) return; try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
+// big map town tabs (Oct 30): a light copy of this map (track, lined switch legs, cars) goes in the save for the other towns' Map tabs
+let SNAP_T = null; const r1 = v => Math.round(v * 10) / 10, flat = pts => pts.flatMap(p => [r1(p[0]), r1(p[1])]);
+function mapSnap() { if (!SNAP_T) SNAP_T = SEG.map(s => flat(s.X.map((x, i) => [x, s.Y[i]]).filter((p, i, a) => i % 3 === 0 || i === a.length - 1)));
+  const lined = []; for (const k of SWITCHES) { const l = NODES[k][state.sw[k]]; if (!l) continue; const g = SEG[l.seg], len = Math.min(30, g.len * 0.45); lined.push(flat(l.end === 'a' ? subPath(l.seg, 0, len, 3) : subPath(l.seg, g.len, g.len - len, 3))); }
+  const cars = Object.values(state.veh).map(v => ({ p: flat(vehPath(v)), c: (TYPES[v.type] || {}).color || '#555' }));
+  const R = MAP_YARD, ys = SNAP_T.flatMap(p => p.filter((v, i) => i % 2 && p[i - 1] >= R[0] && p[i - 1] <= R[1])), box = [R[0], Math.min(...ys) - 30, R[1], Math.max(...ys) + 30];
+  return { t: Date.now(), fy: 1, box, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bT', 'bCIC', 'bIFS', 'bG'].map(k => [r1(P[k][0]), r1(P[k][1])]),
+    blds: [[FH.x0, Y_H + 10, FH.x1, Y_H + 40]], labels: [['Freight house', (FH.x0 + FH.x1) / 2, Y_H + 25, 1], ['House track', P.H[0] + 70, Y_H + 9, 1, 'left'], ['Engine track', P.bEng[0] + 10, Y_E, 1, 'left'], ['IC Connection', ICC_X + 230, -90, 1, 'left'], ['◀ N to Champaign', MAP_YARD[0] + 10, box[1] + 12, 0, 'left'], ['to Neoga S ▶', MAP_YARD[1] - 10, box[1] + 12, 0, 'right']] }; }
+function putSnap() { try { NII.mapTabs.put('mattoon', mapSnap()); } catch (e) { } }
+function save() { if (state && state.awayTrain) return; putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
 function migrateTasks() { // saves from before the checklist: give NII 4412 the standing order its old fixed job had
   if (state.tasks) return; const v = state.veh.bx1, j = state.job || {};
   if (v && !v.dest && !v.idle && j.car === 'bx1' && !j.done && j.n < 4) { if (j.type === 'house') { v.dest = 'HOUSE'; if (!v.loaded) v.out = { ...FH_FREIGHT.outbound }; } else if (j.type === 'yard') v.dest = 'YARD ' + (j.yard || 1); else if (j.type === 'icout') v.dest = 'IC-INT'; }
@@ -1275,7 +1284,7 @@ document.querySelectorAll('#mapBtns [data-z]').forEach(b => b.onclick = () => {
   const z = b.dataset.z; if (z === 'in') zoomAt(1.4, MW / 2, MH / 2); else if (z === 'out') zoomAt(1 / 1.4, MW / 2, MH / 2); else if (z === 'fit') fit();
   else { userCam = true; const l = locoOf(locoCons()), [x, y] = xy(l.f.s, l.f.d); cam.x = x; cam.y = y; if (cam.z < 1) cam.z = 1.2; }
 });
-function setMap(o) { mapOpen = !!o; document.body.classList.toggle('mapopen', mapOpen); fitted = false; resize(); drawMap(); }
+function setMap(o) { mapOpen = !!o; document.body.classList.toggle('mapopen', mapOpen); try { if (mapOpen) { putSnap(); NII.mapTabs.show('mattoon', { close: () => { if (mapOpen) setMap(false); } }); } else NII.mapTabs.hide(); } catch (e) { } fitted = false; resize(); drawMap(); }
 $('mapBtn').onclick = () => setMap(!mapOpen); $('mapClose').onclick = () => setMap(false);
 $('followBtn').onclick = () => { view.follow = true; view.z = 1; };
 
