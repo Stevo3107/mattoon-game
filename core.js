@@ -2170,7 +2170,8 @@ function drawStand(g, k) {
   }
   // Danny's stand art (@2x, 10.1 px/ft, 3.2 ft wide, spindle at the picture centre): lined N -> green target edge-on, R -> red target face-on.
   // High stands where the switch is on the main, low Bethlehem stands elsewhere (when Danny's high/low files exist). Mirrored where the turnout opens to screen left.
-  const hi = standHigh(k), want = 'switch-stand-' + (hi ? 'high' : 'low') + (lined === 'N' ? STAND_N : '-reverse') + '@2x';
+  const hi = standHigh(k); let want = 'switch-stand-' + (hi ? 'high' : 'low') + (lined === 'N' ? STAND_N : '-reverse') + '@2x';
+  if (NODES[k].locked && artOK('switch-stand-high-locked@2x')) want = 'switch-stand-high-locked@2x'; // Danny's padlocked IC stand (always lined normal)
   const ssKey = artOK(want) ? want : lined === 'N' ? (artOK('ss-green-edge') ? 'ss-green-edge' : 'ss-green') : 'ss-amber', flip = legDir(NODES[k].N, 20)[0] < 0;
   const ssOK = artAt(g, ssKey, x - (ssKey === want ? 4.16 : 1.6), y, 10.1, flip); // Danny's v3 lever art: 84 px @2x wide, spindle at the centre (4.16 ft)
   if (!ssOK) { const t = up(A, 3); g.strokeStyle = '#2d2d2d'; g.lineWidth = Math.max(1.2, 0.25 * kk); g.beginPath(); g.moveTo(A[0], A[1]); g.lineTo(t[0], t[1]); g.stroke();
