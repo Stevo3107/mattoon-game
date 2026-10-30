@@ -107,7 +107,7 @@ const SEG = SEGDEF.map(([name, a, b, via], i) => {
 const SI = {}; SEG.forEach(s => { SI[s.name] = s.i; });
 const L = (name, end) => ({ seg: SI[name], end });
 const NODES = {
-  nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Effingham' }, eIC: { type: 'edge', label: 'onto the IC main' },
+  nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Neoga' }, eIC: { type: 'edge', label: 'onto the IC main' },
   bEng: { type: 'bumper' }, bHse: { type: 'bumper' }, bCIC: { type: 'bumper', art: true }, bIFS: { type: 'bumper', art: true }, bG: { type: 'bumper' },
   jW: { type: 'joint', links: [L('MNC', 'b'), L('MW', 'a')] }, bT: { type: 'bumper' },
   iK: { type: 'joint', links: [L('ICK', 'b'), L('ICO', 'a')] },
@@ -1378,8 +1378,8 @@ function drawMap() {
   text('IC Outbound', P.bOut[0] + 4 / z + 160, P.bOut[1] - 7 / z, fs, '#222', 'left', true); text('IC Tail', P.bT[0] + 4 / z, P.bT[1] - 7 / z, fs, '#222', 'left', true); text('IC Connection', ICC_X + 230, -90, fs, '#222', 'left', true); }
   text('CIC box plant', CIC_X, 20 + 12 / z, fs, '#222', 'left', true); text('Illini Farm Supply', IFS_X, 20 + 12 / z, fs, '#222', 'left', true); text('run-around', IFS_X + 60, -14 - 12 / z, fs * 0.85, '#555', 'left');
   text('Prairie Grain', PG_X - 300, 34 + 12 / z, fs, '#222', 'left', true); { const [a, b] = w2s(PG_X + 15.5, 34); g.beginPath(); g.arc(a, b, 5, 0, 7); g.fillStyle = '#8a5a2b'; g.fill(); } // spout
-  if (namesOn) text('MAIN LINE', 330, -16 / z, fs, '#666'); text('◀ N to Champaign', NW_X + 10, 14 / z, fs, '#666', 'left'); text('to Effingham S ▶', P.nE[0] - 10, 14 / z, fs, '#666', 'right');
-  text('◀ N to Champaign', -42, -16 / z, fs * 0.85, '#888', 'left'); text('to Effingham S ▶', P.E0[0] + 210, -16 / z, fs * 0.85, '#888', 'right');
+  if (namesOn) text('MAIN LINE', 330, -16 / z, fs, '#666'); text('◀ N to Champaign', NW_X + 10, 14 / z, fs, '#666', 'left'); text('to Neoga S ▶', P.nE[0] - 10, 14 / z, fs, '#666', 'right');
+  text('◀ N to Champaign', -42, -16 / z, fs * 0.85, '#888', 'left'); text('to Neoga S ▶', P.E0[0] + 210, -16 / z, fs * 0.85, '#888', 'right');
   // vehicles
   const job = state.job;
   for (const v of Object.values(state.veh)) {
@@ -2208,7 +2208,7 @@ function drawLabels(g) {
   // ends of the test map
   const e1 = pr(NW_X + 30, -18), e2 = pr(P.nE[0] - 10, -18);
   if (e1[0] > -40 && e1[0] < VW) lab('◀ N to Champaign', e1[0], e1[1], 13, '#1c2b50');
-  if (e2[0] > -200 && e2[0] < VW + 40) { g.save(); lab('to Effingham S ▶', e2[0] - 120, e2[1], 13, '#1c2b50'); g.restore(); }
+  if (e2[0] > -200 && e2[0] < VW + 40) { g.save(); lab('to Neoga S ▶', e2[0] - 120, e2[1], 13, '#1c2b50'); g.restore(); }
 }
 // customer spot marks: a see-through red, car-length box on the track at every spot (always shown)
 let SPOT_MARKS = null;
