@@ -1034,7 +1034,7 @@ const unloadsInYard = v => roadOf(v) === 'IC' && v.loaded; // an IC car ordered 
 function taskText(t, v) { const nm = `<b>${roadOf(v)} ${v.num}</b>`, st = v.loaded ? 'loaded' : 'empty', hot = v.hot && v.loaded ? ' 🔥 hot' : '';
   return t.type === 'spot' ? `Spot ${st} ${nm}${hot} at <b>${SPOTS[t.spot].name}</b>.` : t.type === 'house' ? `Spot ${st} ${nm}${hot} at the <b>freight house</b> door.`
     : t.type === 'yard' ? (carWhere(v).icIn ? `Pull ${st} ${nm} off IC Inbound and leave it on <b>Yard ${t.yard}</b>.` : `Move ${st} ${nm} to <b>Yard ${t.yard}</b>.`) : `Take ${st} ${nm} to <b>IC Outbound</b> (tag IC-INT).`; }
-function taskRep(t, v) { return t.type === 'icout' || roadOf(v) === 'NII' ? 0 : t.type === 'yard' && !unloadsInYard(v) ? 0 : REP.SPOT + (v.hot && v.loaded ? REP.HOT : 0); }
+function taskRep(t, v) { return t.type === 'icout' ? 0 : t.type === 'yard' && (roadOf(v) === 'NII' || !unloadsInYard(v)) ? 0 : REP.SPOT + (v.hot && v.loaded ? REP.HOT : 0); }
 function taskRepLabel(t) { return t.type === 'icout' ? `+${REP.CUT} per cut at IC pickup` : t.rep ? `+${t.rep} today${t.rep > REP.SPOT ? ' (hot)' : ''}` : 'no rep'; }
 function syncTasks() {
   if (!state.tasks) state.tasks = []; const today = dayNo(), live = new Set();
@@ -1130,7 +1130,7 @@ function finishTask(t) { const v = V(t.car); t.done = true; t.doneDay = dayNo();
   if (t.type === 'spot' && t.spot !== 'GRAIN') startWork(v); else if (t.type === 'house') startWork(v);
   else if (t.type === 'yard' && unloadsInYard(v)) { v.loaded = false; v.load = null; v.wt = TYPES[v.type].tare; v.dest = 'IC-INT'; }
   else if (t.type === 'yard' && roadOf(v) === 'NII' && !v.loaded) { v.dest = null; v.idle = true; }
-  const rp = roadOf(v) === 'NII' ? 0 : (t.rep || 0); // no rep for placing a company-owned (NI&I) car (Stephen, Oct 30)
+  const rp = t.type === 'yard' && roadOf(v) === 'NII' ? 0 : (t.rep || 0); // no rep for putting a company-owned (NI&I) car back in the yard (Stephen, Oct 30)
   if (rp) state.rep += rp;
   toast(`Done: ${t.text.replace(/<[^>]+>/g, '')}${rp ? ` +${rp} rep` : ''}`, 'good'); sfx('cash'); }
 function checkJob() { // every open task whose car is in place, uncoupled from the engine, with the engine stopped, is done
