@@ -1130,8 +1130,9 @@ function finishTask(t) { const v = V(t.car); t.done = true; t.doneDay = dayNo();
   if (t.type === 'spot' && t.spot !== 'GRAIN') startWork(v); else if (t.type === 'house') startWork(v);
   else if (t.type === 'yard' && unloadsInYard(v)) { v.loaded = false; v.load = null; v.wt = TYPES[v.type].tare; v.dest = 'IC-INT'; }
   else if (t.type === 'yard' && roadOf(v) === 'NII' && !v.loaded) { v.dest = null; v.idle = true; }
-  if (t.rep) state.rep += t.rep;
-  toast(`Done: ${t.text.replace(/<[^>]+>/g, '')}${t.rep ? ` +${t.rep} rep` : ''}`, 'good'); sfx('cash'); }
+  const rp = roadOf(v) === 'NII' ? 0 : (t.rep || 0); // no rep for placing a company-owned (NI&I) car (Stephen, Oct 30)
+  if (rp) state.rep += rp;
+  toast(`Done: ${t.text.replace(/<[^>]+>/g, '')}${rp ? ` +${rp} rep` : ''}`, 'good'); sfx('cash'); }
 function checkJob() { // every open task whose car is in place, uncoupled from the engine, with the engine stopped, is done
   if (!state.tasks) syncTasks(); if (Math.abs(locoCons().v) >= 0.05) return; let any = false;
   for (const t of state.tasks) { if (t.done) continue; const v = state.veh[t.car]; if (!v || locoOf(C(v.cid)) || !taskThere(t)) continue; finishTask(t); any = true; }
