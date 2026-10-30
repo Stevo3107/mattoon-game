@@ -750,13 +750,15 @@ function stepConsist(c, dt) {
     const Fopp = Fb + Rroll;
     if (Math.abs(c.v) < 1e-4) { c.v = Math.abs(Ft) > Fopp ? Math.sign(Ft) * (Math.abs(Ft) - Fopp) / m * dt : 0; }
     else { const sg = Math.sign(c.v), nv = c.v + (Ft - sg * Fopp) / m * dt; c.v = (Math.sign(nv) !== sg && Math.abs(Ft) <= Fopp) ? 0 : nv; }
-    if (Math.abs(c.v) > 65 * FTS) c.v = Math.sign(c.v) * 65 * FTS;
+    { const lim = trackLimit(c); if (Math.abs(c.v) > lim) c.v = Math.sign(c.v) * lim; } // track speed (was a flat 65 mph cap)
     live.eq = n;
   }
   // consumables
   if (running) { l.fuel = Math.max(0, l.fuel - (1 + 2.5 * live.eq) / 60 * dt); if (l.fuel <= 0) { toast('Out of fuel! The engine shut down. Fill up at the fuel pad, or call the fuel truck.', 'bad'); sfx('crash'); save(); } }
   if (ctl.sand) { if (l.sand > 0) { const u = Math.min(l.sand, 0.8 * dt); book('sand', u * ECON.SAND_PER_PCT); l.sand = Math.max(0, l.sand - 0.8 * dt); ctl.sandT += dt; } if (l.sand <= 0 || ctl.sandT > 12) { ctl.sand = false; ctl.sandT = 0; if (l.sand <= 0) toast('Sand boxes are empty.', 'bad'); } }
+  const ylx0 = c.v ? pX(c.v > 0 ? front(c) : rear(c)) : 0;
   moveWithContacts(c, c.v * dt);
+  cabooseRule(c, ylx0);
 }
 function moveWithContacts(c, dx) {
   if (!dx) return;
@@ -774,6 +776,26 @@ function moveWithContacts(c, dx) {
   } else { moveConsist(c, dx); reindex(); }
 }
 // tap mode autopilot: lead end of the train goes to the tapped spot at yard speed
+// ---- track speed: 25 mph on the main, 10 mph everywhere else (yard, house, engine, IC, customer tracks). Was: no per-track limit
+// (65 mph hard cap in drive mode, a 10 mph warning, tap mode at 8 mph).
+const SPEED = { main: 25, other: 10 };
+const isMainSeg = si => /^M/.test(SEG[si].name);
+const trackLimit = c => { const l = locoOf(c); return (isMainSeg(l.f.s) ? SPEED.main : SPEED.other) * FTS; };
+// ---- 1970s rule: a train needs a caboose outside yard limits. Signs at x YL.n (north) and YL.s (south, same spots as scene.js)
+const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: false, warnFt: 300 };
+const YL = { n: -476, s: P.iM[0] + 326 };
+const hasCab = c => c.veh.some(id => TYPES[V(id).type].kind === 'car' && V(id).type === 'caboose');
+const cabExempt = c => !CABOOSE_RULE.on || hasCab(c) || (CABOOSE_RULE.lightEngineExempt && c.veh.every(id => TYPES[V(id).type].kind === 'loco'));
+const pX = p => xy(p.s, p.d)[0];
+// feet the moving end has before it passes a yard limit sign (Infinity if it isn't heading out, or the rule doesn't apply)
+function ylRoom(c, sign) { if (cabExempt(c)) return Infinity; const a = sign > 0 ? front(c) : rear(c), b = sign > 0 ? rear(c) : front(c), lx = pX(a), ox = pX(b);
+  if (lx < ox && lx >= YL.n) return lx - YL.n; if (lx > ox && lx <= YL.s) return YL.s - lx; return Infinity; }
+function cabooseRule(c, x0) { if (cabExempt(c) || !c.v) { live.ylw = false; return; }
+  const sg = Math.sign(c.v), a = sg > 0 ? front(c) : rear(c), x1 = pX(a);
+  if ((x0 >= YL.n && x1 < YL.n) || (x0 <= YL.s && x1 > YL.s)) { c.v = 0; state.ap = null; state.ctl.notch = 0; state.money -= CABOOSE_RULE.fine; state.rep -= CABOOSE_RULE.rep; state.dayBad = true;
+    toast(`Rule violation: no caboose outside yard limits. -$${CABOOSE_RULE.fine} -${CABOOSE_RULE.rep} rep.`, 'bad'); sfx('clank'); live.ylw = false; return; }
+  const room = ylRoom(c, sg); if (room < CABOOSE_RULE.warnFt) { if (!live.ylw) { live.ylw = true; toast('Yard limit ahead: you need the caboose on your train to go past it.', 'bad'); } } else if (room > CABOOSE_RULE.warnFt + 100) live.ylw = false;
+}
 const AP = { vmax: 8 * FTS, acc: 1.6, dec: 1.4, couple: 2.0 * FTS };
 function apStep(c, dt, running) {
   const ap = state.ap;
@@ -801,8 +823,9 @@ function apStep(c, dt, running) {
   let limit = rt.t, approach = false;
   const ob = scan(lead, rt.t + 80, c.id);
   if (ob) { if (ob.kind === 'veh') { if (ob.t <= limit + 0.5) { limit = ob.t; approach = true; } } else limit = Math.min(limit, Math.max(0, ob.t - 2)); }
-  if (!approach && limit <= 0.05) { apArrive(c); return; }
-  let vdes = Math.min(AP.vmax, Math.sqrt(2 * AP.dec * Math.max(0, limit - (approach ? 25 : 0))));
+  if (!approach && limit <= 0.05) { if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: couple the caboose to your train to go past it.', 'bad'); return; } apArrive(c); return; }
+  { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: couple the caboose to your train to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
+  let vdes = Math.min(trackLimit(c), Math.sqrt(2 * AP.dec * Math.max(0, limit - (approach ? 25 : 0))));
   if (approach && limit < 120) vdes = Math.max(Math.min(vdes, AP.couple), 1.2 * FTS);
   vdes = Math.max(vdes, 0.5 * FTS);
   let sp = Math.abs(c.v); ap.eq = 0;
@@ -810,7 +833,7 @@ function apStep(c, dt, running) {
   if (sp < vdes) { sp = Math.min(vdes, sp + AP.acc * dt); ap.eq = 4; } else { sp = Math.max(vdes, sp - 2.5 * dt); ap.eq = sp > 0.5 ? 1 : 0; }
   let dx = sp * dt; if (!approach && dx > limit) dx = limit;
   c.v = sign * sp;
-  if (!approach && dx >= limit - 1e-6) { moveWithContacts(c, sign * dx); if (state.ap) apArrive(c); else c.v = 0; return; }
+  if (!approach && dx >= limit - 1e-6) { moveWithContacts(c, sign * dx); if (ylRoom(c, sign) - 5 <= 0.5) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: couple the caboose to your train to go past it.', 'bad'); return; } if (state.ap) apArrive(c); else c.v = 0; return; }
   moveWithContacts(c, sign * dx);
 }
 // ---- tap-mode auto-routing. Plan the moves (forward, plus any reversing moves at a switch) from the engine and
@@ -1250,6 +1273,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 <li><b>Switches:</b> tap a switch stand beside the track to throw it; the small letter above it names the switch. Green = straight (normal), red = diverging (reversed) target. If it flashes red, cars or the engine are on the points. You can also tap the markers on the Map.</li>
 <li><b>Drive mode:</b> set the reverser to F or R, release the brake, and notch the throttle up. F runs short hood first.</li>
 <li><b>Tap mode:</b> tap the track (or a car) in the picture or on the Map and the engine goes there at yard speed. Tapping a car couples to it. The engine lines the switches itself (you'll see the stands flip) and makes any reversing move it needs, pulling the whole cut clear of the switch first. If a car is in the way it tells you which one. In Drive mode you throw every switch yourself.</li>
+<li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Any move past them, even a light engine, needs the caboose on the train (1970s rule): without it you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
 <li><b>Coupling:</b> ease into a car under 4 mph. Faster costs you money and reputation.</li>
 <li><b>Uncoupling:</b> stop, then tap the &#9986; between two cars in the picture.</li>
 <li><b>TAGS:</b> the TAGS button (top right of the picture) puts a destination tag over every car. The colour is the subdivision (Mattoon is red); the code says where the car goes: HOUSE = freight house door, YARD 1&ndash;6 = that yard track, IC-INT = going to the Illinois Central (leave it on IC Outbound; an IC car becomes IC-INT once it's finished at its HOUSE or YARD spot), HOLD = no orders yet, leave it in the yard. The second line is what's in the car and how many tons (e.g. Paper 43T), or EMPTY.</li>
@@ -1542,6 +1566,8 @@ function rectF(g, F, u0, v0, u1, v1, fill) { const a = F(u0, v1), b = F(u1, v0);
 
 // ---------------------------------------------------------------- static scenery (built once, world coords)
 const SCENERY = [], groundDecals = [];
+const HOUSE_X = P.E0[0], HOUSE_X1 = P.nE[0] + 250; // houses replace the stores from switch S south
+const SIDING = ['#e9e4d6', '#d8d0b8', '#c9d3d6', '#e3d9a8', '#b9c7b0', '#f1ede4', '#c6a98a'], ROOFS = ['#4a4744', '#5b4a3e', '#3d4a52', '#6a5d52'];
 const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved south of the IC interchange so the road misses its tracks)
 (function buildScenery() {
   const R = rng(1752);
@@ -1564,10 +1590,11 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
     const skip = (a, b) => (b > -360 && a < -300) || (b > RDX - 30 && a < RDX + 30);
     const put = (n, x0, w, y0) => { BACKS.push([x0, x0 + w]); SCENERY.push({ key: y0, x0, x1: x0 + w, y: y0, draw: g => artAt(g, 'town-back-' + n, x0 - 1, y0, 10.1) }); };
     let bx = -700, last = '';
-    while (bx < P.E0[0] + 400) { const r = R3(), x0 = bx; let pc;
+    while (bx < HOUSE_X1) { const r = R3(), x0 = bx; let pc;
       if (r < 0.75 && r >= 0.3) { do pc = BRICK[Math.floor(R3() * BRICK.length)]; while (pc[0] === last); }
       else if (r >= 0.75 && r < 0.87) pc = SMALL[Math.floor(R3() * 2)]; else if (r >= 0.87) pc = ['fence-bin', 30];
       if (!pc || skip(x0, x0 + pc[1])) { bx += 12 + R3() * 30; continue; }                // alley, lot, or road
+      if (x0 + pc[1] > HOUSE_X) { backYard(x0, pc[1], R3); BACKS.push([x0, x0 + pc[1]]); bx = x0 + pc[1] + (R3() < 0.4 ? 4 + R3() * 8 : 0); continue; } // houses' side: rear views, garages, fences
       const y0 = pc[1] >= 24 && pc[0] !== 'fence-bin' ? 170 + Math.floor(R3() * 6) : pc[0] === 'fence-bin' ? 184 + Math.floor(R3() * 6) : 178 + Math.floor(R3() * 8);
       put(pc[0], x0, pc[1], y0); last = pc[0];
       bx = x0 + pc[1] + (R3() < 0.4 ? 4 + R3() * 8 : 0);
@@ -1583,6 +1610,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
     while (x < P.nE[0] + 250) {
       const w = 26 + Math.floor(R2() * 44), h = 18 + Math.floor(R2() * 4) * 7, d = 40 + Math.floor(R2() * 30), y0 = 236 + Math.floor(R2() * 12), col = bricks[Math.floor(R2() * bricks.length)], sty = Math.floor(R2() * 3), x0 = x;
       if (R2() < 0.35) { x += w * 1.4; continue; } // town thins out
+      if (x0 + w > HOUSE_X) { x += w; continue; } // south of the yard: houses instead (see the neighbourhood below)
       SCENERY.push({ key: y0, x0, x1: x0 + w, y: y0, draw: g => townLot(g, x0, w, y0, d) || box(g, x0, x0 + w, y0, y0 + d, h, { front: col, side: shade(col, -18), top: '#5d5a55' }, (F, k, W) => townDeco(g, F, k, W, h, sty, col)) });
       x += w + (R2() < 0.4 ? 6 + R2() * 16 : 0);
     }
@@ -1590,6 +1618,20 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
     for (let i = 0; i < 18; i++) treeAt(1500 + R2() * (P.nE[0] - 1100), 326 + R2() * 500, 30 + R2() * 25);
     for (let i = 0; i < 14; i++) { const tx = 1360 + R2() * (P.nE[0] - 1200), ty = 45 + R2() * 140, th = 24 + R2() * 22; if (tx < P.E0[0] + 80 && ty < 140) continue; if (tx > P.bT[0] - 40 && tx < P.iM[0] + 30 && ty < 150) continue; treeAt(tx, ty, th); }
   }
+  // house neighbourhood south of the yard (own random stream): fronts face the street, set back to ~240, lots ~60 ft deep, a side street now and then
+  { const R4 = rng(6021); let hx = HOUSE_X + 10, n = 0;
+    while (hx < HOUSE_X1) { const lw = 50 + Math.floor(R4() * 22), x0 = hx;
+      if (x0 < RDX + 30 && x0 + lw > RDX - 30) { hx = RDX + 32; continue; }                 // the road south
+      if (++n % 7 === 0) { groundDecals.push([x0 + 4, x0 + 26, 224, 330, '#8f8b84']); hx += 30; continue; } // side street
+      const hw = Math.min(lw - 18, 24 + Math.floor(R4() * 12)), hd = 24 + Math.floor(R4() * 10), off = 4 + Math.floor(R4() * (lw - hw - 14)), y0 = 240 + Math.floor(R4() * 5);
+      const sty = Math.floor(R4() * 4), col = SIDING[Math.floor(R4() * SIDING.length)], roof = ROOFS[Math.floor(R4() * ROOFS.length)], hh = sty === 1 ? 17 : 11 + Math.floor(R4() * 3), pick = R4(), gar = R4() < 0.6;
+      const hx0 = x0 + off, dx = off > lw / 2 ? x0 + 3 : x0 + lw - 13;
+      groundDecals.push([dx, dx + 9, 224, y0 + (gar ? 44 : 18), '#a9a49a']);                    // driveway
+      SCENERY.push({ key: y0, x0: hx0, x1: hx0 + hw, y: y0, draw: g => houseArt(g, 'front', pick, hx0, y0) || house(g, hx0, hx0 + hw, y0, y0 + hd, hh, col, roof, sty) });
+      if (gar) { const gy = y0 + 32; SCENERY.push({ key: gy, x0: dx - 3, x1: dx + 13, y: gy, draw: g => houseArt(g, 'garage', pick, dx - 3, gy) || house(g, dx - 3, dx + 13, gy, gy + 20, 9, shade(col, -8), roof, 3) }); }
+      if (R4() < 0.7) treeAt(x0 + (off > lw / 2 ? lw - 8 : 8) + R4() * 4, y0 + 6 + R4() * 40, 26 + R4() * 20);
+      hx = x0 + lw;
+    } }
   // railroad pole line along the main, outside the yard
   { const skip = x => x > -40 && x < P.iM[0] + 60; for (let px = -700; px < P.nE[0] + 200; px += 120) { if (skip(px)) continue; const p0 = px; SCENERY.push({ key: 22, x0: p0 - 6, x1: p0 + 126, y: 22, draw: g => pole(g, p0, 22, skip(p0 + 120) ? p0 : p0 + 120) }); } } // none over the yard or the IC tracks
   // the old passenger depot north of the yard
@@ -1616,8 +1658,8 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
   SCENERY.push({ key: 13, x0: -312, x1: -300, y: 13, draw: g => crossbuck(g, -306, 13) });
   SCENERY.push({ key: -13, x0: RDX - 22, x1: RDX - 10, y: -13, draw: g => crossbuck(g, RDX - 18, -13) }); // south road crossing, moved below the IC switch
   SCENERY.push({ key: 13, x0: RDX + 20, x1: RDX + 30, y: 13, draw: g => crossbuck(g, RDX + 28, 13) });
-  SCENERY.push({ key: -10, x0: -480, x1: -470, y: -10, draw: g => sign(g, -476, -10, 'YARD LIMIT', '#f3d23a', '#111') });
-  SCENERY.push({ key: -10, x0: RDX + 90, x1: RDX + 100, y: -10, draw: g => sign(g, RDX + 96, -10, 'YARD LIMIT', '#f3d23a', '#111') }); // south yard limit: beyond the IC interchange and the road
+  SCENERY.push({ key: -10, x0: -480, x1: -470, y: -10, draw: g => ylSign(g, -476, -10) });
+  SCENERY.push({ key: -10, x0: RDX + 90, x1: RDX + 100, y: -10, draw: g => ylSign(g, RDX + 96, -10) }); // south yard limit: beyond the IC interchange and the road
   // customers north of town: the approved gamescale pictures (5.05 px/ft), registered to their spur's near rail
   const CIC_W = 2445 / 5.05, IFS_W = 2859 / 5.05, IFS_BACK = 6;
   SCENERY.push({ key: 20.6, x0: CIC_X, x1: CIC_X + CIC_W, y: 20, draw: g => bldImg(g, 'cic-back', SI.CIC, artD('CIC', 132.67, 0), 0, 250) });
@@ -1758,6 +1800,35 @@ function crossbuck(g, x, y) {
     g.strokeStyle = '#fff'; g.lineWidth = 1.1 * k; g.stroke(); }
   for (const o of [-1.3, 1.3]) { g.beginPath(); g.arc(A[0] + o * k, A[1] - 7.3 * k, 0.6 * k, 0, 7); g.fillStyle = '#7a1b14'; g.fill(); }
   g.fillStyle = '#111'; g.fillRect(A[0] - 2 * k, A[1] - 7.4 * k, 4 * k, 0.25 * k);
+}
+// Danny's art at @2x (10.1 px/ft) if there, else his 1x (5.05 px/ft); x0 = left edge, y = ground row
+function art2(g, key, x0, y) { return artAt(g, key + '@2x', x0, y, 10.1) || artAt(g, key, x0, y, 5.05); }
+// house-*.png from Danny: pick a piece of the wanted view (front / rear / garage / fence) by a fixed per-lot number
+const HOUSE_KEYS = {}; function houseArt(g, view, pick, x0, y) {
+  const ks = HOUSE_KEYS[view] || (HOUSE_KEYS[view] = Object.keys(IMG).filter(k => k.startsWith('B:house-') && !k.endsWith('@2x') && k.includes(view)).map(k => k.slice(2)).sort());
+  if (!ks.length) return false; return art2(g, ks[Math.floor(pick * ks.length) % ks.length], x0, y); }
+// little 1970s house: siding box, gable roof (sty 1 = 1.5 storey with a dormer, 3 = garage)
+function house(g, x0, x1, y0, y1, h, col, roof, sty) {
+  box(g, x0, x1, y0, y1, h, { front: col, side: shade(col, -16), top: roof }, (F, k, W) => {
+    const rh = sty === 1 ? 9 : 6; g.fillStyle = roof; g.beginPath(); const a = F(-1, h), b = F(W + 1, h), c = F(W / 2, h + rh); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.closePath(); g.fill();
+    if (sty === 3) { rectF(g, F, W * 0.15, 0, W * 0.85, 7, '#cfc9bd'); return; }
+    const dw = W / 2 + (sty === 2 ? -W * 0.25 : 0); rectF(g, F, dw - 1.5, 0, dw + 1.5, 7, '#5a4636');
+    for (const u of [W * 0.18, W * 0.78]) rectF(g, F, u - 2, 3, u + 2, 7, '#3b4a55');
+    if (sty === 1) rectF(g, F, W / 2 - 2, h + 1.5, W / 2 + 2, h + 4.5, '#3b4a55');
+    if (sty === 0) rectF(g, F, W * 0.1, 7.5, W * 0.9, 8.5, shade(col, -30)); }); // porch roof line
+}
+// yard side of the street behind the houses: rear views, detached garages, back-yard fences
+function backYard(x0, w, R) { const y0 = 176 + Math.floor(R() * 10), pick = R(), col = SIDING[Math.floor(R() * SIDING.length)], roof = ROOFS[Math.floor(R() * ROOFS.length)], r = R();
+  if (r < 0.45) SCENERY.push({ key: y0, x0, x1: x0 + w, y: y0, draw: g => houseArt(g, 'rear', pick, x0, y0) || house(g, x0 + 3, x0 + Math.min(w - 3, 30), y0, y0 + 24, 11, col, roof, 2) });
+  else if (r < 0.75) SCENERY.push({ key: y0, x0, x1: x0 + 20, y: y0, draw: g => houseArt(g, 'garage', pick, x0, y0) || house(g, x0 + 2, x0 + 18, y0, y0 + 20, 9, col, roof, 3) });
+  const fy = 196; SCENERY.push({ key: fy, x0, x1: x0 + w, y: fy, draw: g => houseArt(g, 'fence', pick, x0, fy) || fenceRun(g, x0, x0 + w, fy) }); }
+function fenceRun(g, x0, x1, y) { const A = pr(x0, y), B = pr(x1, y), k = A[2]; g.strokeStyle = '#9a9488'; g.lineWidth = Math.max(0.5, 0.15 * k); g.beginPath(); g.moveTo(A[0], A[1] - 4 * k); g.lineTo(B[0], B[1] - 4 * k); g.moveTo(A[0], A[1] - 2 * k); g.lineTo(B[0], B[1] - 2 * k); for (let x = x0; x <= x1; x += 8) { const p = pr(x, y); g.moveTo(p[0], p[1]); g.lineTo(p[0], p[1] - 4 * p[2]); } g.stroke(); }
+// 1970s yard limit board: white board, black lettering, on one post, ~7 ft to the bottom of the board (Danny's yard-limit-sign*.png if there)
+function ylSign(g, x, y) {
+  const ks = Object.keys(IMG).filter(k => k.startsWith('B:yard-limit-sign') && !k.endsWith('@2x') && !/edge/.test(k)); if (ks.length) { const key = ks.sort()[0].slice(2), im = IMG['B:' + key + '@2x'] || IMG['B:' + key]; if (im && im.naturalWidth) { const ppf = IMG['B:' + key + '@2x'] ? 10.1 : 5.05; if (art2(g, key, x - im.naturalWidth / ppf / 2, y)) return; } }
+  const A = pr(x, y), k = A[2]; g.fillStyle = '#5b4a3a'; g.fillRect(A[0] - 0.25 * k, A[1] - 9.6 * k, 0.5 * k, 9.6 * k);
+  g.fillStyle = '#111'; g.fillRect(A[0] - 3.1 * k, A[1] - 10.1 * k, 6.2 * k, 3.2 * k); g.fillStyle = '#f4f2ea'; g.fillRect(A[0] - 3 * k, A[1] - 10 * k, 6 * k, 3 * k);
+  g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; plateText(g, 'YARD', A[0], A[1] - 9.2 * k, 1.1 * k, 5.4 * k); plateText(g, 'LIMIT', A[0], A[1] - 7.8 * k, 1.1 * k, 5.4 * k); g.textBaseline = 'alphabetic';
 }
 function sign(g, x, y, t, bg, fg) {
   const A = pr(x, y), k = A[2]; g.fillStyle = '#777'; g.fillRect(A[0] - 0.25 * k, A[1] - 7 * k, 0.5 * k, 7 * k);
@@ -2612,7 +2683,7 @@ function updateUI() {
   $('rep').textContent = state.rep;
   const t = state.time % 86400, h = Math.floor(t / 3600), mi = Math.floor(t / 60) % 60; $('clock').textContent = `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; $('day').textContent = wd3(dayNo()) + ' · Day ' + dayNo();
   $('speedBtn').textContent = state.speed + 'x';
-  $('mph').textContent = mph.toFixed(1); $('speedo').classList.toggle('fast', mph > 10);
+  $('mph').textContent = mph.toFixed(1); $('speedo').classList.toggle('fast', mph > trackLimit(c) * MPH - 0.5); $('speedo').title = `Track speed here: ${Math.round(trackLimit(c) * MPH)} mph`; { let e = $('mphLim'); if (!e) { e = document.createElement('span'); e.id = 'mphLim'; e.style.cssText = 'font-size:0.7em;opacity:0.8;margin-left:4px'; $('mph').after(e); } e.textContent = `/${Math.round(trackLimit(c) * MPH)}`; }
   const movingSign = Math.sign(c.v) * locoSign(c); $('dirArrow').textContent = mph < 0.05 ? '' : (movingSign > 0 ? 'fwd' : 'rev');
   const fp = l.fuel / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = l.fuel <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(l.fuel) + ' gal';
   $('sandBar').style.width = l.sand.toFixed(1) + '%'; $('sandBar').className = l.sand <= 0 ? 'empty' : l.sand < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(l.sand) + '%';
@@ -2626,7 +2697,7 @@ function updateUI() {
   $('truckBtn').classList.toggle('hide', !(l.fuel <= 0 && !pad)); $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`;
   let w = '';
   if (l.fuel <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (live.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (live.slide) w = 'WHEELS SLIDING! Sand helps you stop.';
-  else if (mph > 10) w = 'Over the 10 mph yard limit.'; else if (state.mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.';
+  else if (mph > trackLimit(c) * MPH + 0.5) w = `Over the ${Math.round(trackLimit(c) * MPH)} mph track speed.`; else if (state.mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.';
   else if (l.fuel < FUEL_CAP * 0.08) w = 'Fuel is low. Head to the fuel pad.';
   $('warn').textContent = w;
   const j = state.job; $('jobText').innerHTML = (j.done ? '✅ ' : '📋 ') + j.text;
