@@ -785,7 +785,7 @@ const trackLimit = c => { const l = locoOf(c); return (isMainSeg(l.f.s) ? SPEED.
 const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: true, warnFt: 100 };
 const YL = { n: -476, s: P.iM[0] + 326 };
 // the rule is about the REAR of the move (the end away from the direction of travel): it must be the caboose once that end
-// is past a board. The leading end may go past freely (shoves, run-arounds, long cuts). A light engine has no caboose.
+// is past a board. The leading end may go past freely (shoves, run-arounds, long cuts). Light engines are exempt (CABOOSE_RULE.lightEngineExempt).
 const CABOOSE_TOAST = 'Rule violation: caboose must be on the rear outside yard limits.';
 const tailVeh = (c, sign) => V(sign > 0 ? c.veh[c.veh.length - 1] : c.veh[0]);
 const cabExempt = (c, sign) => !CABOOSE_RULE.on || tailVeh(c, sign).type === 'caboose' || (CABOOSE_RULE.lightEngineExempt && c.veh.every(id => TYPES[V(id).type].kind === 'loco'));
@@ -1277,7 +1277,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 <li><b>Switches:</b> tap a switch stand beside the track to throw it; the small letter above it names the switch. Green = straight (normal), red = diverging (reversed) target. If it flashes red, cars or the engine are on the points. You can also tap the markers on the Map.</li>
 <li><b>Drive mode:</b> set the reverser to F or R, release the brake, and notch the throttle up. F runs short hood first.</li>
 <li><b>Tap mode:</b> tap the track (or a car) in the picture or on the Map and the engine goes there at yard speed. Tapping a car couples to it. The engine lines the switches itself (you'll see the stands flip) and makes any reversing move it needs, pulling the whole cut clear of the switch first. If a car is in the way it tells you which one. In Drive mode you throw every switch yourself.</li>
-<li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Once the rear of your move passes one, the caboose must be the last car on that rear end (1970s rule). The front can go past freely, so you can shove or run around partway. A light engine has no caboose, so it can't go past either. Break the rule and you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
+<li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Once the rear of your move passes one, the caboose must be the last car on that rear end (1970s rule). The front can go past freely, so you can shove or run around partway. A light engine (engines only, no cars) is exempt and can run past the boards. Break the rule and you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
 <li><b>Coupling:</b> ease into a car under 4 mph. Faster costs you money and reputation.</li>
 <li><b>Uncoupling:</b> stop, then tap the &#9986; between two cars in the picture.</li>
 <li><b>TAGS:</b> the TAGS button (top right of the picture) puts a destination tag over every car. The colour is the subdivision (Mattoon is red); the code says where the car goes: HOUSE = freight house door, YARD 1&ndash;6 = that yard track, IC-INT = going to the Illinois Central (leave it on IC Outbound; an IC car becomes IC-INT once it's finished at its HOUSE or YARD spot), HOLD = no orders yet, leave it in the yard. The second line is what's in the car and how many tons (e.g. Paper 43T), or EMPTY.</li>
