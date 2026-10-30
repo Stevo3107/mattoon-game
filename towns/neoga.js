@@ -326,8 +326,8 @@ function signalAhead(c, sgn) { // distance to a red home signal ahead on the mai
 function step(dt) {
   const c = liveCut(); if (!c) return; const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
   let want = ctl.dir ? Math.min(ctl.mph * FTS, lim) : 0, sgn = ctl.dir;
-  if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; return; } }
-  if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
+  if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; crossDone(); return; } }
+  if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
   ctl.v += Math.max(-2.5 * dt, Math.min(1.2 * dt, want - ctl.v)); if (!sgn || ctl.v <= 0.01) { ctl.v = Math.max(0, ctl.v); if (!sgn) return; }
   let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left);
   while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
@@ -338,9 +338,9 @@ function step(dt) {
 function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the lined route to the tapped point (either way), stopping at red home signals
   for (const sgn of [1, -1]) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
     for (let i = 0; i < 6000; i += 2) { const e0 = leadingEnd(probe, sgn); const r = moveCut(probe, sgn * 2); dist += r.moved; const e = leadingEnd(probe, sgn);
-      if (e.t === t && (Math.abs(e.d - d) <= 2.5 || (e0.t === t && (e0.d - d) * (e.d - d) <= 0))) { ctl.ap = { sgn, left: dist }; ctl.dir = 0; toast('Autopilot: running to the spot.'); return; }
+      if (e.t === t && (Math.abs(e.d - d) <= 2.5 || (e0.t === t && (e0.d - d) * (e.d - d) <= 0))) { ctl.ap = { sgn, left: dist }; ctl.dir = 0; toast('Autopilot: running to the spot.'); return true; }
       if (r.stop || r.moved < 1.9) break; } }
-  toast('Can\'t get there on the route as lined. Check the switches.', 'bad'); }
+  toast('Can\'t get there on the route as lined. Check the switches.', 'bad'); return false; }
 // ================================================================= TRAVEL
 function arrive() { const tr = E.trainIn; if (!tr) return; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const extra = S.pendIC.splice(0); if (extra.length) { veh.unshift(...extra); aT.unshift(...extra.map(() => true)); }
@@ -480,7 +480,8 @@ const r1 = v => Math.round(v * 10) / 10, flat = pts => pts.flatMap(p => [r1(p[0]
 function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined = [];
   for (const [k, sw] of Object.entries(SWITCHES)) { const [t, e] = sw[S.sw[k]] || [], tr = T[t]; if (!tr) continue; const L = Math.min(40, tr.len * 0.45), pts = []; for (let i = 0; i <= 6; i++) { const d = e === 'a' ? L * i / 6 : tr.len - L * i / 6; pts.push(ptAt(t, d)); } lined.push(flat(pts)); }
   const cars = []; for (const c of S.cuts) for (const q of vehPos(c)) cars.push({ p: flat([ptAt(q.p0.t, q.p0.d), ptAt(q.pm.t, q.pm.d), ptAt(q.p1.t, q.p1.d)]), c: NCOL[q.v.type] || '#555' });
-  return { t: Date.now(), fy: 0, ky: 1, box: [XN - 20, -RE - 320, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -RE - 300, NWX, 400]], lined, cars,
+  const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]);
+  return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -RE - 320, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -RE - 300, NWX, 400]], lined, cars,
     bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
     labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W interchange (wye)', SW_WE - 200, -RE - 30, 1], ['N&W', NWX + 30, -RE - 280, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
 function mapLiveTap(m, X, Y) { // own tab: tap a switch to throw it, tap a track to run the engine there
@@ -489,8 +490,19 @@ function mapLiveTap(m, X, Y) { // own tab: tap a switch to throw it, tap a track
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e))));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); NII.mapTabs.repaint(); return; }
   let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!best || e < best.e)) best = { t, d, e }; }
-  if (best && liveCut()) { apTo(best.t, best.d); NII.mapTabs.hide(); } }
-function openMap() { NII.mapTabs.show('neoga', { liveSnap: mapSnap, liveTap: mapLiveTap }); }
+  if (best && liveCut()) { S.crossT = null; S.crossWait = false; apTo(best.t, best.d); NII.mapTabs.hide(); } }
+function openMap() { NII.mapTabs.show('neoga', { liveSnap: mapSnap, liveTap: mapLiveTap, crossTap: crossStart }); }
+// cross-town taps (Oct 30): S.crossT = where autopilot is headed for a cross-town trip ({ t, d, label, edge: true } = the north end, then the travel prompt)
+let crossAsk = null;
+function crossStart(o) { S.crossT = null; crossAsk = null; if (!liveCut()) return; S.crossT = { t: 'M1', d: 2, edge: true, to: o.to, x: o.x, y: o.y, label: o.label };
+  if (!crossGo()) return; toast(`Heading to ${o.name} – ${o.label}.`); save(); }
+function crossGo() { const x = S.crossT; S.crossWait = false; if (!x) return false; if (!apTo(x.t, x.d)) { S.crossT = null; toast(x.edge ? "Can't get to the north end on the route as lined. Stopped." : `Can't reach the ${x.label} from here as lined. Throw the switches, then tap it again. Stopped at the edge.`, 'bad'); return false; } return true; }
+function crossDone() { const x = S.crossT; if (!x) return; S.crossT = null; if (x.edge) { crossAsk = { to: x.to, x: x.x, y: x.y, label: x.label }; askNorth(); } else toast('Arrived.'); }
+function crossTick() { const x = S.crossT; if (!x || ctl.ap) return; if (S.crossWait) { if (S.tower && S.tower.st === 'clear') crossGo(); return; } S.crossT = null; }
+function crossArrive() { const x = E.cross; if (!x || x.to !== 'neoga') return; delete E.cross; let best = null;
+  for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const p = ptAt(t, d), e = Math.hypot(p[0] - x.x, p[1] - x.y); if (!best || e < best.e) best = { t, d, e }; }
+  if (!best || best.e > 40) { toast("Couldn't find that spot on the Neoga map. Stopped at the edge.", 'bad'); return; }
+  S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) toast(`Continuing to ${x.label}.`); save(); }
 function save() { try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(); showModal(`<h2>Neoga jobs</h2><ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>
   <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (left on the wye). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
@@ -513,8 +525,8 @@ function build() {
   <div class="ngrow"><button data-a="route" id="rtBtn">Request route</button><button data-a="jobs">Jobs</button><button data-a="endday" class="alt">End day</button></div>
   <div class="ngrow"><button data-a="zout" class="alt">−</button><button data-a="zin" class="alt">+</button><button data-a="follow" class="alt">Follow</button><button data-a="x" class="alt" id="ngX">1x</button><button data-a="map" class="alt">Map</button><button data-a="north" class="alt">◀ N to Mattoon</button></div>`;
   wrap.appendChild(bar);
-  document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut();
-    if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); go(); }
+  document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
+    if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
     else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the wye, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
@@ -529,7 +541,7 @@ function build() {
   cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = e.clientX - r.left, Y = e.clientY - r.top; tap(X, Y); });
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = Math.max(0.25, Math.min(4, cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); }, { passive: false });
 }
-function tap(X, Y) {
+function tap(X, Y) { S.crossT = null; S.crossWait = false;
   const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r); if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
@@ -540,7 +552,7 @@ function tap(X, Y) {
 // ================================================================= LOOP
 let last = performance.now(), saveT = 0, mapT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
-  for (let i = 0; i < k; i++) step(dt); advance(dt * k); towerTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
+  for (let i = 0; i < k; i++) step(dt); advance(dt * k); towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
+build(); if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); resize(); draw(); requestAnimationFrame(frame);
+window.__neoga = { crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
 };

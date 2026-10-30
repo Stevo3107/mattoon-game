@@ -662,7 +662,7 @@ function apStep(c, dt, running) {
   const ap = state.ap;
   // a new tap while rolling: ease to a stand, then plan from where we stopped
   if (ap.replan) { if (Math.abs(c.v) > 0.05) { ap.eq = 0; const sp = Math.max(0, Math.abs(c.v) - 2.5 * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; }
-    const t = ap.replan; state.ap = null; c.v = 0; tapTarget(t); return; }
+    const t = ap.replan, cg = state.crossGo; state.ap = null; c.v = 0; tapTarget(t); if (cg && state.ap) state.crossGo = cg; return; }
   // auto-routing: line this move's switches one at a time (stopped), then go
   if (ap.pend && ap.pend.length) {
     ap.eq = 0; if (Math.abs(c.v) > 0.05) { const sp = Math.max(0, Math.abs(c.v) - 2.5 * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; }
@@ -796,9 +796,9 @@ function nextLeg(c) {
 function apArrive(c) {
   c.v = 0; const ap = state.ap;
   if (ap && ap.legs && ap.k < ap.legs.length - 1) { nextLeg(c); toast(`Clear of the switch. Reversing (move ${ap.k + 1} of ${ap.legs.length}).`); return; }
-  state.ap = null; toast('Arrived.');
+  state.ap = null; if (state.crossGo) { crossAsk = state.crossGo; state.crossGo = null; askTravel(crossAsk.to); return; } toast('Arrived.');
 }
-function tapTarget(target) {
+function tapTarget(target) { state.crossGo = null; crossAsk = null;
   const c = locoCons(), l = locoOf(c);
   if (l.fuel <= 0) { toast('No fuel - the engine can\'t move.', 'bad'); return; }
   for (const K in BF) if (bfS()[K].up && inBF(K, target) && !consInBF(K, c)) { toast(`Blue flag up at ${BF[K].name}. Tap the building to have it taken down first.`, 'bad'); return; }
@@ -1113,7 +1113,7 @@ function showWaybills() { const vs = Object.values(state.veh).filter(v => TYPES[
 // ---------------------------------------------------------------- towns: run off the south end of the main -> next town (index loader does the loading screen)
 function askTravel(to) { const T = NII.TOWNS[to], r = NII.runInfo('mattoon', to);
   showModal(`<h2>Head south to ${T.name}?</h2><p>The train leaves Mattoon on the main: ${r.mi} miles at ${r.mph} mph, about ${r.min} minutes on the clock. Cars you left behind stay where they are.</p><div class="btns"><button data-act="travelGo" data-to="${to}">Go to ${T.name}</button><button data-act="close">Stay in Mattoon</button></div>`); }
-function departTo(to) { const c = locoCons(); if (!c) return; hideModal();
+function departTo(to) { const c = locoCons(); if (!c) return; hideModal(); { const e = NII.env(); if (crossAsk && crossAsk.to === to) e.cross = crossAsk; else delete e.cross; crossAsk = null; }
   const vs = c.veh.map(V).map(v => { const xf = pX(v.f), xr = pX(v.r); return { rec: JSON.parse(JSON.stringify(v)), x: (xf + xr) / 2, fSouth: xf > xr }; }).sort((a, b) => a.x - b.x);
   const train = vs.map(o => { const v = o.rec; delete v.f; delete v.r; delete v.cid; v.aFrontN = v.aFront !== o.fSouth; return v; }); // aFrontN: A end toward the north
   for (const id of c.veh) delete state.veh[id]; delete state.cons[c.id];
@@ -1138,8 +1138,18 @@ function mapSnap() { if (!SNAP_T) SNAP_T = SEG.map(s => flat(s.X.map((x, i) => [
   const lined = []; for (const k of SWITCHES) { const l = NODES[k][state.sw[k]]; if (!l) continue; const g = SEG[l.seg], len = Math.min(30, g.len * 0.45); lined.push(flat(l.end === 'a' ? subPath(l.seg, 0, len, 3) : subPath(l.seg, g.len, g.len - len, 3))); }
   const cars = Object.values(state.veh).map(v => ({ p: flat(vehPath(v)), c: (TYPES[v.type] || {}).color || '#555' }));
   const R = MAP_YARD, ys = SNAP_T.flatMap(p => p.filter((v, i) => i % 2 && p[i - 1] >= R[0] && p[i - 1] <= R[1])), box = [R[0], Math.min(...ys) - 30, R[1], Math.max(...ys) + 30];
-  return { t: Date.now(), fy: 1, box, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bT', 'bCIC', 'bIFS', 'bG'].map(k => [r1(P[k][0]), r1(P[k][1])]),
+  const names = SEG.map(g => trackName(g.i).replace(/^the /, '')), sws = SWITCHES.map(k => [r1(P[k][0]), r1(P[k][1])]);
+  return { t: Date.now(), fy: 1, box, names, sws, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bT', 'bCIC', 'bIFS', 'bG'].map(k => [r1(P[k][0]), r1(P[k][1])]),
     blds: [[FH.x0, Y_H + 10, FH.x1, Y_H + 40]], labels: [['Freight house', (FH.x0 + FH.x1) / 2, Y_H + 25, 1], ['House track', P.H[0] + 70, Y_H + 9, 1, 'left'], ['Engine track', P.bEng[0] + 10, Y_E, 1, 'left'], ['IC Connection', ICC_X + 230, -90, 1, 'left'], ['◀ N to Champaign', MAP_YARD[0] + 10, box[1] + 12, 0, 'left'], ['to Neoga S ▶', MAP_YARD[1] - 10, box[1] + 12, 0, 'right']] }; }
+// cross-town taps (Oct 30): tap a track on another town's tab -> autopilot to the south main end, the travel prompt, then autopilot on from the next town's edge
+let crossAsk = null;
+function crossStart(o) { if (state.mode !== 'tap') setMode('tap'); const g = SEG[SI.MS2]; crossAsk = null; state.crossGo = null;
+  tapTarget({ s: SI.MS2, d: g.len - 12 }); if (!state.ap) return; state.crossGo = { to: o.to, x: o.x, y: o.y, label: o.label }; toast(`Heading to ${o.name} – ${o.label}.`); save(); }
+function crossTick() { if (state.crossGo && !state.ap) state.crossGo = null; } // stopped for any other reason (blue flag, yard limit, manual control...): the trip is off
+function crossArrive() { const e = NII.env(), x = e.cross; if (!x || x.to !== 'mattoon') return; delete e.cross; NII.write();
+  let best = null; for (const g of SEG) for (let i = 0; i < g.X.length; i++) { const dd = Math.hypot(g.X[i] - x.x, g.Y[i] - x.y); if (!best || dd < best.dd) best = { dd, s: g.i, d: g.D[i] }; }
+  if (!best || best.dd > 40) { toast("Couldn't find that spot on the Mattoon map. Stopped at the edge.", 'bad'); return; }
+  if (state.mode !== 'tap') setMode('tap'); tapTarget({ s: best.s, d: best.d }); if (state.ap) toast(`Continuing to ${x.label}.`); }
 function putSnap() { try { NII.mapTabs.put('mattoon', mapSnap()); } catch (e) { } }
 function save() { if (state && state.awayTrain) return; putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
 function migrateTasks() { // saves from before the checklist: give NII 4412 the standing order its old fixed job had
@@ -1284,7 +1294,7 @@ document.querySelectorAll('#mapBtns [data-z]').forEach(b => b.onclick = () => {
   const z = b.dataset.z; if (z === 'in') zoomAt(1.4, MW / 2, MH / 2); else if (z === 'out') zoomAt(1 / 1.4, MW / 2, MH / 2); else if (z === 'fit') fit();
   else { userCam = true; const l = locoOf(locoCons()), [x, y] = xy(l.f.s, l.f.d); cam.x = x; cam.y = y; if (cam.z < 1) cam.z = 1.2; }
 });
-function setMap(o) { mapOpen = !!o; document.body.classList.toggle('mapopen', mapOpen); try { if (mapOpen) { putSnap(); NII.mapTabs.show('mattoon', { close: () => { if (mapOpen) setMap(false); } }); } else NII.mapTabs.hide(); } catch (e) { } fitted = false; resize(); drawMap(); }
+function setMap(o) { mapOpen = !!o; document.body.classList.toggle('mapopen', mapOpen); try { if (mapOpen) { putSnap(); NII.mapTabs.show('mattoon', { close: () => { if (mapOpen) setMap(false); }, crossTap: crossStart }); } else NII.mapTabs.hide(); } catch (e) { } fitted = false; resize(); drawMap(); }
 $('mapBtn').onclick = () => setMap(!mapOpen); $('mapClose').onclick = () => setMap(false);
 $('followBtn').onclick = () => { view.follow = true; view.z = 1; };
 
@@ -2866,7 +2876,7 @@ function frame(t) {
   if (state.awayTrain) return; // the train left for another town: the page is about to reload
   const dtR = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
   if (!paused && !$('modalBg').classList.contains('show')) advanceTime(dtR * state.speed);
-  sceneCam(dtR); drawMap(); drawScene(dtR); updateUI();
+  crossTick(); sceneCam(dtR); drawMap(); drawScene(dtR); updateUI();
   saveT += dtR; if (saveT > 3) { saveT = 0; save(); }
   requestAnimationFrame(frame);
 }
@@ -2882,10 +2892,12 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   if (state.help) showModal(HELP);
+  setTimeout(() => { try { crossArrive(); } catch (e) { } }, 300);
+  { const pn = $('panel'); if (pn) pn.addEventListener('pointerdown', () => { state.crossGo = null; crossAsk = null; }, true); } // any cab control cancels a cross-town trip
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = {
+window.__game = { crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
