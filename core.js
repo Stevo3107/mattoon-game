@@ -33,6 +33,11 @@ const E0X = 2400;                                  // south main switch S
 // off the lead) and IN (north). North of IN the IC Tail runs on to a bumping post just south of switch S.
 const ICS8 = (TS - 2 * DY8) / T8, IC_TAIL_END = E0X + 60, IC_TAIL = 420, IC_RUN = 1500, IC_LEAD = 400;
 const IC_NX = IC_TAIL_END + IC_TAIL, IC_JX = IC_NX + IC_RUN, IC_X = IC_JX + 2 * DX10 + (TS - 2 * DY10) / T10 + IC_LEAD, IC_NE = IC_X + 800;
+// IC Connection (Oct 30): switch ICC (#10) on the main south of the interchange, diverging toward the viewer (-depth, away from
+// town) on a 800 ft radius arc to 40 deg, then straight off the bottom of the picture to the IC main. Locked lined normal for IC crews only.
+const ICC_X = IC_X + 400, ICC_R = 800, ICC_TH = 40, ICC_END_Y = -260;
+const ICC_ARC = Array.from({ length: 8 }, (_, i) => { const th = (i + 1) * 5; return [ICC_X + ICC_R * Math.sin(th * DEG), -ICC_R * (1 - Math.cos(th * DEG)), -th]; });
+const ICC_END = (() => { const [x, y] = ICC_ARC[ICC_ARC.length - 1]; return [x + (y - ICC_END_Y) / Math.tan(ICC_TH * DEG), ICC_END_Y]; })();
 const IC_IN_END = IC_NX + 2 * DX8 + ICS8, IC_OUT_END = IC_NX;   // north ends of the run-around's clear stretch (labels, map)
 // ---- customers north of town (screen left). Each building's art is drawn in its own feet ("local x", + = south / screen
 // right), registered to world x by its origin below. Distances are world x; switch S (E0) is at x 660.
@@ -49,7 +54,7 @@ const P = {
   // Prairie Grain: switch G off the main (points south) to the loading track 34 ft behind the main; run-around 14 ft over on its camera side, switches G1 (north) and G2 (south)
   gM: [PG_X + 934, 0], gE: [PG_X + 633.51, 34], gW: [PG_X - 602.51, 34], bG: [PG_X - 720, 34],
  W0: [0, 0], E0: [E0X, 0], nE: [IC_NE, 0],
-  iM: [IC_X, 0], iJ: [IC_JX, TS], iK: [IC_JX - 100, TS], iN: [IC_NX, TS], bT: [IC_TAIL_END, TS], bIn: [IC_IN_END, 2 * TS], bOut: [IC_OUT_END, TS],
+  iM: [IC_X, 0], iC: [ICC_X, 0], eIC: ICC_END, iJ: [IC_JX, TS], iK: [IC_JX - 100, TS], iN: [IC_NX, TS], bT: [IC_TAIL_END, TS], bIn: [IC_IN_END, 2 * TS], bOut: [IC_OUT_END, TS],
 };
 // yard ladders: switch n on the north ladder (L1..L6, H) and its mirror on the south ladder (E1..E5; Yard 6 ends at joint ET)
 for (let n = 1; n <= NY; n++) P['L' + n] = [ladX(YD(n) - DY8), YD(n) - DY8];
@@ -57,7 +62,7 @@ for (let n = 1; n < NY; n++) P['E' + n] = [E0X - P['L' + n][0], P['L' + n][1]];
 P.ET = [E0X - P['L' + NY][0] - DX8, YD(NY)];
 P.H = [ladX(Y_H - DY8), Y_H - DY8]; P.T = [ladX(Y_E - DY8) + DX8, Y_E]; P.bEng = [P.T[0] + 190, Y_E];
 const FH_X0 = Math.round(P.bEng[0] + 60); P.bHse = [FH_X0 + 240, Y_H];   // freight house spot (180 ft) just south of the engine track's bumper
-const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, bG: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0 };
+const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, bG: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0, iC: 0, eIC: -ICC_TH };
 for (let n = 1; n <= NY; n++) TAN['L' + n] = LAD; for (let n = 1; n < NY; n++) TAN['E' + n] = 180 - LAD;
 const yv = n => { const l = P['L' + n], e = n === NY ? null : P['E' + n]; return e ? [[l[0] + DX8, YD(n), 0], [e[0] - DX8, YD(n), 0]] : [[l[0] + DX8, YD(n), 0]]; };
 const ICS = (TS - 2 * DY10) / T10; // straight between the two #10 curves of a 14 ft offset
@@ -68,7 +73,7 @@ const SEGDEF = [
   ['Y1', 'L1', 'E1', yv(1)], ['Y2', 'L2', 'E2', yv(2)], ['Y3', 'L3', 'E3', yv(3)], ['Y4', 'L4', 'E4', yv(4)],
   ['EL1', 'E0', 'E1', [[E0X - DXL, DYL, 180 - LAD]]], ['EL2', 'E1', 'E2'], ['EL3', 'E2', 'E3'], ['EL4', 'E3', 'E4'],
   // appended so the older segment indices stay put
-  ['MS', 'iM', 'nE'], ['ICL', 'iM', 'iJ', [[IC_X - DX10, DY10, 180 - TH10], [IC_X - DX10 - ICS, TS - DY10, 180 - TH10], [IC_X - 2 * DX10 - ICS, TS, 0]]],
+  ['MS', 'iM', 'iC'], ['ICL', 'iM', 'iJ', [[IC_X - DX10, DY10, 180 - TH10], [IC_X - DX10 - ICS, TS - DY10, 180 - TH10], [IC_X - 2 * DX10 - ICS, TS, 0]]],
   ['ICI', 'iJ', 'iN', [[IC_JX - DX8, TS + DY8, 180 - LAD], [IC_JX - DX8 - ICS8, 2 * TS - DY8, 180 - LAD], [IC_JX - 2 * DX8 - ICS8, 2 * TS, 0], [IC_NX + 2 * DX8 + ICS8, 2 * TS, 0], [IC_NX + DX8 + ICS8, 2 * TS - DY8, LAD], [IC_NX + DX8, TS + DY8, LAD]]], ['ICK', 'iJ', 'iK'], ['ICO', 'iK', 'iN'],
   // the main north of town and the three customers (appended, so the older indices stay put)
   ['MNC', 'cS', 'jW'], ['MN0', 'fX', 'cS'], ['MN1', 'fN', 'fX'], ['MN2', 'fS', 'fN'], ['MN3', 'gM', 'fS'], ['MN4', 'nW', 'gM'],
@@ -78,6 +83,7 @@ const SEGDEF = [
   // Yards 5 and 6 (Oct 30), appended
   ['WL5', 'L4', 'L5'], ['WL6', 'L5', 'L6'], ['Y5', 'L5', 'E5', yv(5)], ['Y6', 'L6', 'ET', yv(6)], ['EL5', 'E4', 'E5'], ['EL6', 'E5', 'ET', [[E0X - P.L6[0], P.L6[1], 180 - LAD]]],
   ['ICT', 'iN', 'bT'],   // IC Tail (Oct 30), appended
+  ['MS2', 'iC', 'nE'], ['ICX', 'iC', 'eIC', ICC_ARC.slice(0, -1)],   // IC Connection (Oct 30): MS now ends at switch ICC
 ];
 function buildPath(a, b, via) {
   const dirOf = (deg, cx, cy) => { let ux = Math.cos(deg * DEG), uy = Math.sin(deg * DEG); if (ux * cx + uy * cy < 0) { ux = -ux; uy = -uy; } return [ux, uy]; };
@@ -101,7 +107,7 @@ const SEG = SEGDEF.map(([name, a, b, via], i) => {
 const SI = {}; SEG.forEach(s => { SI[s.name] = s.i; });
 const L = (name, end) => ({ seg: SI[name], end });
 const NODES = {
-  nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Effingham' },
+  nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Effingham' }, eIC: { type: 'edge', label: 'onto the IC main' },
   bEng: { type: 'bumper' }, bHse: { type: 'bumper' }, bCIC: { type: 'bumper', art: true }, bIFS: { type: 'bumper', art: true }, bG: { type: 'bumper' },
   jW: { type: 'joint', links: [L('MNC', 'b'), L('MW', 'a')] }, bT: { type: 'bumper' },
   iK: { type: 'joint', links: [L('ICK', 'b'), L('ICO', 'a')] },
@@ -116,6 +122,8 @@ const NODES = {
   H: { type: 'switch', tag: 'H', name: 'House track switch', trunk: L('WLH', 'b'), N: L('WLT', 'a'), R: L('HSE', 'a') },
   E0: { type: 'switch', tag: 'S', name: 'South main switch', trunk: L('ME', 'a'), N: L('MM', 'b'), R: L('EL1', 'a') },
   iM: { type: 'switch', tag: 'IC', name: 'IC interchange lead (south main)', trunk: L('MS', 'a'), N: L('ME', 'b'), R: L('ICL', 'a') },
+  iC: { type: 'switch', tag: 'ICC', locked: true, name: 'IC Connection (locked, IC crews only)', trunk: L('MS', 'b'), N: L('MS2', 'a'), R: L('ICX', 'a') },
+  // hook for later: IC drop-off runs come in off ICX (eIC), line iC reverse themselves and shove onto IC Inbound, then line it back normal.
   iJ: { type: 'switch', tag: 'IO', name: 'IC Inbound / IC Outbound', trunk: L('ICL', 'b'), N: L('ICK', 'a'), R: L('ICI', 'a') },
   iN: { type: 'switch', tag: 'IN', name: 'IC run-around (north) / IC Tail', trunk: L('ICT', 'a'), N: L('ICO', 'b'), R: L('ICI', 'b') },
   E1: { type: 'switch', tag: '1', name: 'Yard 1 (south ladder)', trunk: L('EL1', 'b'), N: L('EL2', 'a'), R: L('Y1', 'b') },
@@ -695,11 +703,11 @@ function apStep(c, dt, running) {
 // Every reversing move first takes the WHOLE cut CLEAR feet past the switch points. Run-arounds: to reach the far end of a
 // car, the route may go past it on another track (yard track, main, ladder) and come back in from the other end.
 const CLEAR = 25, REV_COST = 60, MAX_REV = 5;
-const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the IC switch)', ICL: 'the IC lead', ICK: 'the IC lead', ICI: 'IC Inbound', ICO: 'IC Outbound', ICT: 'the IC Tail',
+const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the IC switch)', MS2: 'the main (south end)', ICX: 'the IC Connection', ICL: 'the IC lead', ICK: 'the IC lead', ICI: 'IC Inbound', ICO: 'IC Outbound', ICT: 'the IC Tail',
   MNC: 'the main (north of town)', MN0: 'the main (north of town)', MN1: 'the main at Illini Farm Supply', MN2: 'the main (north of town)', MN3: 'the main (north of town)', MN4: 'the main (north of Prairie Grain)',
   CIC: 'the CIC box plant spur', IFS: 'the Farm Supply spur', IRA: 'the Farm Supply run-around', GL: 'the Prairie Grain lead', GLD: 'the Prairie Grain loading track', GRA: 'the Prairie Grain run-around', GT: 'the Prairie Grain tail track' };
 const trackName = s => TRACK_NAME[SEG[s].name] || (SEG[s].name[0] === 'W' ? 'the north ladder' : 'the south ladder');
-const swLabel = n => n === 'iM' ? 'IC (IC lead)' : n === 'iJ' ? 'IO (IC Inbound / Outbound)' : /^[LE][0-9]$/.test(n) ? `${NODES[n].tag} ${n[0] === 'L' ? 'north' : 'south'}` : NODES[n].tag;
+const swLabel = n => n === 'iC' ? 'ICC (IC Connection, locked)' : n === 'iM' ? 'IC (IC lead)' : n === 'iJ' ? 'IO (IC Inbound / Outbound)' : /^[LE][0-9]$/.test(n) ? `${NODES[n].tag} ${n[0] === 'L' ? 'north' : 'south'}` : NODES[n].tag;
 const vehName = v => `${TYPES[v.type].name.toLowerCase()} ${v.num}`;
 function spanHit(p, len, target, slack) {
   return walk(p, len, 'follow', (s, d, dir, span) => { if (s !== target.s) return; const delta = (target.d - d) * dir; if (delta >= -slack && delta <= span + slack) return { kind: 'hit' }; }).kind === 'hit';
@@ -759,7 +767,7 @@ function planRoute(c, goal) {
       if (seenN.has(nodeId)) return; const seen2 = new Set(seenN); seen2.add(nodeId);
       if (n.type === 'joint') { const nx = linkEq(n.links[0], s, end) ? n.links[1] : n.links[0], e = enter(nx); go(e.s, e.d, e.dir, dist, sw, req, seen2, left, segs); return; }
       if (linkEq(n.trunk, s, end)) { // facing point: either way
-        for (const leg of ['N', 'R']) { const e = enter(n[leg]); go(e.s, e.d, e.dir, dist, { ...sw, [nodeId]: leg }, req.concat([[nodeId, leg]]), seen2, left, segs); }
+        for (const leg of n.locked ? [state.sw[nodeId] || 'N'] : ['N', 'R']) { const e = enter(n[leg]); go(e.s, e.d, e.dir, dist, { ...sw, [nodeId]: leg }, req.concat([[nodeId, leg]]), seen2, left, segs); }
       } else { // trailing point: line it for the leg we're on; once the whole cut is CLEAR past it we may reverse
         const leg = linkEq(n.N, s, end) ? 'N' : 'R', e = enter(n.trunk);
         go(e.s, e.d, e.dir, dist, { ...sw, [nodeId]: leg }, req.concat([[nodeId, leg]]), seen2, left.concat([{ node: nodeId, at: dist }]), segs);
@@ -1119,7 +1127,7 @@ function trainHome() { // back from another town: the train comes in on the sout
   const env = NII.env(); if (!state.awayTrain || env.town !== 'mattoon') return;
   const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - state.awayTrain.left); state.time = Math.max(state.time, env.time || 0);
   const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; state.veh[v.id] = v; }
-  if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS;
+  if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;
     place(ids, { s, d: Math.max(5, SEG[s].len - 15 - len), dir: -1 }, backA); ids.forEach((id, i) => { V(id).aFront = backA[i]; }); }
   delete state.awayTrain; accrueHire(away); if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
 }
@@ -1130,9 +1138,15 @@ function migrateTasks() { // saves from before the checklist: give NII 4412 the 
   if (v && !v.dest && !v.idle && j.car === 'bx1' && !j.done && j.n < 4) { if (j.type === 'house') { v.dest = 'HOUSE'; if (!v.loaded) v.out = { ...FH_FREIGHT.outbound }; } else if (j.type === 'yard') v.dest = 'YARD ' + (j.yard || 1); else if (j.type === 'icout') v.dest = 'IC-INT'; }
   syncTasks();
 }
+function migrateICC() { // saves from before switch ICC: MS was iM->nE (800 ft); points past the new switch move onto MS2, ICC starts normal
+  if (!state.sw.iC) state.sw.iC = 'N';
+  const ms = SEG[SI.MS].len, fix = p => { if (p && p.s === SI.MS && p.d > ms) { p.s = SI.MS2; p.d -= ms; } };
+  for (const v of Object.values(state.veh)) { fix(v.f); fix(v.r); }
+  if (state.ap) state.ap = null;
+}
 function load() {
   try { localStorage.removeItem('nii-mattoon-test-v4'); localStorage.removeItem('nii-mattoon-test-v5'); localStorage.removeItem('nii-mattoon-test-v6'); localStorage.removeItem('nii-mattoon-test-v7'); } catch (e) { } // old saves can hold unapproved cars (Day 1 flour car)
-  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateTasks(); trainHome(); return true; } } catch (e) { }
+  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateICC(); migrateTasks(); trainHome(); return true; } } catch (e) { }
   return false;
 }
 
@@ -1295,6 +1309,7 @@ mapC.addEventListener('pointerup', endPtr); mapC.addEventListener('pointercancel
 mapC.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * 0.0015), e.offsetX, e.offsetY); }, { passive: false });
 
 function throwSwitch(node) {
+  if (NODES[node].locked) { toast('This switch is locked. You do not have an IC key', 'bad'); sfx('tick'); return false; }
   if (COVER[node] && COVER[node].size) { toast(`Can't throw switch ${NODES[node].tag}: there's equipment on it.`, 'bad'); return false; }
   state.sw[node] = state.sw[node] === 'N' ? 'R' : 'N'; sfx('sw'); save(); return true;
 }
@@ -1360,7 +1375,7 @@ function drawMap() {
   // labels
   if (namesOn) { for (let i = 1; i <= NY; i++) text('Yard ' + i, P['L' + i][0] + 70 + 6 / z, YD(i) + 6 / z, fs, '#555', 'left');
   text('House track', P.H[0] + 70, Y_H + 7 / z, fs, '#222', 'left', true); text('Engine track', P.bEng[0] + 8 / z, Y_E, fs, '#222', 'left', true);
-  text('IC Outbound', P.bOut[0] + 4 / z + 160, P.bOut[1] - 7 / z, fs, '#222', 'left', true); text('IC Tail', P.bT[0] + 4 / z, P.bT[1] - 7 / z, fs, '#222', 'left', true); }
+  text('IC Outbound', P.bOut[0] + 4 / z + 160, P.bOut[1] - 7 / z, fs, '#222', 'left', true); text('IC Tail', P.bT[0] + 4 / z, P.bT[1] - 7 / z, fs, '#222', 'left', true); text('IC Connection', ICC_X + 230, -90, fs, '#222', 'left', true); }
   text('CIC box plant', CIC_X, 20 + 12 / z, fs, '#222', 'left', true); text('Illini Farm Supply', IFS_X, 20 + 12 / z, fs, '#222', 'left', true); text('run-around', IFS_X + 60, -14 - 12 / z, fs * 0.85, '#555', 'left');
   text('Prairie Grain', PG_X - 300, 34 + 12 / z, fs, '#222', 'left', true); { const [a, b] = w2s(PG_X + 15.5, 34); g.beginPath(); g.arc(a, b, 5, 0, 7); g.fillStyle = '#8a5a2b'; g.fill(); } // spout
   if (namesOn) text('MAIN LINE', 330, -16 / z, fs, '#666'); text('◀ N to Champaign', NW_X + 10, 14 / z, fs, '#666', 'left'); text('to Effingham S ▶', P.nE[0] - 10, 14 / z, fs, '#666', 'right');
@@ -1397,6 +1412,7 @@ function drawMap() {
     const [hx, hy] = handlePos(k), r = 11, busy = COVER[k] && COVER[k].size;
     g.beginPath(); g.arc(hx, hy, r, 0, 7); g.fillStyle = state.sw[k] === 'N' ? '#2fa34f' : '#c8281e'; g.fill(); g.lineWidth = busy ? 3.5 : 2.5; g.strokeStyle = busy ? '#111111' : '#ffffff'; g.stroke();
     g.font = '700 11px -apple-system,Segoe UI,Roboto,Arial'; g.fillStyle = '#ffffff'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(NODES[k].tag, hx, hy + 0.5);
+    if (NODES[k].locked) { const lx = hx + 10, ly = hy - 10; g.strokeStyle = '#222'; g.lineWidth = 1.6; g.beginPath(); g.arc(lx, ly - 3, 2.6, Math.PI, 0); g.stroke(); g.fillStyle = '#e0b030'; g.fillRect(lx - 4, ly - 3, 8, 6); g.strokeRect(lx - 4, ly - 3, 8, 6); }
   }
   // edge chips: when the IC tracks (or the yard) are off the map, a chip at that edge pans there
   mapChips = [];
@@ -1699,6 +1715,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
   SCENERY.push({ key: 13, x0: RDX + 20, x1: RDX + 30, y: 13, draw: g => crossbuck(g, RDX + 28, 13) });
   SCENERY.push({ key: -10, x0: -480, x1: -470, y: -10, draw: g => ylSign(g, -476, -10) });
   SCENERY.push({ key: -10, x0: RDX + 90, x1: RDX + 100, y: -10, draw: g => ylSign(g, RDX + 96, -10) }); // south yard limit: beyond the IC interchange and the road
+  SCENERY.push({ key: -24, x0: ICC_X + 130, x1: ICC_X + 150, y: -24, draw: g => icSign(g, ICC_X + 140, -24) }); // BEGIN ILLINOIS CENTRAL, beside the IC Connection a little past switch ICC
   // blue flags (Danny's blue-flag.png @2x, 10.1 px/ft, bottom row = tie top, staff centre 0.6 ft in, flag flies +x): between the rails just inside each customer's switch
   for (const K in BF) { const [fx, fy] = xy(BF[K].seg, BF[K].d); SCENERY.push({ key: fy - 0.2, x0: fx - 3, x1: fx + 4, y: fy, draw: g => { if (!state.bf || !state.bf[K] || !state.bf[K].up) return; artAt(g, 'blue-flag', fx - 0.6, fy, 10.1) || blueFlag(g, fx, fy); } }); }
   // customers north of town: the approved gamescale pictures (5.05 px/ft), registered to their spur's near rail
@@ -1861,6 +1878,13 @@ function ylSign(g, x, y) {
   const A = pr(x, y), k = A[2]; g.fillStyle = '#5b4a3a'; g.fillRect(A[0] - 0.25 * k, A[1] - 9.6 * k, 0.5 * k, 9.6 * k);
   g.fillStyle = '#111'; g.fillRect(A[0] - 3.1 * k, A[1] - 10.1 * k, 6.2 * k, 3.2 * k); g.fillStyle = '#f4f2ea'; g.fillRect(A[0] - 3 * k, A[1] - 10 * k, 6 * k, 3 * k);
   g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; plateText(g, 'YARD', A[0], A[1] - 9.2 * k, 1.1 * k, 5.4 * k); plateText(g, 'LIMIT', A[0], A[1] - 7.8 * k, 1.1 * k, 5.4 * k); g.textBaseline = 'alphabetic';
+}
+// BEGIN ILLINOIS CENTRAL board where IC ownership starts (Danny's ic-connection-sign@2x / begin-ic-sign@2x, post centred, bottom row = ground)
+function icSign(g, x, y) {
+  for (const key of ['ic-connection-sign@2x', 'begin-ic-sign@2x', 'ic-connection-sign', 'begin-ic-sign']) { const im = IMG['B:' + key]; if (im && im.complete && im.naturalWidth) { const ppf = key.endsWith('@2x') ? 10.1 : 5.05; if (artAt(g, key, x - im.naturalWidth / ppf / 2, y, ppf)) return; } }
+  const A = pr(x, y), k = A[2]; g.fillStyle = '#5b4a3a'; g.fillRect(A[0] - 0.25 * k, A[1] - 9.6 * k, 0.5 * k, 9.6 * k);
+  g.fillStyle = '#111'; g.fillRect(A[0] - 4.1 * k, A[1] - 10.6 * k, 8.2 * k, 3.7 * k); g.fillStyle = '#f4f2ea'; g.fillRect(A[0] - 4 * k, A[1] - 10.5 * k, 8 * k, 3.5 * k);
+  g.fillStyle = '#111'; g.textAlign = 'center'; g.textBaseline = 'middle'; plateText(g, 'BEGIN', A[0], A[1] - 9.6 * k, 1.1 * k, 7.4 * k); plateText(g, 'ILLINOIS CENTRAL', A[0], A[1] - 7.9 * k, 1.1 * k, 7.4 * k); g.textBaseline = 'alphabetic';
 }
 function blueFlag(g, x, y) { const A = pr(x, y), k = A[2]; g.fillStyle = '#6b5a45'; g.fillRect(A[0] - 0.08 * k, A[1] - 4.3 * k, 0.16 * k, 4.3 * k); g.fillStyle = '#1d4fd8'; g.fillRect(A[0] + 0.08 * k, A[1] - 4.2 * k, 1.25 * k, 1.5 * k); }
 function sign(g, x, y, t, bg, fg) {
@@ -2136,7 +2160,7 @@ function drawVehicle(g, v, alpha) {
   HIT.vehs.push({ v, x0: Math.min(q.Pl[0], q.Pr[0]), x1: Math.max(q.Pl[0], q.Pr[0]), y0: Math.min(q.Pl[1], q.Pr[1]) - 15.5 * q.k, y1: Math.max(q.Pl[1], q.Pr[1]) + 1.5 * q.k, depth: q.depth, ghost: alpha < 1,
     hull: hull([q.Pl, q.Pr, up(q.Pr, 15.5), up(q.Pl, 15.5), [q.Pl[0], q.Pl[1] + 1.5 * q.k], [q.Pr[0], q.Pr[1] + 1.5 * q.k]]), z: ++HZ });
 }
-const FAR_STAND = new Set(['W0', 'E0', 'iM', 'iJ', 'iN', 'H', ...Object.keys(NODES).filter(k => /^[LE]\d$/.test(k))]); // yard / IC: 14 ft centres leave no room between tracks, so the stand goes on the far side of the points
+const FAR_STAND = new Set(['W0', 'E0', 'iM', 'iC', 'iJ', 'iN', 'H', ...Object.keys(NODES).filter(k => /^[LE]\d$/.test(k))]); // yard / IC: 14 ft centres leave no room between tracks, so the stand goes on the far side of the points
 function standPos(k) { const [nx, ny] = P[k], dt = legDir(NODES[k].trunk, 6); return [nx + dt[0] * 3, ny + (FAR_STAND.has(k) ? 8.5 : -8.5)]; }
 function drawStand(g, k) {
   const [x, y] = standPos(k), A = pr(x, y), kk = A[2], lined = state.sw[k];
@@ -2170,7 +2194,7 @@ function drawBumper(g, node) {
   const a = up(near, 4.8), b = up(near, 3.2); g.fillStyle = '#f0c419'; g.fillRect(a[0] - 1.6 * k, a[1], 3.2 * k, (b[1] - a[1]) * 0.45);
 }
 // straight (label-able) stretch of each named track: [y, x from, x to]
-const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Prairie Grain run-around': [20, PG_X - 419, PG_X + 450], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'IC Inbound': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'IC Outbound': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'IC Tail': [P.bT[1], P.bT[0], P.iN[0] - 10] };
+const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Prairie Grain run-around': [20, PG_X - 419, PG_X + 450], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'IC Inbound': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'IC Outbound': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'IC Tail': [P.bT[1], P.bT[0], P.iN[0] - 10], 'IC Connection': [-40, ICC_X + 200, ICC_X + 320] };
 function drawLabels(g) {
   const lab = (t, x, y, sz, col) => { g.font = `700 ${sz}px -apple-system,Segoe UI,Roboto,Arial`; g.textAlign = 'left'; g.textBaseline = 'middle'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.75)'; g.strokeText(t, x, y); g.fillStyle = col; g.fillText(t, x, y); g.textBaseline = 'alphabetic'; };
   const fy = view.ys;
