@@ -1525,8 +1525,22 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
   }
   // street behind the yard with utility poles
   for (let px = -720; px < P.nE[0] + 300; px += 115) { const p0 = px, p1 = px + 115; SCENERY.push({ key: 432, x0: p0 - 6, x1: p1 + 6, y: 432, draw: g => pole(g, p0, 432, p1) }); }
-  // trees between the engine track and the street, and behind town
-  const treeAt = (tx, ty, th) => SCENERY.push({ key: ty, x0: tx - th * 0.4, x1: tx + th * 0.4, y: ty, draw: g => tree(g, tx, ty, th, ((Math.floor(tx * 7 + ty) % 3) + 3) % 3) });
+  // across the street from the stores (the yard side): the backs of buildings that face the street, sheds, fences and bins (own random stream)
+  const BACKS = []; { const R3 = rng(4417), bc = ['#7d4233', '#8a5039', '#6e3c30', '#9a6a4c', '#857766', '#6f6458'];
+    const skip = (a, b) => (b > -360 && a < -300) || (b > RDX - 30 && a < RDX + 30);
+    let bx = -700;
+    while (bx < 1350) { const r = R3(), w = 18 + Math.floor(R3() * 30), x0 = bx;
+      if (r < 0.3 || skip(x0, x0 + w)) { bx += 12 + R3() * 30; continue; }                 // alley, lot, or road
+      if (r < 0.75) { const y0 = 404 + Math.floor(R3() * 6), h = R3() < 0.4 ? 21 : 11 + Math.floor(R3() * 4), col = bc[Math.floor(R3() * bc.length)], v = R3();
+        BACKS.push([x0, x0 + w]); SCENERY.push({ key: y0, x0, x1: x0 + w, y: y0, draw: g => box(g, x0, x0 + w, y0, 434, h, { front: col, side: shade(col, -16), top: '#55524d' }, (F, k, W) => backDeco(g, F, k, W, h, col, v)) }); }
+      else if (r < 0.87) { const y0 = 412 + Math.floor(R3() * 8), sw = Math.min(w, 14 + Math.floor(R3() * 8)), col = R3() < 0.5 ? '#c9c2ae' : '#9b8a6c', x1 = x0 + sw;
+        BACKS.push([x0, x1]); SCENERY.push({ key: y0, x0, x1, y: y0, draw: g => box(g, x0, x1, y0, 432, 9, { front: col, side: shade(col, -18), top: '#6b6660' }, (F, k, W) => { if (k < 0.3) return; rectF(g, F, W * 0.3, 0, W * 0.7, 7, shade(col, -28)); rectF(g, F, -0.3, 8.2, W + 0.3, 9, '#5d5a55'); }) }); } // garage / shed
+      else { const y0 = 418 + Math.floor(R3() * 6); SCENERY.push({ key: y0, x0, x1: x0 + w, y: y0, draw: g => fence(g, x0, x0 + w, y0) });   // board fence with a bin in front
+        const dx = x0 + 3 + R3() * (w - 10); SCENERY.push({ key: y0 - 3, x0: dx, x1: dx + 6, y: y0 - 3, draw: g => box(g, dx, dx + 6, y0 - 3, y0 - 0.5, 4.5, { front: '#3f5f45', side: '#334d38', top: '#2b3d2f' }) }); }
+      bx = x0 + w + (R3() < 0.4 ? 4 + R3() * 8 : 0);
+    } }
+  // trees between the engine track and the street, and behind town (none inside the building backs)
+  const treeAt = (tx, ty, th) => (ty > 395 && ty < 436 && BACKS.some(([a, b]) => tx > a - 6 && tx < b + 6)) || SCENERY.push({ key: ty, x0: tx - th * 0.4, x1: tx + th * 0.4, y: ty, draw: g => tree(g, tx, ty, th, ((Math.floor(tx * 7 + ty) % 3) + 3) % 3) });
   for (let i = 0; i < 26; i++) { const tx = -700 + R() * 2050, ty = 330 + R() * 90; if (tx > P.T[0] - 120 && tx < P.bEng[0] + 60) continue; treeAt(tx, ty, 26 + R() * 22); }
   for (let i = 0; i < 40; i++) treeAt(-900 + R() * 2600, 560 + R() * 500, 30 + R() * 25);
   for (let i = 0; i < 14; i++) treeAt(-760 + R() * 300, 20 + R() * 120, 28 + R() * 18); // grove north of the yard, behind the main
@@ -1550,7 +1564,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
   groundDecals.push([-305, -210, 26, 34, '#b9b2a4']);
   // grain elevator and water tower in the distance
   SCENERY.push({ key: 1150, x0: 820, x1: 1010, y: 1150, draw: g => elevator(g, 860, 1150) });
-  SCENERY.push({ key: 950, x0: -260, x1: -180, y: 950, draw: g => waterTower(g, -220, 950) });
+  SCENERY.push({ key: 565, x0: -250, x1: -190, y: 565, draw: g => waterTower(g, -220, 565) }); // just behind the stores (was out at depth 950)
   // freight house + dock
   // Danny's freight house (art/buildings/fh-house.png, 5.05 px/ft, 138 ft incl. 1 ft pad each side): bottom row = dock edge, FH_BACK ft behind
   // the house-track centre so nothing reaches the rails; centred on the 180 ft FH spot. No picture -> the old box house, set back the same way.
@@ -1639,6 +1653,20 @@ function elevator(g, x, y) {
     g.fillStyle = gr; g.fillRect(A[0] - r, A[1] - h, 2 * r, h); g.beginPath(); g.ellipse(A[0], A[1] - h, r, r * 0.18, 0, 0, 7); g.fillStyle = '#c9c4b8'; g.fill(); }
   box(g, x + 102, x + 128, y, y + 24, 140, { front: '#c8c2b5', side: '#aaa396', top: '#9a948a' }, (F, k, W) => { if (k > 0.15) { g.fillStyle = '#5a5650'; g.font = `700 ${Math.max(6, 3.2 * k)}px Arial`; g.textAlign = 'center'; g.save(); const p = F(W / 2, 120); g.translate(p[0], p[1]); g.rotate(-Math.PI / 2); g.fillText('MATTOON GRAIN', 0, 0); g.restore(); } });
 }
+function backDeco(g, F, k, W, h, col, v) { // the plain back wall of a street-front block
+  if (k < 0.3) return; const dk = shade(col, -34);
+  rectF(g, F, -0.3, h - 1.2, W + 0.3, h, dk);                                             // parapet cap
+  const dU = v < 0.5 ? 4 : W - 8; rectF(g, F, dU, 0, dU + 3.4, 7, '#4a3a2e'); rectF(g, F, dU - 0.6, 7, dU + 4, 7.6, dk); // back door + lintel
+  if (v > 0.35 && W > 26) { const lu = v < 0.5 ? W - 13 : 3; rectF(g, F, lu, 0, lu + 9, 8, '#5b5148'); for (let u = lu + 1.5; u < lu + 9; u += 1.5) rectF(g, F, u, 0.3, u + 0.15, 7.7, 'rgba(0,0,0,.18)'); } // loading door
+  for (let u = 5; u < W - 4; u += 9) { if (Math.abs(u - dU) < 6) continue; rectF(g, F, u, 4.5, u + 2.4, 7.5, '#33393c'); }   // small ground-floor windows
+  if (h > 18) { for (let u = 4; u < W - 3; u += 7) rectF(g, F, u, 12, u + 2.6, 16.5, '#2f3437');
+    if (v < 0.6) { const fu = W * 0.55; rectF(g, F, fu, 11, fu + 7, 11.4, '#2a2a2a'); for (let u = fu; u <= fu + 7; u += 1) rectF(g, F, u, 11.4, u + 0.12, 13.5, '#2a2a2a'); rectF(g, F, fu, 13.4, fu + 7, 13.6, '#2a2a2a'); // fire escape landing
+      for (let i = 0; i < 6; i++) rectF(g, F, fu + 7 - i * 1.1, 1 + i * 1.7, fu + 7.8 - i * 1.1, 1.4 + i * 1.7, '#2a2a2a'); } }
+  if (v > 0.7) { rectF(g, F, W * 0.2, h, W * 0.2 + 3, h + 3.5, '#6b4434'); }               // chimney
+  else if (v < 0.2) rectF(g, F, W * 0.6, h, W * 0.6 + 4, h + 2, '#8d9093');                 // roof vent box
+}
+function fence(g, x0, x1, y) { const A = pr(x0, y), B = pr(x1, y), k = A[2]; if (k < 0.15) return;
+  poly(g, [A, B, up(B, 6), up(A, 6)], '#8a7356'); g.fillStyle = 'rgba(60,45,30,.35)'; for (let x = x0; x < x1; x += 1.2) { const P = pr(x, y); g.fillRect(P[0], P[1] - 6 * k, Math.max(0.5, 0.12 * k), 6 * k); } }
 function waterTower(g, x, y) {
   const A = pr(x, y), k = A[2]; g.strokeStyle = '#8b9196'; g.lineWidth = Math.max(1, 0.8 * k);
   for (const o of [-9, -3, 3, 9]) { g.beginPath(); g.moveTo(A[0] + o * k, A[1]); g.lineTo(A[0] + o * 0.6 * k, A[1] - 80 * k); g.stroke(); }
