@@ -532,8 +532,11 @@ function uncouple(c, i) {
 // ---------------------------------------------------------------- physics
 const PHY = { TE: 60000, PW: 1750 * 550 * 0.82, MU: 0.20, MU_SAND: 0.33, BRK: 0.30 };
 let live = { slip: false, slide: false, eq: 0 };
+// perf (Nov 1): held against a bumper, the map edge or a fouled switch, event() ran on every sim step (4+ times a frame at 4x) and each one
+// saved the whole game and rebuilt the message box; now a repeat without a charge saves at most every 2 s (the 3 s autosave still runs)
+let evSaveT = -1e9;
 function event(kind, a) {
-  const s = state;
+  const s = state, m0 = s.money;
   if (kind === 'couple') {
     if (a > 6) { s.money -= 120; s.rep -= 5; s.dayBad = true; toast(`Hard hit at ${a.toFixed(1)} mph! Car damaged: -$120 -5 rep. Couple under 4 mph.`, 'bad'); sfx('crash'); }
     else if (a > 4) { s.money -= 30; s.rep -= 2; toast(`Rough coupling at ${a.toFixed(1)} mph: -$30 -2 rep. Keep it under 4 mph.`, 'bad'); sfx('clank'); }
@@ -550,7 +553,7 @@ function event(kind, a) {
   } else if (kind === 'runthrough') {
     s.money -= 40; s.rep += REP.DERAIL; s.dayBad = true; toast(`Ran through switch ${NODES[a].tag} (${NODES[a].name}) lined the wrong way and derailed: -$40 ${REP.DERAIL} rep.`, 'bad'); sfx('crash');
   }
-  save();
+  const now = performance.now(); if (kind === 'couple' || kind === 'runthrough' || s.money !== m0 || now - evSaveT > 2000) { evSaveT = now; save(); }
 }
 function stepConsist(c, dt) {
   const l = locoOf(c), ctl = state.ctl, W = weight(c) * 2000, m = W / 32.2, Wl = l.wt * 2000;
@@ -1219,8 +1222,9 @@ function zoomAt(f, sx, sy) { userCam = true; const [wx, wy] = s2w(sx, sy); cam.z
 let toasts = [], toastT1 = 0, toastT2 = 0;
 function toast(t, kind) { // one message at a time: a new one replaces the old and restarts the fade
   const box = $('toast'); clearTimeout(toastT1); clearTimeout(toastT2);
-  toasts.forEach(x => x.remove()); box.innerHTML = '';
-  const el = document.createElement('div'); el.textContent = t; if (kind) el.className = kind; box.appendChild(el); toasts = [el];
+  let el = toasts.length === 1 && toasts[0].isConnected && toasts[0].textContent === t && toasts[0].className === (kind || '') && toasts[0].style.opacity !== '0' ? toasts[0] : null; // perf: same message still showing: keep it, just restart its timer
+  if (!el) { toasts.forEach(x => x.remove()); box.innerHTML = '';
+  el = document.createElement('div'); el.textContent = t; if (kind) el.className = kind; box.appendChild(el); toasts = [el]; }
   toastT1 = setTimeout(() => { el.style.opacity = '0'; toastT2 = setTimeout(() => { el.remove(); toasts = toasts.filter(x => x !== el); }, 450); }, kind === 'bad' ? 4500 : 2600);
   if (window.__log) window.__log.push(t);
 }

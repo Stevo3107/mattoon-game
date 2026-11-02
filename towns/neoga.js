@@ -633,7 +633,8 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
 }
 const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 60) % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 // ================================================================= UI
-let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; b.innerHTML = ''; const d = document.createElement('div'); d.textContent = t; if (kind) d.className = kind; b.appendChild(d); clearTimeout(toastT); toastT = setTimeout(() => { d.style.opacity = 0; }, 4500); }
+let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; let d = b.children.length === 1 ? b.firstChild : null; // perf (Nov 1): the same message still showing is kept (timer restarted), not rebuilt every sim step
+  if (!d || d.textContent !== t || d.className !== (kind || '') || d.style.opacity === '0') { b.innerHTML = ''; d = document.createElement('div'); d.textContent = t; if (kind) d.className = kind; b.appendChild(d); } clearTimeout(toastT); toastT = setTimeout(() => { d.style.opacity = 0; }, 4500); }
 const notes = []; function note(t) { notes.push(t); toast(t); }
 function showModal(h) { $('modal').innerHTML = h; $('modalBg').classList.add('show'); } function hideModal() { $('modalBg').classList.remove('show'); }
 // big map town tabs (Oct 30): Neoga's big map is the shared tab map; this light copy also goes in the save for Mattoon's Neoga tab
