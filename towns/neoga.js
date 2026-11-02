@@ -107,6 +107,7 @@ const WB_KIND = { boxcarIC: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank
 const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', hopper: 'LO COV HOPPER' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
 
+const VISIT = !!NII.visit; // Look around (Nov 1): view-only visit, the train is in another town; nothing here is run or saved
 const $ = id => document.getElementById(id), C = window.NII_CORE, E = NII.env(), M = E.towns.mattoon || (E.towns.mattoon = {});
 const TA = window.NII_TOWN_ART || {}; // Neoga pack art (Danny): fuel dealer now; tower, freight house, signals picked up by name when approved
 const BA = k => TA[k] || (C.BART && C.BART[k]) || null;
@@ -509,14 +510,16 @@ function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined 
   return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -RE - 320, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -RE - 300, NWX, 400]], lined, cars,
     bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
     labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W interchange (wye)', SW_WE - 200, -RE - 30, 1], ['N&W', NWX + 30, -RE - 280, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
-function mapLiveTap(m, X, Y) { // own tab: tap a switch to throw it, tap a track to run the engine there
+function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(NII.visitNote(), 'bad'); return; } }
+    let bt = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!bt || e < bt.e)) bt = { t, d, e, p }; }
+    if (bt) NII.crossFromVisit({ to: 'neoga', x: bt.p[0], y: bt.p[1], label: T[bt.t].name, name: 'Neoga' }); return; } // own tab: tap a switch to throw it, tap a track to run the engine there
   let bs = null; for (const [k, sw] of Object.entries(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]), e = Math.hypot(a - X, b - Y); if (e < 22 && (!bs || e < bs.e)) bs = { k, e }; }
   if (bs) { const k = bs.k, s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e))));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); NII.mapTabs.repaint(); return; }
   let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!best || e < best.e)) best = { t, d, e }; }
   if (best && liveCut()) { S.crossT = null; S.crossWait = false; apTo(best.t, best.d); NII.mapTabs.hide(); } }
-function openMap() { NII.mapTabs.show('neoga', { liveSnap: mapSnap, liveTap: mapLiveTap, crossTap: crossStart }); }
+function openMap() { NII.mapTabs.show('neoga', { liveSnap: mapSnap, liveTap: mapLiveTap, crossTap: VISIT ? null : crossStart }); }
 // cross-town taps (Oct 30): S.crossT = where autopilot is headed for a cross-town trip ({ t, d, label, edge: true } = the north end, then the travel prompt)
 let crossAsk = null;
 function crossStart(o) { S.crossT = null; crossAsk = null; if (!liveCut()) return; S.crossT = { t: 'M1', d: 2, edge: true, to: o.to, x: o.x, y: o.y, label: o.label };
@@ -528,7 +531,7 @@ function crossArrive() { const x = E.cross; if (!x || x.to !== 'neoga') return; 
   for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const p = ptAt(t, d), e = Math.hypot(p[0] - x.x, p[1] - x.y); if (!best || e < best.e) best = { t, d, e }; }
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Neoga map. Stopped at the edge.", 'bad'); return; }
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) toast(`Continuing to ${x.label}.`); save(); }
-function save() { try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
+function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(); showModal(`<h2>Neoga jobs</h2><ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>
   <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (left on the wye). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
@@ -546,11 +549,11 @@ function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400
 function build() {
   for (const id of ['jobbar', 'panel', 'sceneBtns', 'speedBtn', 'restartBtn', 'menuBtn', 'mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
   const bar = document.createElement('div'); bar.id = 'neogaBar'; bar.className = 'ng';
-  bar.innerHTML = `<div class="ngrow"><button data-a="dirL">◀</button><button data-a="stop" class="red">■</button><button data-a="dirR">▶</button><button data-a="mph" id="ngMph">10 mph</button><span id="ngSpd">0 mph</span></div>
-  <div class="ngrow"><button data-a="route" id="rtBtn">Request route</button><button data-a="jobs">Jobs</button><button data-a="endday" class="alt">End day</button></div>
-  <div class="ngrow"><button data-a="zout" class="alt">−</button><button data-a="zin" class="alt">+</button><button data-a="follow" class="alt">Follow</button><button data-a="x" class="alt" id="ngX">1x</button><button data-a="map" class="alt">Map</button><button data-a="north" class="alt">◀ N to Mattoon</button></div>`;
+  bar.innerHTML = `<div class="ngrow" data-v="no"><button data-a="dirL">◀</button><button data-a="stop" class="red">■</button><button data-a="dirR">▶</button><button data-a="mph" id="ngMph">10 mph</button><span id="ngSpd">0 mph</span></div>
+  <div class="ngrow" data-v="no"><button data-a="route" id="rtBtn">Request route</button><button data-a="jobs">Jobs</button><button data-a="endday" class="alt">End day</button></div>
+  <div class="ngrow"><button data-a="zout" class="alt">−</button><button data-a="zin" class="alt">+</button><button data-a="follow" class="alt" data-v="no">Follow</button><button data-a="x" class="alt" id="ngX" data-v="no">1x</button><button data-a="map" class="alt">Map</button><button data-a="towns" class="alt" data-v="no">Towns</button><button data-a="north" class="alt" data-v="no">◀ N to Mattoon</button></div>`;
   wrap.appendChild(bar);
-  document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
+  document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
@@ -566,7 +569,7 @@ function build() {
   cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = e.clientX - r.left, Y = e.clientY - r.top; tap(X, Y); });
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = Math.max(0.25, Math.min(4, cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); }, { passive: false });
 }
-function tap(X, Y) { S.crossT = null; S.crossWait = false;
+function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r)) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
   const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r); if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
@@ -577,7 +580,10 @@ function tap(X, Y) { S.crossT = null; S.crossWait = false;
 // ================================================================= LOOP
 let last = performance.now(), saveT = 0, mapT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
+  if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); resize(); draw(); requestAnimationFrame(frame);
+build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
+else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
+resize(); draw(); requestAnimationFrame(frame);
 window.__neoga = { nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
 };
