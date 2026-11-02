@@ -3,7 +3,7 @@ window.NII_TOWN_ART = {"coal-hopper40-ic-far@2x":"data:image/png;base64,iVBORw0K
 // ---------------------------------------------------------------- Neoga, IL (Oct 30): Stephen's design.
 // Small town. Main runs north (screen left, from Mattoon) to south (screen right, toward Effingham).
 // N&W crosses at grade (bottom to top) at the diamond, N&W tower beside it, home signals on our main both sides.
-// N&W interchange = the wye on the farm side (above the main). Town side (below): house track + freight house, Miller & Sons Fuel (coal + fuel oil).
+// N&W interchange = one stub track (N&W Interchange) off S2 on the farm side (above the main); run-around south of the diamond. Town side (below): house track + freight house, Miller & Sons Fuel (coal + fuel oil).
 // Self-contained town engine: its own track, switches, cuts, customers and jobs. Money/rep stay in the railroad's books (Mattoon's record).
 window.NII_TOWNS = window.NII_TOWNS || {};
 window.NII_TOWNS.neoga = function (NII) {
@@ -118,7 +118,7 @@ const RED_FINE = 500, RED_REP = 15;                // running a red home signal 
 const ROUTE_CLEAR_ODDS = 0.80;                     // tower clears us right away; else hold for an N&W train
 const NW_ROUTE_ODDS = 0.20;                        // outbound car reassigned to the other interchange (IC <-> N&W)
 const INBOUND_ODDS = { HOUSE: 0.35, COAL: 0.30, OIL: 0.25 }; // chance per customer per day of an interchange car
-const NW_SHARE = 0.35;                             // share of inbound cars that come by the N&W wye (rest come down from IC at Mattoon)
+const NW_SHARE = 0.35;                             // share of inbound cars that the N&W sets on the N&W Interchange (rest come down from IC at Mattoon)
 const WORK_H = 10;                                 // hours at the spot to unload / load
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
@@ -135,26 +135,30 @@ const SW_H = 500, SW_WW = 1280, SW_WE = 1960, SW_F = 2150, RW = 320, RE = 360, F
 const houseLead = sCurve(SW_H, 0, 1, HOUSE_OFF, 400, 0), HX0 = houseLead[houseLead.length - 1][0];
 const fuelLead = sCurve(SW_F, 0, 1, FUEL_OFF, 400, 0), FX0 = fuelLead[fuelLead.length - 1][0];
 const FD = { start: 0, wheelStop: 223.5, railEnd: 228, spots: { hopper1: 40, hopper2: 100, tank: 165 } }; // Danny's neoga-fuel-dealer.json (car spots)
+// Nov 1 (Stephen): wye gone. North leg (S2) = N&W Interchange: one track (inbound + outbound share it), the old north leg, joining the N&W main at a LOCKED switch (NWL, lined for the N&W; no N&W key),
+// nowhere near the N&W (Clover Leaf) main. Run-around on the farm side south of the diamond (#10s S3 / S5, 14 ft centres), clear of the south home signal at 1,760.
+const RA_N = 1800, RA_S = 3150;
+const raLead = sCurve(RA_N, 0, 1, -14, 780, 0), raTail = sCurve(RA_S, 0, -1, -14, 780, 0).reverse();
 const T = { // tracks: polylines; cls main/other for speed
   M1: { p: [[XN, 0], [SW_H, 0]], cls: 'main', name: 'Main' }, M2: { p: [[SW_H, 0], [SW_WW, 0]], cls: 'main', name: 'Main' },
-  M3: { p: [[SW_WW, 0], [SW_WE, 0]], cls: 'main', name: 'Main (diamond)' }, M4: { p: [[SW_WE, 0], [SW_F, 0]], cls: 'main', name: 'Main' }, M5: { p: [[SW_F, 0], [XS, 0]], cls: 'main', name: 'Main' },
+  M3: { p: [[SW_WW, 0], [RA_N, 0]], cls: 'main', name: 'Main (diamond)' }, M4: { p: [[RA_N, 0], [SW_F, 0]], cls: 'main', name: 'Main' }, M5: { p: [[SW_F, 0], [RA_S, 0]], cls: 'main', name: 'Main' }, M6: { p: [[RA_S, 0], [XS, 0]], cls: 'main', name: 'Main' },
   HT: { p: houseLead.concat([[HX0 + 300, HOUSE_OFF]]), cls: 'other', name: 'House track' },
-  WW: { p: arc(SW_WW, -RW, RW, Math.PI / 2, 0, 24).map(([x, y]) => [x, y]), cls: 'other', name: 'Wye, north leg' },
-  NJ: { p: [[NWX, -RW], [NWX, -RE]], cls: 'other', name: 'Wye (on the N&W)' },
-  WE: { p: arc(SW_WE, -RE, RE, Math.PI / 2, Math.PI, 24), cls: 'other', name: 'N&W interchange (wye south leg)' },
-  TL: { p: [[NWX, -RE], [NWX, -RE - 300]], cls: 'other', name: 'Wye tail (N&W)' },
+  NWI: { p: arc(SW_WW, -RW, RW, Math.PI / 2, 0, 24), cls: 'other', name: 'N&W Interchange' }, // 320 ft radius, tangent (#10) onto the N&W main at the locked switch NWL
+  RA: { p: raLead.concat(raTail), cls: 'other', name: 'Run-around' },
   FL: { p: fuelLead.concat([[FX0 + FD.railEnd, FUEL_OFF]]), cls: 'other', name: 'Miller & Sons Fuel spur', dirt: true },
 };
 for (const [k, t] of Object.entries(T)) { t.id = k; t.cum = [0]; for (let i = 1; i < t.p.length; i++) t.cum.push(t.cum[i - 1] + Math.hypot(t.p[i][0] - t.p[i - 1][0], t.p[i][1] - t.p[i - 1][1])); t.len = t.cum[t.cum.length - 1]; }
-const SWITCHES = { // stem/N/R are track ends; high stands with lamp on the main, low Bethlehem stand on the wye tail
+const SWITCHES = { // stem/N/R are track ends; high stands with lamp on the main, low Bethlehem stand off it
   S1: { at: [SW_H, 0], stem: ['M1', 'b'], N: ['M2', 'a'], R: ['HT', 'a'], high: true, side: 1, name: 'House track' },
-  S2: { at: [SW_WW, 0], stem: ['M2', 'b'], N: ['M3', 'a'], R: ['WW', 'a'], high: true, side: -1, name: 'Wye north leg' },
-  S3: { at: [SW_WE, 0], stem: ['M4', 'a'], N: ['M3', 'b'], R: ['WE', 'a'], high: true, side: -1, name: 'Wye south leg' },
+  S2: { at: [SW_WW, 0], stem: ['M2', 'b'], N: ['M3', 'a'], R: ['NWI', 'a'], high: true, side: -1, name: 'N&W Interchange' },
+  S3: { at: [RA_N, 0], stem: ['M3', 'b'], N: ['M4', 'a'], R: ['RA', 'a'], high: true, side: -1, name: 'Run-around north' },
   S4: { at: [SW_F, 0], stem: ['M4', 'b'], N: ['M5', 'a'], R: ['FL', 'a'], high: true, side: 1, name: 'Fuel spur' },
-  S5: { at: [NWX, -RE], stem: ['TL', 'a'], N: ['NJ', 'b'], R: ['WE', 'b'], high: false, side: 1, name: 'Wye tail' },
+  S5: { at: [RA_S, 0], stem: ['M6', 'a'], N: ['M5', 'b'], R: ['RA', 'b'], high: true, side: -1, name: 'Run-around south' },
 };
-const JOINS = [[['WW', 'b'], ['NJ', 'a']]];
-const ENDS = { 'M1a': 'north', 'M5b': 'south', 'HTb': 'bumper', 'FLb': 'stop', 'TLb': 'nwlimit' };
+const JOINS = [];
+const ENDS = { 'M1a': 'north', 'M6b': 'south', 'HTb': 'bumper', 'FLb': 'stop', 'NWIb': 'locked' };
+const NWL = { at: [NWX, -RW], name: 'N&W connection (locked)' }; // never thrown: the interchange can't reach the N&W main
+const LOCK_MSG = 'This switch is locked. You do not have an N&W key';
 const NODE = {}; // "M1b" -> { sw, role } | { join: [t,e] } | { end }
 for (const [k, s] of Object.entries(SWITCHES)) for (const r of ['stem', 'N', 'R']) NODE[s[r][0] + s[r][1]] = { sw: k, role: r };
 for (const [a, b] of JOINS) { NODE[a[0] + a[1]] = { join: b }; NODE[b[0] + b[1]] = { join: a }; }
@@ -180,8 +184,8 @@ const FH = { doorX: HX0 + 90 }; // freight house: car door at x, house 40 x 20 f
 { const sp = Object.fromEntries(SPOTS.map(s => [s.id, s])); sp['HOUSE-DOOR'].d = dOfX('HT', FH.doorX); sp['HOUSE-TEAM'].d = dOfX('HT', FH.doorX + 120);
   const f0 = T.FL.len - FD.railEnd; sp['COAL-1'].d = f0 + FD.spots.hopper1; sp['COAL-2'].d = f0 + FD.spots.hopper2; sp.OIL.d = f0 + FD.spots.tank; }
 let S = E.towns.neoga;
-if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
-  if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train; } // v1 stub save: the train that was parked there comes back in
+if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, ra: 1, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
+  if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train; }
 E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -213,6 +217,12 @@ function placeCut(veh, aT, t, dHead, dir) { // cut with its head at (t, dHead) p
   const c = { id: 'c' + (S.nid++), veh, aT, path: [{ t, dir, d0: dHead, d1: dHead }] }; reverseCut(c); extendHead(c, cutLen(c)); reverseCut(c); return c; }
 function segsOverlap(a, b, pad) { for (const g of a.path) for (const h of b.path) if (g.t === h.t) { const lo = Math.max(Math.min(g.d0, g.d1), Math.min(h.d0, h.d1)), hi = Math.min(Math.max(g.d0, g.d1), Math.max(h.d0, h.d1)); if (hi - lo > -pad) return true; } return false; }
 function vehPos(c) { const out = []; let s = 0; c.veh.forEach((v, i) => { const L = vL(v), p0 = pathPt(c, s), p1 = pathPt(c, s + L), pm = pathPt(c, s + L / 2); out.push({ v, i, L, p0, p1, pm, aT: c.aT[i] }); s += L; }); return out; }
+if (!S.ra) { S.ra = 1; S.sw = { S1: S.sw.S1 || 'N', S2: 'N', S3: 'N', S4: S.sw.S4 || 'N', S5: 'N' }; // Nov 1 migration: wye removed -> N&W Interchange (one track) + run-around
+  const mv = { NWI: [] };
+  S.cuts = S.cuts.filter(c => { if (c.veh.some(isLoco)) { if (c.path.some(g => !T[g.t] || ['WW', 'WE', 'NJ', 'TL'].includes(g.t)) || c.path.some(g => g.t.startsWith('M') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5)) { c.path = [{ t: 'M2', dir: 1, d0: 0, d1: 0 }]; extendHead(c, Math.min(cutLen(c), T.M2.len - 5)); } return true; }
+    if (!c.path.some(g => ['WW', 'WE', 'NJ', 'TL'].includes(g.t) || (g.t.startsWith('M') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5))) return true;
+    c.veh.forEach((v, i) => mv.NWI.push([v, c.aT[i]])); return false; });
+  for (const [t, L] of Object.entries(mv)) if (L.length) S.cuts.push(placeCut(L.map(x => x[0]), L.map(x => x[1]), t, T[t].len - 6, 1)); } // v1 stub save: the train that was parked there comes back in
 // ================================================================= CARS & WAYBILLS
 const NUMSP = C.NUMSPEC || {};
 const numOf = k => (NUMSP[k] && NUMSP[k].painted) || (k.startsWith('boxcarIC_') ? k.slice(9) : null);
@@ -223,7 +233,7 @@ const TANK_ART = { GATX: 'tank_gatx', ACFX: 'tank_acfx', UTLX: 'tank_utlx' };
 function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC' or 'NW')
   const id = 'ng' + (S.nid++); let v;
   if (dest === 'NG OIL') { const road = ['GATX', 'ACFX', 'UTLX'][Math.floor(R() * 3)], art = TANK_ART[road]; v = { id, type: 'tank', art, road, num: numOf(art) || String(10000 + Math.floor(R() * 89999)), load: { c: 'Fuel oil (No. 2)', t: 50 } }; }
-  else if (dest === 'NG COAL') { // Danny's AAR twin hoppers (37 ft over couplers): N&W mostly via the wye, IC / NYC (unrepainted PC-era) mostly via the IC
+  else if (dest === 'NG COAL') { // Danny's AAR twin hoppers (37 ft over couplers): N&W mostly via the N&W interchange, IC / NYC (unrepainted PC-era) mostly via the IC
     const x = R(), road = via === 'NW' ? (x < 0.8 ? 'N&W' : x < 0.9 ? 'IC' : 'NYC') : (x < 0.55 ? 'IC' : x < 0.9 ? 'NYC' : 'N&W'), k = HOP_K[road];
     v = { id, type: 'hopper', coal: true, art: 'coal_hopper40_' + k, L: 37, road, num: String(road === 'N&W' ? 30000 + Math.floor(R() * 9999) : road === 'IC' ? 70000 + Math.floor(R() * 9999) : 860000 + Math.floor(R() * 9999)), load: { c: 'Coal (stoker)', t: 50 } }; }
   else { const roads = via === 'NW' ? ['N&W', 'N&W', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
@@ -273,27 +283,28 @@ function advance(dt) { // game time passes in Neoga: car hire, work at the spots
     v.work = (v.work || 0) + dt / 3600;
     if (v.work >= WORK_H) { const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
       v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = E.time; delete v.work; delete v.ngFee;
-      toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the wye interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
+      toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
   if (hire) book('hire', hire * dt / 3600);
   for (const q of standingCars()) { const v = q.v; if (!v.doneAt || isLease(v) || q.live) continue; if (!v.from || !SPOTS.some(sp => sp.dest === v.from && sp.t === q.pm.t && Math.abs(sp.d - q.pm.d) <= sp.tol + 30)) continue;
     const due = demurrage(v.doneAt, E.time) - (v.demPaid || 0); if (due > 0) { book('dem', due); v.demPaid = (v.demPaid || 0) + due; } }
 }
-function onWyeInterchange(c) { return c.path.every(g => g.t === 'WE') && !c.veh.some(isLoco); }
-function newDay() { // N&W works the wye; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
+function onWyeInterchange(c) { return c.path.every(g => g.t === 'NWI') && !c.veh.some(isLoco); } // N&W Interchange (one track, in + out)
+function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
   const d = dayNo(); if (S.day === d) return; S.day = d; R = seeded(d * 7919 + 17);
   let pay = 0, n = 0; for (const c of S.cuts.slice()) if (onWyeInterchange(c)) { const keep = [], kA = [];
     c.veh.forEach((v, i) => { if (v.dest === 'NW-INT') { pay += ECON.CAR + (v.load ? ECON.PER_TON * v.load.t : 0); n++; } else { keep.push(v); kA.push(c.aT[i]); } });
-    if (!keep.length) S.cuts.splice(S.cuts.indexOf(c), 1); else if (keep.length < c.veh.length) { const nc = placeCut(keep, kA, 'WE', T.WE.len - 20, 1); S.cuts.splice(S.cuts.indexOf(c), 1, nc); } }
-  if (n) { book('earn', Math.round(pay * 100) / 100); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the wye: +$${pay.toFixed(2)}.`); }
+    if (!keep.length) S.cuts.splice(S.cuts.indexOf(c), 1); else if (keep.length < c.veh.length) { const nc = placeCut(keep, kA, 'NWI', T.NWI.len - 6, 1); S.cuts.splice(S.cuts.indexOf(c), 1, nc); } }
+  if (n) { book('earn', Math.round(pay * 100) / 100); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
   const nw = []; for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
-  if (nw.length) { const L = nw.reduce((a, v) => a + vL(v), 0), c = placeCut(nw, nw.map(() => true), 'WE', T.WE.len - 25, 1);
-    if (S.cuts.some(o => segsOverlap(o, c, 2)) || L > T.WE.len - 200) note('The N&W has cars for us but the wye interchange is full: they wait a day.'); else { S.cuts.push(c); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the wye interchange.`); } }
+  if (nw.length) { let hd = T.NWI.len - 6; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)) .map(x => x - 2)); // couple behind what's already there
+    const L = nw.reduce((a, v) => a + vL(v), 0), c = placeCut(nw, nw.map(() => true), 'NWI', hd, 1);
+    if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); else { S.cuts.push(c); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } }
   if (S.pendIC.length) note(`${S.pendIC.length} IC car${S.pendIC.length > 1 ? 's' : ''} for Neoga wait at Mattoon: they come down with the next train.`);
 }
 function jobs() { const L = []; for (const q of standingCars()) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), what = v.dest === 'NG HOUSE' ? 'the freight house door or team spot' : v.dest === 'NG COAL' ? 'coal pit 1 or 2' : 'the fuel oil rack';
       L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && !q.live ? ` - spotted, ${Math.floor(v.work || 0)}/${WORK_H} h` : ''}` }); }
-    else if (v.dest === 'NW-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the N&W - leave it on the wye interchange (south leg)${v.reassigned ? ' (rerouted)' : ''}` });
+    else if (v.dest === 'NW-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the N&W - leave it on the N&W Interchange${v.reassigned ? ' (rerouted)' : ''}` });
     else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}` }); }
   return L; }
 // ================================================================= TOWER & SIGNALS (aspect logic only; drawing below)
@@ -338,7 +349,7 @@ function step(dt) {
   while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
     crossSignal(c, sgn, before, after);
     const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
-    if (r.stop) { ctl.v = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad'); else if (r.stop === 'nwlimit') toast('End of the wye tail: N&W main ahead. Reverse to finish wyeing.'); else toast('End of track.'); break; } }
+    if (r.stop) { ctl.v = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
 }
 function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the lined route to the tapped point (either way), stopping at red home signals
   for (const sgn of [1, -1]) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
@@ -476,6 +487,9 @@ function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = [
   drawGround(); for (const t of Object.keys(T)) drawTrack(t); drawNWMain();
   // bumper / wheel stop
   for (const [t, d] of [['HT', T.HT.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }
+  { const [x, y] = [NWL.at[0] + 8, NWL.at[1] - 12], h = 7.1, i = img(BA('switch-stand-high-locked@2x') || BA('switch-stand-high-normal@2x')); // locked N&W stand (high: no low locked art)
+    if (ok(i)) { const w = i.naturalWidth / i.naturalHeight * h; g.drawImage(i, sx(x) - w / 2 * cam.z, sy(y) - hz(h), w * cam.z, hz(h)); } else { g.fillStyle = '#2fa34f'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y) - hz(h), 3 * cam.z, hz(1.5)); }
+    HIT.stands.push({ k: 'NWL', lock: true, x: sx(x), y: sy(y) - hz(h / 2), r: Math.max(14, 3 * cam.z) }); }
   const items = []; // depth-sorted scenery + cars
   items.push({ y: -26, f: drawTower }); items.push({ y: HOUSE_OFF - 13.5, f: drawFreightHouse }); items.push({ y: FUEL_OFF - 0.5, f: drawFuel });
   for (const h of HOUSES) items.push({ y: h.y, f: () => { box3(h.x, h.y, h.w, h.d, h.h, h.col, h.roof, 7); if (h.tree) tree(h.x + h.w + 12, h.y - 6, 1); } });
@@ -489,7 +503,7 @@ function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = [
   items.sort((a, b) => a.y - b.y).forEach(o => o.f());
   // labels
   g.font = '700 12px Arial'; g.fillStyle = '#222'; g.textAlign = 'left'; g.fillText('◀ N to Mattoon', Math.max(6, sx(XN) + 6), sy(0) + 26); g.textAlign = 'right'; g.fillText('S to Effingham ▶', Math.min(W - 6, sx(XS) - 6), sy(0) + 26);
-  g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('N&W', sx(NWX) + 18, Math.min(H - 8, sy(600))); g.fillText('N&W interchange (wye)', sx(SW_WE - 180), sy(-200));
+  g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('N&W', sx(NWX) + 18, Math.min(H - 8, sy(600))); g.fillText('N&W Interchange', sx(1330), sy(-170)); g.fillText('Run-around', sx(2500), sy(-40));
   if (cam.z < 1.3) { g.fillText('House track', sx(HX0 + 200), sy(HOUSE_OFF) + 20); g.fillText('Miller & Sons Fuel', sx(FX0 + 110), sy(FUEL_OFF) + 22); g.fillText('Neoga tower (N&W)', sx(TWX + 18), sy(-60)); }
   const tw = S.tower; $('rtBtn').textContent = !tw ? 'Request route' : tw.st === 'hold' ? 'Holding for N&W' : 'Route lined';
   $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Neoga';
@@ -506,13 +520,14 @@ const r1 = v => Math.round(v * 10) / 10, flat = pts => pts.flatMap(p => [r1(p[0]
 function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined = [];
   for (const [k, sw] of Object.entries(SWITCHES)) { const [t, e] = sw[S.sw[k]] || [], tr = T[t]; if (!tr) continue; const L = Math.min(40, tr.len * 0.45), pts = []; for (let i = 0; i <= 6; i++) { const d = e === 'a' ? L * i / 6 : tr.len - L * i / 6; pts.push(ptAt(t, d)); } lined.push(flat(pts)); }
   const cars = []; for (const c of S.cuts) for (const q of vehPos(c)) cars.push({ p: flat([ptAt(q.p0.t, q.p0.d), ptAt(q.pm.t, q.pm.d), ptAt(q.p1.t, q.p1.d)]), c: NCOL[q.v.type] || '#555' });
-  const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]);
-  return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -RE - 320, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -RE - 300, NWX, 400]], lined, cars,
+  const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]).concat([NWL.at]);
+  return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -420, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -400, NWX, 400]], lined, cars,
     bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
-    labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W interchange (wye)', SW_WE - 200, -RE - 30, 1], ['N&W', NWX + 30, -RE - 280, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
+    labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W Interchange', 1330, -170, 1], ['Run-around', 2500, -30, 1], ['N&W (Clover Leaf)', NWX + 12, -380, 0, 'left'], ['locked switch', NWX + 12, -320, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
 function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(NII.visitNote(), 'bad'); return; } }
     let bt = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!bt || e < bt.e)) bt = { t, d, e, p }; }
     if (bt) NII.crossFromVisit({ to: 'neoga', x: bt.p[0], y: bt.p[1], label: T[bt.t].name, name: 'Neoga' }); return; } // own tab: tap a switch to throw it, tap a track to run the engine there
+  { const [a, b] = m.w2s(NWL.at[0], NWL.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(LOCK_MSG, 'bad'); return; } }
   let bs = null; for (const [k, sw] of Object.entries(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]), e = Math.hypot(a - X, b - Y); if (e < 22 && (!bs || e < bs.e)) bs = { k, e }; }
   if (bs) { const k = bs.k, s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e))));
@@ -533,12 +548,12 @@ function crossArrive() { const x = E.cross; if (!x || x.to !== 'neoga') return; 
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) toast(`Continuing to ${x.label}.`); save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(); showModal(`<h2>Neoga jobs</h2><ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>
-  <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (left on the wye). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
+  <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (set on the N&amp;W Interchange; leave N&amp;W cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${DEST[v.dest] ? 'For ' + DEST[v.dest].name : v.dest === 'NW-INT' ? 'To the N&W: leave on the wye interchange' : v.dest === 'IC-INT' ? 'To the IC: take it to Mattoon' : 'Tag: ' + esc(v.dest || '-')}${v.work ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${DEST[v.dest] ? 'For ' + DEST[v.dest].name : v.dest === 'NW-INT' ? 'To the N&W: leave on the N&W Interchange' : v.dest === 'IC-INT' ? 'To the IC: take it to Mattoon' : 'Tag: ' + esc(v.dest || '-')}${v.work ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
   <div class="btns">${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideOfHead(c) > 0 ? 'tail' : 'head', toTail = (side === 'L') === (left === 'tail'), k = toTail ? i : i + 1;
@@ -557,7 +572,7 @@ function build() {
     if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
-    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the wye, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
+    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the interchange, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
     else if (a === 'endGo') endDay(); else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
     else if (a === 'wb') { const v = standingCars().find(q => q.v.id === b.dataset.id); if (v) carModal(v); }
@@ -570,7 +585,7 @@ function build() {
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = Math.max(0.25, Math.min(4, cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); }, { passive: false });
 }
 function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r)) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
-  const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r); if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
+  const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r); if (st && st.lock) { toast(LOCK_MSG, 'bad'); return; } if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
   const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { carModal({ ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }); return; }
