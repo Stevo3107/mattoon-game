@@ -1235,7 +1235,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 </ul>
 <div class="btns"><button data-act="close">Let's go</button></div>`;
 function menu() {
-  const T = state.tasks || []; showModal(`<h2>Menu</h2><div class="btns"><button data-act="townsPick">Look at another town</button></div><p>Today's jobs: ${T.filter(t => t.done).length} of ${T.length} done. ${weekday(dayNo())} · Day ${dayNo()}.</p>
+  const T = state.tasks || []; showModal(`<h2>Menu</h2><div class="btns"><button data-act="townsPick">Look at another town</button></div><div class="btns"><button data-nm="fs" data-fs class="alt">${NII.fullscreen.label()}</button><button data-nm="ind" class="alt">Industries</button></div><p>Today's jobs: ${T.filter(t => t.done).length} of ${T.length} done. ${weekday(dayNo())} · Day ${dayNo()}.</p>
   <div class="btns"><button data-act="help" class="alt">How to play</button><button data-act="close">Back to game</button></div>
   <div class="btns"><button data-act="endDayAsk">&#9790; End Day ${dayNo()}</button></div>
   <div class="btns"><button data-act="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-act="tasks" class="alt">Today's jobs</button></div>

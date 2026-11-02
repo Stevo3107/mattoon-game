@@ -678,7 +678,8 @@ function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideO
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
 function build() {
-  for (const id of ['jobbar', 'panel', 'sceneBtns', 'speedBtn', 'restartBtn', 'menuBtn', 'mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
+  for (const id of ['jobbar', 'panel', 'sceneBtns', 'speedBtn', 'restartBtn', 'mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
+  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(); } // Menu (Nov 1): Full screen, Industries, other towns
   const bar = document.createElement('div'); bar.id = 'neogaBar'; bar.className = 'ng';
   bar.innerHTML = `<div class="ngrow" data-v="no"><button data-a="dirL">◀</button><button data-a="stop" class="red">■</button><button data-a="dirR">▶</button><button data-a="mph" id="ngMph">10 mph</button><span id="ngSpd">0 mph</span></div>
   <div class="ngrow" data-v="no"><button data-a="route" id="rtBtn">Request route</button><button data-a="jobs">Jobs</button><button data-a="endday" class="alt">End day</button></div>

@@ -241,7 +241,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mvylx8i6";</script>
+<script>window.NII_BUILD = "mvym08ft";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -282,7 +282,19 @@ function travel(from, to, train) { if (VISIT) return; const e = env(), mt = e.to
   write(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
   setTimeout(() => location.reload(), 1700); }
 function loadScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src + (window.NII_BUILD ? '?v=' + NII_BUILD : ''); s.onload = ok; s.onerror = () => no(new Error(src)); document.head.appendChild(s); }); }
+// ---- Full screen (Nov 1): Menu entry in both towns and in visit mode. Canvases pick the new size up on fullscreenchange (a resize event is sent too).
+const FS = { el: () => document.fullscreenElement || document.webkitFullscreenElement, on() { return !!FS.el(); }, label() { return FS.on() ? 'Exit full screen' : 'Full screen'; },
+  toggle() { const d = document.documentElement; try { if (FS.on()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+      const p = (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: 'hide' }); const lock = () => { try { if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => { }); } catch (e) { } };
+      if (p && p.then) p.then(lock).catch(() => { }); else lock(); } catch (e) { } } };
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(ev, () => { setTimeout(() => window.dispatchEvent(new Event('resize')), 60); document.querySelectorAll('[data-fs]').forEach(b => b.textContent = FS.label()); });
+// shared Menu (Neoga + visit mode); Mattoon's own Menu carries the same entries
+function sharedMenu() { const m = document.getElementById('modal'), bg = document.getElementById('modalBg'); if (!m || !bg) return;
+  m.innerHTML = `<h2>Menu</h2><div class="btns"><button data-nm="fs" data-fs>${FS.label()}</button><button data-nm="ind" class="alt">Industries</button></div><div class="btns">${VISIT ? '' : '<button data-nm="towns" class="alt">Look at another town</button>'}<button data-nm="close">Back to game</button></div>`; bg.classList.add('show'); }
+document.addEventListener('click', e => { const b = e.target.closest('[data-nm]'); if (!b) return; const a = b.dataset.nm, bg = document.getElementById('modalBg');
+  if (a === 'fs') FS.toggle(); else if (a === 'ind') { if (window.NII.industries) window.NII.industries(); } else if (a === 'towns') { bg.classList.remove('show'); pickTown(); } else if (a === 'close') bg.classList.remove('show'); });
 window.NII = { TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading,
+  fullscreen: FS, sharedMenu,
   loadTown(id) { return env().towns[id] || null; },
   saveTown(id, st) { if (VISIT) return; const e = env(); e.towns[id] = st; if (id === 'mattoon') e.time = st.time; write(); },
   clearSave() { if (VISIT) return; ENV = { v: 10, town: 'mattoon', towns: {} }; write(); }, // Restart: fresh game in every town (the old v9 save is not read again)
@@ -364,8 +376,8 @@ function pickTown() { closePick(); const home = VISIT ? VISIT.home : env().town,
     `<button data-tp="${k}" class="${k === here ? 'here' : ''}">${k === home ? `${t.name}: your train${k === here ? ' (here)' : ''}` : `Look at ${t.name}${k === here ? ' (here)' : ''}`}</button>`).join('')}<button data-tp="" class="alt">Close</button></div>`;
   document.body.appendChild(el); el.addEventListener('click', ev => { const b = ev.target.closest('[data-tp]'); if (ev.target === el) return closePick(); if (!b) return; const id = b.dataset.tp; if (!id || id === here) return closePick(); goVisit(id); }); }
 function visitBanner() { if (!VISIT) return; document.body.classList.add('visit'); const b = document.createElement('div'); b.id = 'visitBar';
-  b.innerHTML = `<span>Looking at ${TOWNS[VISIT.town].name}, your train is in ${TOWNS[VISIT.home].name}</span><button data-vb="towns" class="alt">Towns</button><button data-vb="back">Back to my train</button>`;
-  document.body.appendChild(b); b.addEventListener('click', e => { const t = e.target.closest('[data-vb]'); if (!t) return; if (t.dataset.vb === 'back') backToTrain(); else pickTown(); }); }
+  b.innerHTML = `<span>Looking at ${TOWNS[VISIT.town].name}, your train is in ${TOWNS[VISIT.home].name}</span><button data-vb="towns" class="alt">Towns</button><button data-vb="menu" class="alt">Menu</button><button data-vb="back">Back to my train</button>`;
+  document.body.appendChild(b); b.addEventListener('click', e => { const t = e.target.closest('[data-vb]'); if (!t) return; if (t.dataset.vb === 'back') backToTrain(); else if (t.dataset.vb === 'menu') sharedMenu(); else pickTown(); }); }
 const visitNote = () => `View only. Your train is in ${TOWNS[VISIT.home].name}.`;
 // ---- boot
 (function boot() {
