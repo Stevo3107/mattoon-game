@@ -278,14 +278,16 @@ function carAtSpot(v, pm) { return SPOTS.find(sp => sp.t === pm.t && Math.abs(sp
 function standingCars() { const out = []; for (const c of S.cuts) { const live = c.veh.some(isLoco); for (const q of vehPos(c)) out.push({ ...q, c, live }); } return out; }
 function IND(dest, f, amt) { try { NII.ind(NII.indKey(dest), f, amt == null ? 1 : amt); } catch (e) { } } // Industries page counters (Nov 1)
 function book(k, amt) { M.led = M.led || { earn: 0, hire: 0, dem: 0, crew: 0, fuel: 0, sand: 0 }; M.led[k] = (M.led[k] || 0) + amt; M.money = (M.money || 0) + ((k === 'earn' || k === 'dem') ? amt : -amt); }
-function demurrage(from, to) { let free = ECON.DEM_FREE_H, ch = 0, amt = 0;
-  for (let t = from; t + 3600 <= to; t += 3600) { const dw = Math.floor(t / 86400) % 7; if (dw >= 5) continue; if (free > 0) { free--; continue; } const d = Math.floor(ch / 24) + 1; amt += ECON.DEM.find(([u]) => d <= u)[1]; ch++; }
+const MILLER = d => d === 'NG COAL' || d === 'NG OIL'; // Miller & Sons Fuel works Mon-Fri only (Nov 1); the house track any day
+const weekend = t => Math.floor(t / 86400) % 7 >= 5;
+function demurrage(from, to, k) { let free = ECON.DEM_FREE_H, ch = 0, amt = 0; const wk = MILLER(k);
+  for (let t = from; t + 3600 <= to; t += 3600) { const dw = Math.floor(t / 86400) % 7; if (wk && dw >= 5) continue; if (free > 0) { free--; continue; } const d = Math.floor(ch / 24) + 1; amt += ECON.DEM.find(([u]) => d <= u)[1]; ch++; }
   return Math.round(amt * 100) / 100; }
 const pickVia = v => { const back = v.via || 'IC'; if (R() < NW_ROUTE_ODDS) { v.reassigned = true; return back === 'IC' ? 'NW' : 'IC'; } v.reassigned = false; return back; };
 function advance(dt) { // game time passes in Neoga: car hire, work at the spots, demurrage
   if (dt <= 0) return; const t0 = E.time; E.time += dt; let hire = 0;
   for (const q of standingCars()) { const v = q.v; if (!isLoco(v) && v.type !== 'caboose' && roadOf(v) !== 'NII') { hire += ECON.HIRE_HR; IND(DEST[v.dest] ? v.dest : v.from || 'NW', 'cost', ECON.HIRE_HR * dt / 3600); }
-    if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue;
+    if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue; if (MILLER(v.dest) && weekend(E.time)) continue; // Miller: no switching fee or unloading Sat/Sun
     if (!v.ngFee) { v.ngFee = 1; const fee = ECON.SWITCH + (v.loaded ? ECON.SWITCH_LOAD : 0) + (v.type === 'tank' ? ECON.SWITCH_TANK : 0); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
     v.work = (v.work || 0) + dt / 3600;
     if (v.work >= WORK_H) { const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
@@ -293,16 +295,17 @@ function advance(dt) { // game time passes in Neoga: car hire, work at the spots
       toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
   if (hire) book('hire', hire * dt / 3600);
   for (const q of standingCars()) { const v = q.v; if (v.doneAt && v.from && !v.ngOut && (q.live || !SPOTS.some(sp => sp.dest === v.from && sp.t === q.pm.t && Math.abs(sp.d - q.pm.d) <= sp.tol + 30))) { v.ngOut = 1; IND(v.from, 'out'); } if (!v.doneAt || isLease(v) || q.live) continue; if (!v.from || !SPOTS.some(sp => sp.dest === v.from && sp.t === q.pm.t && Math.abs(sp.d - q.pm.d) <= sp.tol + 30)) continue;
-    const due = demurrage(v.doneAt, E.time) - (v.demPaid || 0); if (due > 0) { book('dem', due); IND(v.from, 'inc', due); v.demPaid = (v.demPaid || 0) + due; } }
+    const due = demurrage(v.doneAt, E.time, v.from) - (v.demPaid || 0); if (due > 0) { book('dem', due); IND(v.from, 'inc', due); v.demPaid = (v.demPaid || 0) + due; } }
 }
 function onWyeInterchange(c) { return c.path.every(g => g.t === 'NWI') && !c.veh.some(isLoco); } // N&W Interchange (one track, in + out)
 function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
-  const d = dayNo(); if (S.day === d) return; S.day = d; R = seeded(d * 7919 + 17);
+  const d = dayNo(); if (S.day === d) return; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
   let pay = 0, n = 0; for (const c of S.cuts.slice()) if (onWyeInterchange(c)) { const keep = [], kA = [];
     c.veh.forEach((v, i) => { if (v.dest === 'NW-INT') { pay += ECON.CAR + (v.load ? ECON.PER_TON * v.load.t : 0); n++; } else { keep.push(v); kA.push(c.aT[i]); } });
     if (!keep.length) S.cuts.splice(S.cuts.indexOf(c), 1); else if (keep.length < c.veh.length) { const nc = placeCut(keep, kA, 'NWI', T.NWI.len - 6, 1); S.cuts.splice(S.cuts.indexOf(c), 1, nc); } }
   if (n) { book('earn', Math.round(pay * 100) / 100); IND('NW', 'inc', Math.round(pay * 100) / 100); IND('NW', 'out', n); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
   const nw = []; for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
+  NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
   if (nw.length) { let hd = T.NWI.len - 6; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)) .map(x => x - 2)); // couple behind what's already there
     const L = nw.reduce((a, v) => a + vL(v), 0), c = placeCut(nw, nw.map(() => true), 'NWI', hd, 1);
     if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); else { S.cuts.push(c); IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } }
