@@ -1199,7 +1199,7 @@ let mapChips = [];
 let userCam = false, cam = { x: 330, y: 170, z: 0.5 }, DPR = 1, MW = 0, MH = 0, fitted = false, mapOpen = false;
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 3);
-  MW = mapC.clientWidth || mapC.getBoundingClientRect().width; MH = mapC.clientHeight || mapC.getBoundingClientRect().height; mapC.width = Math.round(MW * DPR); mapC.height = Math.round(MH * DPR);
+  MW = mapC.clientWidth || mapC.getBoundingClientRect().width; MH = mapC.clientHeight || mapC.getBoundingClientRect().height; { const w = Math.round(MW * DPR), h = Math.round(MH * DPR); if (mapC.width !== w) mapC.width = w; if (mapC.height !== h) mapC.height = h; }
   sceneResize();
   if (!fitted) fit();
 }
@@ -1593,7 +1593,7 @@ const imgX = (x, y) => view.x + (x - view.x) * dsc(y);
 const imgY = y => PV.EH * (1 - dsc(y));
 function pr(x, y) { const s = dsc(y); return [VW / 2 + ZS * (imgX(x, y) - view.x), RAIL - ZS * (imgY(y) - view.v), ZS * s]; }
 const gyOf = y => RAIL - ZS * (imgY(y) - view.v);
-function sceneResize() { const r = sceneC.getBoundingClientRect(); VW = sceneC.clientWidth || r.width; VH = sceneC.clientHeight || r.height; sceneC.width = Math.round(VW * DPR); sceneC.height = Math.round(VH * DPR); }
+function sceneResize() { const r = sceneC.getBoundingClientRect(); VW = sceneC.clientWidth || r.width; VH = sceneC.clientHeight || r.height; const w = Math.round(VW * DPR), h = Math.round(VH * DPR); if (sceneC.width !== w) sceneC.width = w; if (sceneC.height !== h) sceneC.height = h; }
 const MAXW = 1100;                                                   // widest view (ft of main line across the screen)
 function zLim(z) { const lo = VW / MAXW * dsc(view.ys) / (BASE || 1); return Math.max(Math.min(0.5, lo), Math.min(2.6, z)); }
 function sceneLayout() {
@@ -2864,7 +2864,8 @@ function drawSolid(g, v, G, alpha) {
 
 function fmtMoney(m) { return (m < 0 ? '-$' : '$') + Math.abs(Math.round(m)).toLocaleString(); }
 let lastUI = 0;
-function updateUI() {
+function updateUI() { return NII.quiet(updateUI0); }
+function updateUI0() {
   const c = locoCons(), l = locoOf(c), mph = Math.abs(c.v) * MPH, ctl = state.ctl;
   { const L = state.led || LED0(), n = L.earn + L.dem - L.hire - L.crew - L.fuel - L.sand; $('cash').textContent = `${fmtMoney(state.money)} · today ${n < 0 ? '-' : '+'}$${Math.abs(n).toFixed(0)}`; $('cash').title = `Today: earned $${L.earn.toFixed(2)}, demurrage $${L.dem.toFixed(2)}, car hire $${L.hire.toFixed(2)}, crew $${L.crew.toFixed(2)}, fuel $${L.fuel.toFixed(2)}, sand $${L.sand.toFixed(2)}`; } $('cash').classList.toggle('neg', state.money < 0);
   $('rep').textContent = state.rep;

@@ -385,7 +385,8 @@ const ok = i => i && i.complete && i.naturalWidth;
 const cam = { x: 400, y: 30, z: 1.1, follow: true };
 let W = 0, H = 0, DPR = 1;
 const sx = x => W / 2 + (x - cam.x) * cam.z, sy = y => H / 2 + (y - cam.y) * cam.z * K, hz = h => h * cam.z * HK;
-function resize() { W = wrap.clientWidth; H = wrap.clientHeight; DPR = window.devicePixelRatio || 1; cv.width = W * DPR; cv.height = H * DPR; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+// perf (Nov 1): draw() calls this every frame; only touch the canvas when its size really changed (setting width reallocates and clears it)
+function resize() { W = wrap.clientWidth; H = wrap.clientHeight; DPR = window.devicePixelRatio || 1; const w = Math.floor(W * DPR), h = Math.floor(H * DPR), changed = cv.width !== w || cv.height !== h; if (changed) { cv.width = w; cv.height = h; cv.style.width = W + 'px'; cv.style.height = H + 'px'; } return changed; }
 function line(pts, w, col) { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(sx(x), sy(y)) : g.moveTo(sx(x), sy(y))); g.lineWidth = w; g.strokeStyle = col; g.stroke(); }
 function rectW(x0, y0, x1, y1, col) { g.fillStyle = col; g.fillRect(sx(x0), sy(y0), (x1 - x0) * cam.z, (y1 - y0) * cam.z * K); }
 // ---- scenery: farmland above the main, small town below
@@ -598,7 +599,8 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
         else if (c.type === 'gp9') { g.fillStyle = '#e8c547'; g.font = `700 ${Math.max(7, 2 * cam.z)}px Arial`; g.textAlign = 'center'; g.fillText('N&W', X0 + Wd / 2, Y0 + Hh / 2); } } }
     y += L + 2; } }
 let flashT = 0;
-function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
+function draw() { NII.quiet(draw0); }
+function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.setLineDash([]); g.clearRect(0, 0, cv.width, cv.height); } } g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
   const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 20; }
   { const span = XS - XN + 2 * EDGE_PAD; cam.z = Math.max(cam.z, W / span); const half = W / 2 / cam.z; cam.x = Math.max(XN - EDGE_PAD + half, Math.min(XS + EDGE_PAD - half, cam.x));
     cam.z = Math.max(cam.z, H / ((NG_YB - NG_YT) * K)); const hh = H / 2 / (cam.z * K), lo = NG_YT + hh, hi = NG_YB - hh; cam.y = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, cam.y)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
