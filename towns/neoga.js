@@ -137,7 +137,7 @@ const fuelLead = sCurve(SW_F, 0, 1, FUEL_OFF, 400, 0), FX0 = fuelLead[fuelLead.l
 const FD = { start: 0, wheelStop: 223.5, railEnd: 228, spots: { hopper1: 40, hopper2: 100, tank: 165 } }; // Danny's neoga-fuel-dealer.json (car spots)
 // Nov 1 (Stephen): wye gone. North leg (S2) = N&W Interchange: one track (inbound + outbound share it), the old north leg, joining the N&W main at a LOCKED switch (NWL, lined for the N&W; no N&W key),
 // nowhere near the N&W (Clover Leaf) main. Run-around on the farm side south of the diamond (#10s S3 / S5, 14 ft centres), clear of the south home signal at 1,760.
-const RA_N = 1800, RA_S = 3150;
+const RA_N = 1800, RA_CLEAR = 440, RA_S = Math.round(RA_N + 2 * 780 * Math.sin(Math.acos(1 - 7 / 780)) * 2 + RA_CLEAR) / 1; // Nov 1 (2): ~8 cars clear; S4 (2,150) sits on the main inside it, clear of both throats
 const raLead = sCurve(RA_N, 0, 1, -14, 780, 0), raTail = sCurve(RA_S, 0, -1, -14, 780, 0).reverse();
 const T = { // tracks: polylines; cls main/other for speed
   M1: { p: [[XN, 0], [SW_H, 0]], cls: 'main', name: 'Main' }, M2: { p: [[SW_H, 0], [SW_WW, 0]], cls: 'main', name: 'Main' },
@@ -184,7 +184,7 @@ const FH = { doorX: HX0 + 90 }; // freight house: car door at x, house 40 x 20 f
 { const sp = Object.fromEntries(SPOTS.map(s => [s.id, s])); sp['HOUSE-DOOR'].d = dOfX('HT', FH.doorX); sp['HOUSE-TEAM'].d = dOfX('HT', FH.doorX + 120);
   const f0 = T.FL.len - FD.railEnd; sp['COAL-1'].d = f0 + FD.spots.hopper1; sp['COAL-2'].d = f0 + FD.spots.hopper2; sp.OIL.d = f0 + FD.spots.tank; }
 let S = E.towns.neoga;
-if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, ra: 1, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
+if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, ra: 2, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
   if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train; }
 E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
@@ -223,6 +223,11 @@ if (!S.ra) { S.ra = 1; S.sw = { S1: S.sw.S1 || 'N', S2: 'N', S3: 'N', S4: S.sw.S
     if (!c.path.some(g => ['WW', 'WE', 'NJ', 'TL'].includes(g.t) || (g.t.startsWith('M') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5))) return true;
     c.veh.forEach((v, i) => mv.NWI.push([v, c.aT[i]])); return false; });
   for (const [t, L] of Object.entries(mv)) if (L.length) S.cuts.push(placeCut(L.map(x => x[0]), L.map(x => x[1]), t, T[t].len - 6, 1)); } // v1 stub save: the train that was parked there comes back in
+if (S.ra === 1) { S.ra = 2; const OLD_S = 3150; // Nov 1 (2): run-around shortened (S5 3,150 -> RA_S); M6 now starts at RA_S
+  for (const c of S.cuts) for (const g of c.path) if (g.t === 'M6') { g.d0 = Math.max(0, g.d0 + OLD_S - RA_S); g.d1 = Math.max(0, g.d1 + OLD_S - RA_S); }
+  S.cuts = S.cuts.map(c => { if (!c.path.some(g => (g.t === 'RA' || g.t === 'M5') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5)) return c;
+    const L = cutLen(c), onRA = c.path.some(g => g.t === 'RA'), fits = L <= T.RA.len - 40;
+    const nc = onRA && fits ? placeCut(c.veh, c.aT, 'RA', T.RA.len - 20, 1) : placeCut(c.veh, c.aT, 'M5', T.M5.len - 5, 1); nc.id = c.id; return nc; }); }
 // ================================================================= CARS & WAYBILLS
 const NUMSP = C.NUMSPEC || {};
 const numOf = k => (NUMSP[k] && NUMSP[k].painted) || (k.startsWith('boxcarIC_') ? k.slice(9) : null);
@@ -381,16 +386,21 @@ function rectW(x0, y0, x1, y1, col) { g.fillStyle = col; g.fillRect(sx(x0), sy(y
 // ---- scenery: farmland above the main, small town below
 const HOUSES = (() => { const r = seeded(4242), out = []; for (const row of [300, 420]) for (let x = -200; x < 3500; x += 70 + r() * 40) { if (Math.abs(x - NWX) < 90 || Math.abs(x - 380) < 60) continue; if (row === 300 && x > FX0 - 60 && x < FX0 + 330) continue; out.push({ x, y: row + r() * 20, w: 28 + r() * 14, d: 26 + r() * 8, h: 11 + r() * 8, col: ['#e9e2d0', '#c9d3d8', '#d9c09a', '#f1efe8', '#b9c7a8', '#d6b3a3'][Math.floor(r() * 6)], roof: ['#5b4b45', '#3e4652', '#6a3b2c', '#565656'][Math.floor(r() * 4)], tree: r() < 0.6 }); } return out; })();
 const BLDG = [{ x: 330 - 150, y: 230, w: 90, d: 40, h: 22, col: '#b5714f', roof: '#4b4b4b', sign: 'NEOGA HARDWARE' }, { x: 470, y: 232, w: 70, d: 40, h: 26, col: '#a35a40', roof: '#4b4b4b', sign: 'BANK' }, { x: 2050, y: 236, w: 80, d: 40, h: 18, col: '#d8cfb8', roof: '#555', sign: 'CAFE' }];
-function drawGround() {
+function visX() { const a = sx(0), b = sx(1) - a; return [(0 - a) / b - 200, (W - a) / b + 200]; } // world x on screen (padded)
+function drawGround() { const [vL, vR] = visX(), GL = Math.min(-400, vL), GR = Math.max(3700, vR);
   const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#9fb07a'); sky.addColorStop(1, '#93a16f'); g.fillStyle = sky; g.fillRect(0, 0, W, H);
   // farm fields (above the tracks)
-  const fx = [-400, 300, 1000, 2200, 2900, 3600]; fx.forEach((x, i) => { if (i === fx.length - 1) return; const x1 = fx[i + 1] - 20, cols = ['#c9b56a', '#7f9a4c', '#b49a5c', '#8fa65a', '#c2ad6c']; rectW(x, -1200, x1, -60, cols[i % cols.length]);
+  const fx = [-400, 300, 1000, 2200, 2900, 3600]; for (let x = -400; x > GL; ) { x -= 700; fx.unshift(x); } for (let x = 3600; x < GR; ) { x += 700; fx.push(x); } fx.forEach((x, i) => { if (i === fx.length - 1) return; const x1 = fx[i + 1] - 20, cols = ['#c9b56a', '#7f9a4c', '#b49a5c', '#8fa65a', '#c2ad6c']; rectW(x, -1200, x1, -60, cols[i % cols.length]);
     if (cam.z > 0.4) { g.strokeStyle = 'rgba(70,60,30,.18)'; g.lineWidth = 1; for (let y = -1180; y < -70; y += 24) { g.beginPath(); g.moveTo(sx(x), sy(y)); g.lineTo(sx(x1), sy(y)); g.stroke(); } } });
-  rectW(-400, -60, 3700, 200, '#8f9e62'); // right of way + grass
-  rectW(-400, 200, 3700, 1000, '#a4ab84'); rectW(-400, 252, 3700, 272, '#6d6b66'); line([[-400, 262], [3700, 262]], 1, 'rgba(255,255,255,.35)'); // town lawns + street
+  rectW(GL, -60, GR, 200, '#8f9e62'); // right of way + grass
+  rectW(GL, 200, GR, 1000, '#a4ab84'); rectW(GL, 252, GR, 272, '#6d6b66'); line([[GL, 262], [GR, 262]], 1, 'rgba(255,255,255,.35)'); // town lawns + street
   rectW(360, -1200, 400, 1000, '#6d6b66'); // county road crossing the main
   line([[NWX, -1300], [NWX, 1100]], Math.max(3, 10 * cam.z), '#9a8f7c'); // N&W right of way (ballast)
 }
+function drawMainOff() { const [vL, vR] = visX(); // the main keeps going off both edges (to Mattoon / to Effingham): scenery-only rails past XN / XS
+  for (const [x0, x1] of [[Math.min(vL, XN - 1), XN], [XS, Math.max(vR, XS + 1)]]) { if (x1 - x0 < 1) continue; line([[x0, 0], [x1, 0]], Math.max(2, 9 * cam.z), '#a39886');
+    if (cam.z > 0.55) { g.strokeStyle = '#5a4634'; g.lineWidth = Math.max(1, 0.8 * cam.z); g.beginPath(); for (let x = Math.ceil(x0 / 3) * 3; x < x1; x += 3) { g.moveTo(sx(x), sy(-4.3)); g.lineTo(sx(x), sy(4.3)); } g.stroke(); }
+    for (const o of [-2.35, 2.35]) line([[x0, o], [x1, o]], Math.max(1, 0.5 * cam.z), '#4a4a4a'); } }
 function drawTrack(t) { const tr = T[t], pts = tr.p;
   const dirt0 = tr.dirt ? tr.len - FD.railEnd : Infinity; line(pts, Math.max(2, 9 * cam.z), '#a39886');
   if (tr.dirt) { const q = []; for (let d = dirt0; d <= tr.len; d += 4) { const [x, y] = ptAt(t, d); q.push([x, y]); } line(q, Math.max(2, 12 * cam.z), '#3d3833'); }
@@ -484,7 +494,7 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
 let flashT = 0;
 function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
   const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 20; }
-  drawGround(); for (const t of Object.keys(T)) drawTrack(t); drawNWMain();
+  drawGround(); drawMainOff(); for (const t of Object.keys(T)) drawTrack(t); drawNWMain();
   // bumper / wheel stop
   for (const [t, d] of [['HT', T.HT.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }
   { const [x, y] = [NWL.at[0] + 8, NWL.at[1] - 12], h = 7.1, i = img(BA('switch-stand-high-locked@2x') || BA('switch-stand-high-normal@2x')); // locked N&W stand (high: no low locked art)
@@ -521,7 +531,7 @@ function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined 
   for (const [k, sw] of Object.entries(SWITCHES)) { const [t, e] = sw[S.sw[k]] || [], tr = T[t]; if (!tr) continue; const L = Math.min(40, tr.len * 0.45), pts = []; for (let i = 0; i <= 6; i++) { const d = e === 'a' ? L * i / 6 : tr.len - L * i / 6; pts.push(ptAt(t, d)); } lined.push(flat(pts)); }
   const cars = []; for (const c of S.cuts) for (const q of vehPos(c)) cars.push({ p: flat([ptAt(q.p0.t, q.p0.d), ptAt(q.pm.t, q.pm.d), ptAt(q.p1.t, q.p1.d)]), c: NCOL[q.v.type] || '#555' });
   const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]).concat([NWL.at]);
-  return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -420, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -400, NWX, 400]], lined, cars,
+  return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -420, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -400, NWX, 400], [XN - 20, 0, XN, 0], [XS, 0, XS + 20, 0]], lined, cars,
     bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
     labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W Interchange', 1330, -170, 1], ['Run-around', 2500, -30, 1], ['N&W (Clover Leaf)', NWX + 12, -380, 0, 'left'], ['locked switch', NWX + 12, -320, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
 function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(NII.visitNote(), 'bad'); return; } }
