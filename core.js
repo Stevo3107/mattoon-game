@@ -34,6 +34,9 @@ const E0X = 2400;                                  // south main switch S
 // off the lead) and IN (north). North of IN the IC Tail runs on to a bumping post just south of switch S.
 const ICS8 = (TS - 2 * DY8) / T8, IC_TAIL_END = E0X + 60, IC_TAIL = 420, IC_RUN = 1500, IC_LEAD = 400;
 const IC_NX = IC_TAIL_END + IC_TAIL, IC_JX = IC_NX + IC_RUN, IC_X = IC_JX + 2 * DX10 + (TS - 2 * DY10) / T10 + IC_LEAD, IC_NE = IC_X + 800;
+// Nov 1: the IC Tail no longer ends at a bumper. It curves back onto the main (#10, 14 ft offset) at switch IT just south of switch S,
+// so the interchange is reached from both ends. IC_TAIL_END stays as a reference x (labels, scenery).
+const IT_X = E0X + 45, IT_LEN = 2 * DX10 + (TS - 2 * DY10) / T10; // points of switch IT on the main; length of the 14 ft #10 offset
 // IC Connection (Oct 30): switch ICC (#10) on the main south of the interchange, diverging toward the viewer (-depth, away from
 // town) on a 800 ft radius arc to 40 deg, then straight off the bottom of the picture to the IC main. Locked lined normal for IC crews only.
 const ICC_X = IC_X + 400, ICC_R = 800, ICC_TH = 40, ICC_END_Y = -260;
@@ -55,7 +58,7 @@ const P = {
   // Prairie Grain: switch G off the main (points south) to the loading track 34 ft behind the main; run-around 14 ft over on its camera side, switches G1 (north) and G2 (south)
   gM: [PG_X + 934, 0], gE: [PG_X + 633.51, 34], gW: [PG_X - 602.51, 34], bG: [PG_X - 720, 34],
  W0: [0, 0], E0: [E0X, 0], nE: [IC_NE, 0],
-  iM: [IC_X, 0], iC: [ICC_X, 0], eIC: ICC_END, iJ: [IC_JX, TS], iK: [IC_JX - 100, TS], iN: [IC_NX, TS], bT: [IC_TAIL_END, TS], bIn: [IC_IN_END, 2 * TS], bOut: [IC_OUT_END, TS],
+  iM: [IC_X, 0], iC: [ICC_X, 0], eIC: ICC_END, iJ: [IC_JX, TS], iK: [IC_JX - 100, TS], iN: [IC_NX, TS], bT: [IC_TAIL_END, TS], iT: [IT_X, 0], bIn: [IC_IN_END, 2 * TS], bOut: [IC_OUT_END, TS],
 };
 // yard ladders: switch n on the north ladder (L1..L6, H) and its mirror on the south ladder (E1..E5; Yard 6 ends at joint ET)
 for (let n = 1; n <= NY; n++) P['L' + n] = [ladX(YD(n) - DY8), YD(n) - DY8];
@@ -63,12 +66,12 @@ for (let n = 1; n < NY; n++) P['E' + n] = [E0X - P['L' + n][0], P['L' + n][1]];
 P.ET = [E0X - P['L' + NY][0] - DX8, YD(NY)];
 P.H = [ladX(Y_H - DY8), Y_H - DY8]; P.T = [ladX(Y_E - DY8) + DX8, Y_E]; P.bEng = [P.T[0] + 190, Y_E];
 const FH_X0 = Math.round(P.bEng[0] + 60); P.bHse = [FH_X0 + 240, Y_H];   // freight house spot (180 ft) just south of the engine track's bumper
-const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, bG: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0, iC: 0, eIC: -ICC_TH };
+const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, bG: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0, iT: 0, iC: 0, eIC: -ICC_TH };
 for (let n = 1; n <= NY; n++) TAN['L' + n] = LAD; for (let n = 1; n < NY; n++) TAN['E' + n] = 180 - LAD;
 const yv = n => { const l = P['L' + n], e = n === NY ? null : P['E' + n]; return e ? [[l[0] + DX8, YD(n), 0], [e[0] - DX8, YD(n), 0]] : [[l[0] + DX8, YD(n), 0]]; };
 const ICS = (TS - 2 * DY10) / T10; // straight between the two #10 curves of a 14 ft offset
 const SEGDEF = [
-  ['MW', 'jW', 'W0'], ['MM', 'W0', 'E0'], ['ME', 'E0', 'iM'],
+  ['MW', 'jW', 'W0'], ['MM', 'W0', 'E0'], ['ME', 'E0', 'iT'],
   ['WL1', 'W0', 'L1', [[DXL, DYL, LAD]]], ['WL2', 'L1', 'L2'], ['WL3', 'L2', 'L3'], ['WL4', 'L3', 'L4'], ['WLH', 'L6', 'H'], ['WLT', 'H', 'T', [[ladX(Y_E - DY8), Y_E - DY8, LAD]]],
   ['ENG', 'T', 'bEng'], ['HSE', 'H', 'bHse', [[P.H[0] + DX8, Y_H, 0]]],
   ['Y1', 'L1', 'E1', yv(1)], ['Y2', 'L2', 'E2', yv(2)], ['Y3', 'L3', 'E3', yv(3)], ['Y4', 'L4', 'E4', yv(4)],
@@ -83,8 +86,9 @@ const SEGDEF = [
   ['GL', 'gE', 'gM'], ['GLD', 'gW', 'gE'], ['GRA', 'gW', 'gE', [[PG_X - 421, 20, 0], [PG_X + 452, 20, 0]]], ['GT', 'bG', 'gW'],
   // Yards 5 and 6 (Oct 30), appended
   ['WL5', 'L4', 'L5'], ['WL6', 'L5', 'L6'], ['Y5', 'L5', 'E5', yv(5)], ['Y6', 'L6', 'ET', yv(6)], ['EL5', 'E4', 'E5'], ['EL6', 'E5', 'ET', [[E0X - P.L6[0], P.L6[1], 180 - LAD]]],
-  ['ICT', 'iN', 'bT'],   // IC Tail (Oct 30), appended
-  ['MS2', 'iC', 'nE'], ['ICX', 'iC', 'eIC', ICC_ARC.slice(0, -1)],   // IC Connection (Oct 30): MS now ends at switch ICC
+  ['ICT', 'iN', 'iT', [[IT_X + IT_LEN, TS, 0], [IT_X + IT_LEN - DX10, TS - DY10, TH10], [IT_X + DX10, DY10, TH10]]],   // IC Tail: Oct 30 stub; Nov 1 curves back onto the main at switch IT
+  ['MS2', 'iC', 'nE'], ['ICX', 'iC', 'eIC', ICC_ARC.slice(0, -1)],
+  ['ME2', 'iT', 'iM'],   // Nov 1: the main between switch IT and switch IC (ME now ends at IT)   // IC Connection (Oct 30): MS now ends at switch ICC
 ];
 function buildPath(a, b, via) {
   const dirOf = (deg, cx, cy) => { let ux = Math.cos(deg * DEG), uy = Math.sin(deg * DEG); if (ux * cx + uy * cy < 0) { ux = -ux; uy = -uy; } return [ux, uy]; };
@@ -110,7 +114,7 @@ const L = (name, end) => ({ seg: SI[name], end });
 const NODES = {
   nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Neoga' }, eIC: { type: 'edge', label: 'onto the IC main' },
   bEng: { type: 'bumper' }, bHse: { type: 'bumper' }, bCIC: { type: 'bumper', art: true }, bIFS: { type: 'bumper', art: true }, bG: { type: 'bumper' },
-  jW: { type: 'joint', links: [L('MNC', 'b'), L('MW', 'a')] }, bT: { type: 'bumper' },
+  jW: { type: 'joint', links: [L('MNC', 'b'), L('MW', 'a')] },
   iK: { type: 'joint', links: [L('ICK', 'b'), L('ICO', 'a')] },
   T: { type: 'joint', links: [L('WLT', 'b'), L('ENG', 'a')] }, ET: { type: 'joint', links: [L('EL6', 'b'), L('Y6', 'b')] },
   W0: { type: 'switch', tag: 'N', name: 'North main switch', trunk: L('MW', 'b'), N: L('MM', 'a'), R: L('WL1', 'a') },
@@ -122,7 +126,8 @@ const NODES = {
   L6: { type: 'switch', tag: '6', name: 'Yard 6 (north ladder)', trunk: L('WL6', 'b'), N: L('WLH', 'a'), R: L('Y6', 'a') },
   H: { type: 'switch', tag: 'H', name: 'House track switch', trunk: L('WLH', 'b'), N: L('WLT', 'a'), R: L('HSE', 'a') },
   E0: { type: 'switch', tag: 'S', name: 'South main switch', trunk: L('ME', 'a'), N: L('MM', 'b'), R: L('EL1', 'a') },
-  iM: { type: 'switch', tag: 'IC', name: 'IC interchange lead (south main)', trunk: L('MS', 'a'), N: L('ME', 'b'), R: L('ICL', 'a') },
+  iM: { type: 'switch', tag: 'IC', name: 'IC interchange lead (south main)', trunk: L('MS', 'a'), N: L('ME2', 'b'), R: L('ICL', 'a') },
+  iT: { type: 'switch', tag: 'IT', name: 'IC Tail (main switch, north end of the interchange)', trunk: L('ME', 'b'), N: L('ME2', 'a'), R: L('ICT', 'b') },
   iC: { type: 'switch', tag: 'ICC', locked: true, name: 'IC Connection (locked, IC crews only)', trunk: L('MS', 'b'), N: L('MS2', 'a'), R: L('ICX', 'a') },
   // hook for later: IC drop-off runs come in off ICX (eIC), line iC reverse themselves and shove onto IC Inbound, then line it back normal.
   iJ: { type: 'switch', tag: 'IO', name: 'IC Inbound / IC Outbound', trunk: L('ICL', 'b'), N: L('ICK', 'a'), R: L('ICI', 'a') },
@@ -706,7 +711,7 @@ function apStep(c, dt, running) {
 // Every reversing move first takes the WHOLE cut CLEAR feet past the switch points. Run-arounds: to reach the far end of a
 // car, the route may go past it on another track (yard track, main, ladder) and come back in from the other end.
 const CLEAR = 25, REV_COST = 60, MAX_REV = 5;
-const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the IC switch)', MS2: 'the main (south end)', ICX: 'the IC Connection', ICL: 'the IC lead', ICK: 'the IC lead', ICI: 'IC Inbound', ICO: 'IC Outbound', ICT: 'the IC Tail',
+const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', ME2: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the IC switch)', MS2: 'the main (south end)', ICX: 'the IC Connection', ICL: 'the IC lead', ICK: 'the IC lead', ICI: 'IC Inbound', ICO: 'IC Outbound', ICT: 'the IC Tail',
   MNC: 'the main (north of town)', MN0: 'the main (north of town)', MN1: 'the main at Illini Farm Supply', MN2: 'the main (north of town)', MN3: 'the main (north of town)', MN4: 'the main (north of Prairie Grain)',
   CIC: 'the CIC box plant spur', IFS: 'the Farm Supply spur', IRA: 'the Farm Supply run-around', GL: 'the Prairie Grain lead', GLD: 'the Prairie Grain loading track', GRA: 'the Prairie Grain run-around', GT: 'the Prairie Grain tail track' };
 const trackName = s => TRACK_NAME[SEG[s].name] || (SEG[s].name[0] === 'W' ? 'the north ladder' : 'the south ladder');
@@ -822,7 +827,7 @@ function tapTarget(target) { if (VISIT) { toast(NII.visitNote(), 'bad'); return;
   const throws = new Set(); const sim = { ...state.sw }; r.legs.forEach(L => L.req.forEach(([n, g]) => { if (sim[n] !== g) { throws.add(n); sim[n] = g; } }));
   state.ap = { legs: r.legs, k: -1, eq: 0, dir: r.legs[0].dir, target: null }; nextLeg(c); state.ctl.brake = 0;
   const rv = r.legs.length - 1;
-  let via = null; if (ra) { const own = new Set(C(goal.car).veh.flatMap(id => [V(id).f.s, V(id).r.s])), pref = ['Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'MM', 'ME', 'MW', 'HSE', 'ENG', 'IRA', 'MN1', 'GRA', 'GLD', 'MN0', 'MN2', 'MN3', 'MN4', 'MNC'];
+  let via = null; if (ra) { const own = new Set(C(goal.car).veh.flatMap(id => [V(id).f.s, V(id).r.s])), pref = ['Y1', 'Y2', 'Y3', 'Y4', 'Y5', 'Y6', 'MM', 'ME', 'ME2', 'MW', 'HSE', 'ENG', 'IRA', 'MN1', 'GRA', 'GLD', 'MN0', 'MN2', 'MN3', 'MN4', 'MNC'];
     for (const L of r.legs.slice(1)) for (const sg of L.segs || []) if (!via && !own.has(sg) && pref.includes(SEG[sg].name)) via = sg;
     if (via === null) for (const L of r.legs) for (const sg of L.segs || []) if (via === null && !own.has(sg) && pref.includes(SEG[sg].name)) via = sg; }
   if (ra) toast(`Auto-route: running around ${vehName(V(target.car))}${via !== null ? ` via ${trackName(via).replace(/^the /, 'the ')}` : ''}, ${rv} reversing move${rv === 1 ? '' : 's'}.`);
@@ -1142,7 +1147,7 @@ function mapSnap() { if (!SNAP_T) SNAP_T = SEG.map(s => flat(s.X.map((x, i) => [
   const cars = Object.values(state.veh).map(v => ({ p: flat(vehPath(v)), c: (TYPES[v.type] || {}).color || '#555' }));
   const R = MAP_YARD, ys = SNAP_T.flatMap(p => p.filter((v, i) => i % 2 && p[i - 1] >= R[0] && p[i - 1] <= R[1])), box = [R[0], Math.min(...ys) - 30, R[1], Math.max(...ys) + 30];
   const names = SEG.map(g => trackName(g.i).replace(/^the /, '')), sws = SWITCHES.map(k => [r1(P[k][0]), r1(P[k][1])]);
-  return { t: Date.now(), fy: 1, box, names, sws, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bT', 'bCIC', 'bIFS', 'bG'].map(k => [r1(P[k][0]), r1(P[k][1])]),
+  return { t: Date.now(), fy: 1, box, names, sws, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bCIC', 'bIFS', 'bG'].map(k => [r1(P[k][0]), r1(P[k][1])]),
     blds: [[FH.x0, Y_H + 10, FH.x1, Y_H + 40]], labels: [['Freight house', (FH.x0 + FH.x1) / 2, Y_H + 25, 1], ['House track', P.H[0] + 70, Y_H + 9, 1, 'left'], ['Engine track', P.bEng[0] + 10, Y_E, 1, 'left'], ['IC Connection', ICC_X + 230, -90, 1, 'left'], ['◀ N to Champaign', MAP_YARD[0] + 10, box[1] + 12, 0, 'left'], ['to Neoga S ▶', MAP_YARD[1] - 10, box[1] + 12, 0, 'right']] }; }
 // cross-town taps (Oct 30): tap a track on another town's tab -> autopilot to the south main end, the travel prompt, then autopilot on from the next town's edge
 let crossAsk = null;
@@ -1165,6 +1170,10 @@ function migrateICC() { // saves from before switch ICC: MS was iM->nE (800 ft);
   const ms = SEG[SI.MS].len, fix = p => { if (p && p.s === SI.MS && p.d > ms) { p.s = SI.MS2; p.d -= ms; } };
   for (const v of Object.values(state.veh)) { fix(v.f); fix(v.r); }
   if (state.ap) state.ap = null;
+  // Nov 1: switch IT splits the old ME (S->IC); points past IT move onto ME2. The IC Tail keeps its distances from switch IN.
+  if (!state.sw.iT) state.sw.iT = 'N';
+  const me = SEG[SI.ME].len, fix2 = p => { if (p && p.s === SI.ME && p.d > me) { p.s = SI.ME2; p.d -= me; } };
+  for (const v of Object.values(state.veh)) { fix2(v.f); fix2(v.r); }
 }
 function load() {
   try { localStorage.removeItem('nii-mattoon-test-v4'); localStorage.removeItem('nii-mattoon-test-v5'); localStorage.removeItem('nii-mattoon-test-v6'); localStorage.removeItem('nii-mattoon-test-v7'); } catch (e) { } // old saves can hold unapproved cars (Day 1 flour car)
@@ -1194,7 +1203,7 @@ function resize() {
   sceneResize();
   if (!fitted) fit();
 }
-const MAP_ALL = [-75, P.iM[0] + 70], MAP_YARD = [-75, P.E0[0] + 70], MAP_IC = [P.bT[0] - 60, P.iM[0] + 90];
+const MAP_ALL = [-75, P.iM[0] + 70], MAP_YARD = [-75, P.E0[0] + 70], MAP_IC = [IT_X - 120, P.iM[0] + 90];
 // the customers north of town, west to east (map chips pan to them)
 const MAP_PLACES = [{ go: 'pg', t: 'Prairie Grain', r: [P.bG[0] - 40, P.gM[0] + 40] }, { go: 'ifs', t: 'Farm Supply', r: [P.fS[0] - 40, P.bIFS[0] + 60] }, { go: 'cic', t: 'CIC box plant', r: [P.cS[0] - 40, CIC_X + 500] }];
 const MAP_GO = { ic: MAP_IC, yard: MAP_YARD, pg: MAP_PLACES[0].r, ifs: MAP_PLACES[1].r, cic: MAP_PLACES[2].r };
@@ -1394,14 +1403,14 @@ function drawMap() {
   // blue flags: a small blue mark at each flag that's up
   for (const K in BF) if (bfS()[K].up) { const [x, y] = xy(BF[K].seg, BF[K].d), [sx, sy] = w2s(x, y); g.fillStyle = '#1d4fd8'; g.fillRect(sx - 1, sy - 12, 2, 12); g.fillRect(sx + 1, sy - 12, 7, 5); }
   // bumpers
-  for (const k of ['bEng', 'bHse', 'bT', 'bCIC', 'bIFS', 'bG']) { const [x, y] = P[k]; line([[x, y - 9 / z], [x, y + 9 / z]], 5, '#2b2b2b'); }
+  for (const k of ['bEng', 'bHse', 'bCIC', 'bIFS', 'bG']) { const [x, y] = P[k]; line([[x, y - 9 / z], [x, y + 9 / z]], 5, '#2b2b2b'); }
   // what the main view is looking at
   { const sF = dsc(view.ys), wx = ix => PV.XC + (ix - PV.XC) / sF; const [a, b] = w2s(wx(view.x - VW / 2 / ZS), -45), [c2, d] = w2s(wx(view.x + VW / 2 / ZS), 228); if (!mapOpen) { g.fillStyle = 'rgba(28,43,80,.10)'; g.fillRect(a, b, c2 - a, d - b); } g.strokeStyle = 'rgba(28,43,80,.45)'; g.lineWidth = 1.5; g.setLineDash(mapOpen ? [5, 4] : []); g.strokeRect(a, b, c2 - a, d - b); g.setLineDash([]); }
   if (!mapOpen) { for (const v of Object.values(state.veh)) { const T = TYPES[v.type]; line(vehPath(v), 5, state.job.car && v.id === state.job.car && !state.job.done ? '#f0c23a' : T.color); } return; }
   // labels
   if (namesOn) { for (let i = 1; i <= NY; i++) text('Yard ' + i, P['L' + i][0] + 70 + 6 / z, YD(i) + 6 / z, fs, '#555', 'left');
   text('House track', P.H[0] + 70, Y_H + 7 / z, fs, '#222', 'left', true); text('Engine track', P.bEng[0] + 8 / z, Y_E, fs, '#222', 'left', true);
-  text('IC Outbound', P.bOut[0] + 4 / z + 160, P.bOut[1] - 7 / z, fs, '#222', 'left', true); text('IC Tail', P.bT[0] + 4 / z, P.bT[1] - 7 / z, fs, '#222', 'left', true); text('IC Connection', ICC_X + 230, -90, fs, '#222', 'left', true); }
+  text('IC Outbound', P.bOut[0] + 4 / z + 160, P.bOut[1] - 7 / z, fs, '#222', 'left', true); text('IC Tail', IT_X + IT_LEN + 10 + 4 / z, P.bT[1] - 7 / z, fs, '#222', 'left', true); text('IC Connection', ICC_X + 230, -90, fs, '#222', 'left', true); }
   text('CIC box plant', CIC_X, 20 + 12 / z, fs, '#222', 'left', true); text('Illini Farm Supply', IFS_X, 20 + 12 / z, fs, '#222', 'left', true); text('run-around', IFS_X + 60, -14 - 12 / z, fs * 0.85, '#555', 'left');
   text('Prairie Grain', PG_X - 300, 34 + 12 / z, fs, '#222', 'left', true); { const [a, b] = w2s(PG_X + 15.5, 34); g.beginPath(); g.arc(a, b, 5, 0, 7); g.fillStyle = '#8a5a2b'; g.fill(); } // spout
   if (namesOn) text('MAIN LINE', 330, -16 / z, fs, '#666'); text('◀ N to Champaign', NW_X + 10, 14 / z, fs, '#666', 'left'); text('to Neoga S ▶', P.nE[0] - 10, 14 / z, fs, '#666', 'right');
@@ -2200,7 +2209,7 @@ function drawVehicle(g, v, alpha) {
   HIT.vehs.push({ v, x0: Math.min(q.Pl[0], q.Pr[0]), x1: Math.max(q.Pl[0], q.Pr[0]), y0: Math.min(q.Pl[1], q.Pr[1]) - 15.5 * q.k, y1: Math.max(q.Pl[1], q.Pr[1]) + 1.5 * q.k, depth: q.depth, ghost: alpha < 1,
     hull: hull([q.Pl, q.Pr, up(q.Pr, 15.5), up(q.Pl, 15.5), [q.Pl[0], q.Pl[1] + 1.5 * q.k], [q.Pr[0], q.Pr[1] + 1.5 * q.k]]), z: ++HZ });
 }
-const FAR_STAND = new Set(['W0', 'E0', 'iM', 'iC', 'iJ', 'iN', 'H', ...Object.keys(NODES).filter(k => /^[LE]\d$/.test(k))]); // yard / IC: 14 ft centres leave no room between tracks, so the stand goes on the far side of the points
+const FAR_STAND = new Set(['W0', 'E0', 'iT', 'iM', 'iC', 'iJ', 'iN', 'H', ...Object.keys(NODES).filter(k => /^[LE]\d$/.test(k))]); // yard / IC: 14 ft centres leave no room between tracks, so the stand goes on the far side of the points
 function standPos(k) { const [nx, ny] = P[k], dt = legDir(NODES[k].trunk, 6); return [nx + dt[0] * 3, ny + (FAR_STAND.has(k) ? 8.5 : -8.5)]; }
 function drawStand(g, k) {
   const [x, y] = standPos(k), A = pr(x, y), kk = A[2], lined = state.sw[k];
@@ -2235,7 +2244,7 @@ function drawBumper(g, node) {
   const a = up(near, 4.8), b = up(near, 3.2); g.fillStyle = '#f0c419'; g.fillRect(a[0] - 1.6 * k, a[1], 3.2 * k, (b[1] - a[1]) * 0.45);
 }
 // straight (label-able) stretch of each named track: [y, x from, x to]
-const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Prairie Grain run-around': [20, PG_X - 419, PG_X + 450], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'IC Inbound': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'IC Outbound': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'IC Tail': [P.bT[1], P.bT[0], P.iN[0] - 10], 'IC Connection': [-40, ICC_X + 200, ICC_X + 320] };
+const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Prairie Grain run-around': [20, PG_X - 419, PG_X + 450], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'IC Inbound': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'IC Outbound': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'IC Tail': [P.bT[1], IT_X + IT_LEN + 10, P.iN[0] - 10], 'IC Connection': [-40, ICC_X + 200, ICC_X + 320] };
 function drawLabels(g) {
   const lab = (t, x, y, sz, col) => { g.font = `700 ${sz}px -apple-system,Segoe UI,Roboto,Arial`; g.textAlign = 'left'; g.textBaseline = 'middle'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.75)'; g.strokeText(t, x, y); g.fillStyle = col; g.fillText(t, x, y); g.textBaseline = 'alphabetic'; };
   const fy = view.ys;
@@ -2280,7 +2289,7 @@ function drawScene(dt) {
   for (const o of SCENERY) { if (!visX(o.x0, o.x1, o.y)) continue; const fr = o.y < ly - 8 && hides(pr(o.x0, o.y)[0], pr(o.x1, o.y)[0]);
     items.push({ key: o.key, f: fr ? g2 => { g2.globalAlpha = 0.3; o.draw(g2); g2.globalAlpha = 1; } : o.draw }); }
   for (const k of SWITCHES) { const [x, y] = standPos(k); if (!visX(x - 3, x + 3, y)) continue; items.push({ key: y, f: g2 => drawStand(g2, k) }); }
-  for (const b of ['bEng', 'bHse', 'bT', 'bG']) { const [x, y] = P[b]; if (!visX(x - 5, x + 5, y)) continue; items.push({ key: y - 3, f: g2 => drawBumper(g2, b) }); }
+  for (const b of ['bEng', 'bHse', 'bG']) { const [x, y] = P[b]; if (!visX(x - 5, x + 5, y)) continue; items.push({ key: y - 3, f: g2 => drawBumper(g2, b) }); }
   for (const v of Object.values(state.veh)) {
     const own = v.cid === c.id, q = vehScreen(v); if (Math.max(q.Pl[0], q.Pr[0]) < -20 || Math.min(q.Pl[0], q.Pr[0]) > VW + 20) continue;
     const ghost = !own && q.depth < ly - 10 && hides(q.Pl[0], q.Pr[0]);
