@@ -2070,42 +2070,60 @@ function drawGround(g) {
 const COUNTRY_X = -1700, FIELD_Y = 32, FENCE_ROWS = [420, 950, 1650];
 const FARM_SPRITES = [['farm-farmstead', -2700, 560], ['farm-binset', -3900, 600, 0.45], ['farm-elevator-coop', -5600, 650, 0.3], ['farm-farmstead', -6900, 560], ['farm-binset', -8200, 540, 0.45]];
 let stubPat = null;
-// perf (Nov 2): each stubble slice (pattern + haze) is painted once into a strip one pattern-repeat wider than the screen and then
-// copied in at the pattern's offset (snapped to a device pixel), instead of a scaled pattern fill over the full width every frame;
-// a strip is repainted only when its size, height on screen or zoom changes
-const FIELD_STRIPS = []; let FIELD_BUDGET = 1;
-function fieldStrip(g, i, st, k, ox, y, h, haze) {
-  const per = st.naturalWidth * k; if (!(per * DPR >= 4) || !(h > 0)) return false;
-  // the pattern is anchored at the slice's top edge, so a slice's look depends only on the zoom (k), the haze, and its height:
-  // the strip is painted from its own top, a bit taller than needed, and reused while the camera eases up and down
-  let S = FIELD_STRIPS[i]; const key = VW + '|' + DPR + '|' + haze;
-  // repaint a stale strip only one per frame (so a zoom change never costs a burst of repaints in one frame); until then a strip
-  // within 15% of the zoom is drawn scaled, and past that the slice falls back to the plain pattern fill for that frame
-  const far = !S || S.key !== key || Math.abs(S.k - k) > k * 0.15 || S.h * k / S.k < h;
-  if (far) { if (FIELD_BUDGET > 0) { FIELD_BUDGET--; S = null; } else return false; }
-  if (!S) { const c = (FIELD_STRIPS[i] && FIELD_STRIPS[i].c) || document.createElement('canvas'), w = VW + 20 + per, H = Math.ceil(h * 1.25 + 4);
-    c.width = Math.ceil(w * DPR) + 2; c.height = Math.ceil(H * DPR); const x = c.getContext('2d');
-    x.setTransform(DPR, 0, 0, DPR, 0, 0); const pat = x.createPattern(st, 'repeat'); pat.setTransform(new DOMMatrix([k, 0, 0, k * 0.35, 0, 0]));
-    x.fillStyle = pat; x.fillRect(0, 0, w, H); x.fillStyle = haze; x.fillRect(0, 0, w, H); S = FIELD_STRIPS[i] = { key, c, h: H, k }; }
-  // the zoom eases by tiny steps: within 3% the strip is drawn scaled by the exact ratio, so the texture keeps the true size
-  const r = k / S.k, p = st.naturalWidth * k; let sx = ox - p * Math.ceil((ox + 10) / p); sx = Math.round(sx * DPR) / DPR; const yy = Math.round(y * DPR) / DPR, sh = Math.min(S.c.height, h * DPR / r);
-  g.drawImage(S.c, 0, 0, S.c.width, sh, sx, yy, S.c.width / DPR * r, sh / DPR * r); return true;
+// perf (Nov 2): the stubble texture is pre-shrunk into small tiles, one per zoom bucket (steps of 1.25x), and each slice is filled
+// with a pattern of the nearest bucket's tile at the exact scale, so the full-size texture is never shrunk across the screen every
+// frame, and nothing is repainted while the camera drifts (a tile is a few hundred pixels, made once per bucket and kept)
+const FIELD_TILES = new Map();
+function fieldTile(g, st, k) {
+  const b = Math.round(Math.log(k * DPR) / Math.log(1.25)), key = b + '|' + DPR; let T = FIELD_TILES.get(key); if (T) return T;
+  const kb = Math.pow(1.25, b) / DPR, W = Math.max(1, Math.round(st.naturalWidth * kb * DPR)), H = Math.max(1, Math.round(st.naturalHeight * kb * 0.35 * DPR));
+  if (W * H > 4e6) return null;
+  const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(st, 0, 0, W, H);
+  T = { pat: g.createPattern(c, 'repeat'), W, H }; FIELD_TILES.set(key, T); window.__fsb = (window.__fsb || 0) + 1; return T;
 }
+function fieldFill(g, st, k, ox, y) { const T = fieldTile(g, st, k); if (!T) return false;
+  T.pat.setTransform(new DOMMatrix([st.naturalWidth * k / T.W, 0, 0, st.naturalHeight * k * 0.35 / T.H, Math.round(ox * DPR) / DPR, Math.round(y * DPR) / DPR])); g.fillStyle = T.pat; return true; }
+// Nov 2 hybrid: per slice, a strip painted once per zoom bucket with the cheap tile (haze baked in), drawn each frame as a scaled, offset copy.
+// Repaints are queued and spread over frames under a time budget; a stale bucket's strip is drawn scaled meanwhile. Canvases are pooled.
+const FS_BN = [], FS = [], FS_POOL = [], FS_Q = []; let FS_LASTB = null, FS_STILL = 0;
+const fsBucket = k => Math.round(Math.log(k * DPR) / Math.log(1.25));
+function fsPaint(g, st, i, b, hNeed, haze) { const kb = Math.pow(1.25, b) / DPR, T = fieldTile(g, st, kb); if (!T) return null;
+  const W = Math.ceil((VW + 40) * DPR * 1.15) + T.W, H = Math.min(4096, Math.ceil(hNeed * DPR * 1.15 * 1.3) + T.H);
+  let c = FS_POOL.pop(); if (!c) c = document.createElement('canvas'); if (c.width < W) c.width = W; if (c.height < H) c.height = H;
+  const x = c.getContext('2d'); x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, W, H); T.pat.setTransform(new DOMMatrix([1, 0, 0, 1, 0, 0])); x.fillStyle = T.pat; x.fillRect(0, 0, W, H);
+  x.fillStyle = haze; x.fillRect(0, 0, W, H); window.__fsb = (window.__fsb || 0) + 1;
+  return { c, b, W, H, TW: T.W, TH: T.H }; }
+function fsGet(i, b) { const L = FS[i] || (FS[i] = []); return L.find(e => e.b === b); }
+function fsPut(i, e, bNow) { const L = FS[i] || (FS[i] = []); L.push(e); L.sort((p, q) => Math.abs(p.b - bNow) - Math.abs(q.b - bNow)); while (L.length > (window.__FSMAX || 3)) FS_POOL.push(L.pop().c); }
+function fsWant(i, b, h, haze) { const e = fsGet(i, b); if (e && e.hOK >= h) return; if (!FS_Q.some(q => q.i === i && q.b === b)) { FS_Q.push({ i, b, h, haze }); (window.__fsr = window.__fsr || {})[(e ? 'h' : 'n') + i] = ((window.__fsr || {})[(e ? 'h' : 'n') + i] || 0) + 1; } }
+function fsWork(g, st, bNow) { const t0 = performance.now(); let n = 0;
+  FS_Q.sort((p, q) => Math.abs(p.b - bNow[p.i]) - Math.abs(q.b - bNow[q.i]));
+  while (FS_Q.length && (n === 0 || performance.now() - t0 < 6)) { const q = FS_Q.shift(); const old = fsGet(q.i, q.b); if (old && old.hOK >= q.h) continue;
+    const e = fsPaint(g, st, q.i, q.b, q.h, q.haze); n++; if (!e) continue; e.hOK = Math.floor((e.H - e.TH) / DPR / 1.15);
+    if (old) { const L = FS[q.i]; L.splice(L.indexOf(old), 1); FS_POOL.push(old.c); } fsPut(q.i, e, bNow[q.i]); } }
+function fsDraw(g, st, i, k, ox, y0, h) { const L = FS[i]; if (!L || !L.length) return false; const b = fsBucket(k);
+  const e = L.slice().sort((p, q) => Math.abs(p.b - b) - Math.abs(q.b - b))[0]; const kb = Math.pow(1.25, e.b) / DPR;
+  const sx = st.naturalWidth * k / e.TW, sy = st.naturalHeight * k * 0.35 / e.TH, per = st.naturalWidth * k;
+  const xs = ox - Math.ceil((ox + 10) / per) * per, sw = Math.ceil((VW + 20 - xs) / sx), sh = Math.ceil(h / sy);
+  if (sw > e.W || sh > e.H) { window.__fall = (window.__fall || 0) + 1; return false; }
+  g.drawImage(e.c, 0, 0, sw, sh, Math.round(xs * DPR) / DPR, Math.round(y0 * DPR) / DPR, sw * sx, sh * sy); return true; }
 function drawCountry(g, HOR) {
   const im = n => { const i = IMG['B:' + n]; return i && i.complete && i.naturalWidth ? i : null; };
   const yNear = gyOf(FIELD_Y), edge = [[COUNTRY_X, FIELD_Y - 8], [COUNTRY_X, 1e6]].map(([x, y]) => pr(x, y));
   if (edge[0][0] <= 0 && edge[1][0] <= 0) return; // all town
   g.save(); g.beginPath(); g.moveTo(-10, Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], HOR); g.lineTo(edge[0][0], edge[0][1]); g.lineTo(edge[0][0], VH + 10); g.lineTo(-10, VH + 10); g.closePath(); g.clip();
   // stubble fields: depth slices, the texture scaled to each slice's distance; haze toward the horizon
-  FIELD_BUDGET = 1; const st = im('farm-field-stubble'); if (st && !stubPat) stubPat = g.createPattern(st, 'repeat');
+  const st = im('farm-field-stubble'); if (st && !stubPat) stubPat = g.createPattern(st, 'repeat');
   const cuts = [FIELD_Y, 70, 110, 170, 260, 400, 600, 900, 1300, 1900, 2800, 4500, 9000, 1e5];
   for (let i = 0; i < cuts.length - 1; i++) { const D0 = cuts[i], D1 = cuts[i + 1], y0 = gyOf(D1), y1 = gyOf(D0); if (y1 < HOR - 1 || y1 - y0 < 0.3) continue;
     const k = ZS * dsc((D0 + D1) / 2) / 5.05;
-    const haze = `rgba(201,212,220,${Math.min(0.45, 0.04 + (D0 + D1) / 2 / 20000)})`;
-    if (stubPat && fieldStrip(g, i, st, k, pr(0, (D0 + D1) / 2)[0], y0, y1 - y0 + 0.6, haze)) continue;
-    if (stubPat) { const m = new DOMMatrix([k, 0, 0, k * 0.35, pr(0, (D0 + D1) / 2)[0], y0]); stubPat.setTransform(m); g.fillStyle = stubPat; } else g.fillStyle = '#b8a77c';
+    const haze = `rgba(201,212,220,${Math.min(0.45, 0.04 + (D0 + D1) / 2 / 20000)})`, ox = pr(0, (D0 + D1) / 2)[0];
+    if (window.__NOF) continue;
+    if (stubPat) { const b = fsBucket(k), h = y1 - y0 + 0.6; FS_BN[i] = b; fsWant(i, b, h, haze); if (FS_STILL > 20) { fsWant(i, b - 1, h, haze); fsWant(i, b + 1, h, haze); } if (fsDraw(g, st, i, k, ox, y0, h)) continue; }
+    if (!(stubPat && fieldFill(g, st, k, ox, y0))) { if (stubPat) { const m = new DOMMatrix([k, 0, 0, k * 0.35, ox, y0]); stubPat.setTransform(m); g.fillStyle = stubPat; } else g.fillStyle = '#b8a77c'; }
     g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6);
     g.fillStyle = haze; g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6); }
+  if (stubPat) { fsWork(g, st, FS_BN); const bz = fsBucket(ZS); FS_STILL = bz === FS_LASTB ? FS_STILL + 1 : 0; FS_LASTB = bz; }
   for (const D of FENCE_ROWS) { const y = gyOf(D); g.fillStyle = 'rgba(92,104,62,.8)'; g.fillRect(-10, y - Math.max(1, ZS * dsc(D) * 1.2), VW + 20, Math.max(1, ZS * dsc(D) * 1.2)); }
   // thin weed / grass strip just behind the ballast
   const yW = gyOf(FIELD_Y - 6); g.fillStyle = '#7f9a52'; g.fillRect(-10, yNear, VW + 20, yW - yNear + 0.5);
