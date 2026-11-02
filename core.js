@@ -2904,7 +2904,9 @@ function simStep(dt) {
   if (Math.abs(c.v) < 0.05 && !state.ap) checkJob(); else repWatch();
   if ((workT += dt) >= 5) { workT = 0; workTick(); bfTick(); }
 }
-function advanceTime(sec) { const h = 1 / 60; let n = Math.round(sec / h); while (n-- > 0) simStep(h); }
+// smooth (Nov 1): the old version rounded each frame's time to whole 1/60 s steps, so on 120/144/165 Hz screens the train moved
+// in uneven jumps (or not at all at 1x on 144 Hz) and 4x ran fast or slow; now whole steps plus one short step for the rest, so every frame advances exactly its own time
+function advanceTime(sec) { const h = 1 / 60; let n = Math.floor(sec / h + 1e-9); const r = sec - n * h; while (n-- > 0) simStep(h); if (r > 1e-6) simStep(r); }
 function frame(t) {
   if (VISIT) { lastT = t; sceneCam(0.016); drawMap(); drawScene(0.016); try { updateUI(); } catch (e) { } requestAnimationFrame(frame); return; } // looking around: draw only, the clock stays stopped, nothing saved
   if (state.awayTrain) return; // the train left for another town: the page is about to reload
