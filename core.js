@@ -1188,7 +1188,7 @@ let mapChips = [];
 let userCam = false, cam = { x: 330, y: 170, z: 0.5 }, DPR = 1, MW = 0, MH = 0, fitted = false, mapOpen = false;
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 3);
-  const r = mapC.getBoundingClientRect(); MW = r.width; MH = r.height; mapC.width = Math.round(MW * DPR); mapC.height = Math.round(MH * DPR);
+  MW = mapC.clientWidth || mapC.getBoundingClientRect().width; MH = mapC.clientHeight || mapC.getBoundingClientRect().height; mapC.width = Math.round(MW * DPR); mapC.height = Math.round(MH * DPR);
   sceneResize();
   if (!fitted) fit();
 }
@@ -1305,7 +1305,8 @@ $('modalBg').addEventListener('click', e => { if (e.target === $('modalBg') && !
 
 // map gestures: one finger drags / taps, two fingers pinch
 const ptrs = new Map(); let gest = null;
-const rel = (el, e) => { const r = el.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+// Nov 1 (click accuracy): pointer -> canvas logical px, scaled by the element's layout size over its on-screen rect (CSS transforms / page zoom / host frames)
+const rel = (el, e) => { const r = el.getBoundingClientRect(), fx = r.width ? (el.clientWidth || r.width) / r.width : 1, fy = r.height ? (el.clientHeight || r.height) / r.height : 1; return [(e.clientX - r.left) * fx, (e.clientY - r.top) * fy]; };
 mapC.addEventListener('pointerdown', e => {
   if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (er) { } }
   try { mapC.setPointerCapture(e.pointerId); } catch (er) { } const [ox, oy] = rel(mapC, e); ptrs.set(e.pointerId, { x: ox, y: oy, x0: ox, y0: oy });
@@ -1581,7 +1582,7 @@ const imgX = (x, y) => view.x + (x - view.x) * dsc(y);
 const imgY = y => PV.EH * (1 - dsc(y));
 function pr(x, y) { const s = dsc(y); return [VW / 2 + ZS * (imgX(x, y) - view.x), RAIL - ZS * (imgY(y) - view.v), ZS * s]; }
 const gyOf = y => RAIL - ZS * (imgY(y) - view.v);
-function sceneResize() { const r = sceneC.getBoundingClientRect(); VW = r.width; VH = r.height; sceneC.width = Math.round(VW * DPR); sceneC.height = Math.round(VH * DPR); }
+function sceneResize() { const r = sceneC.getBoundingClientRect(); VW = sceneC.clientWidth || r.width; VH = sceneC.clientHeight || r.height; sceneC.width = Math.round(VW * DPR); sceneC.height = Math.round(VH * DPR); }
 const MAXW = 1100;                                                   // widest view (ft of main line across the screen)
 function zLim(z) { const lo = VW / MAXW * dsc(view.ys) / (BASE || 1); return Math.max(Math.min(0.5, lo), Math.min(2.6, z)); }
 function sceneLayout() {
@@ -2909,7 +2910,7 @@ function boot() {
   // the map box changes size with the window, rotation, and the panel (drive vs tap): keep the whole yard in view unless the player zoomed/panned
   const onBox = () => { const a = MW, b = MH; resize(); if (!userCam || Math.abs(a - MW) > 120 || Math.abs(b - MH) > 120) fit(); };
   window.addEventListener('resize', onBox);
-  if (window.ResizeObserver) new ResizeObserver(onBox).observe(mapC);
+  if (window.ResizeObserver) { const ro = new ResizeObserver(onBox); ro.observe(mapC); ro.observe(sceneC); } // the scene canvas can change size on its own (ticker, drawer, full screen): keep its backing store and VW/VH in step
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   if (state.help && !VISIT) showModal(HELP);

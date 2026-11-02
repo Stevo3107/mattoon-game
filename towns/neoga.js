@@ -697,16 +697,17 @@ function build() {
   // canvas: drag to pan, tap a stand to throw it, tap a car for its waybill, tap the track to run the engine there
   let drag = null; cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
   cv.addEventListener('pointermove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 8) { drag.moved = true; cam.follow = false; } if (drag.moved) { cam.x = drag.cx - dx / cam.z; cam.y = drag.cy - dy / (cam.z * K); } });
-  cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = e.clientX - r.left, Y = e.clientY - r.top; tap(X, Y); });
+  cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = (e.clientX - r.left) * (r.width ? W / r.width : 1), Y = (e.clientY - r.top) * (r.height ? H / r.height : 1); MOUSE = e.pointerType === 'mouse'; tap(X, Y); }); // Nov 1: scaled to the canvas's logical size
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = Math.max(0.25, Math.min(4, cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); }, { passive: false });
 }
-function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r)) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
-  const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < s.r); if (st && st.lock) { toast(LOCK_MSG, 'bad'); return; } if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
+let MOUSE = false; const hitR = s => MOUSE ? Math.min(s.r, Math.max(9, s.r * 0.55)) : s.r; // mouse: a tight ring on the stand; touch keeps the generous one
+function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s))) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
+  const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s)); if (st && st.lock) { toast(LOCK_MSG, 'bad'); return; } if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
   const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { carModal({ ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }); return; }
   // track: nearest point within 12 px -> autopilot there
-  let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const [x, y] = ptAt(t, d), e = Math.hypot(sx(x) - X, sy(y) - Y); if (e < 14 && (!best || e < best.e)) best = { t, d, e }; }
+  let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const [x, y] = ptAt(t, d), e = Math.hypot(sx(x) - X, sy(y) - Y); if (e < (MOUSE ? 7 : 14) && (!best || e < best.e)) best = { t, d, e }; }
   if (best && liveCut()) apTo(best.t, best.d); }
 // ================================================================= LOOP
 let last = performance.now(), saveT = 0, mapT = 0;
@@ -716,5 +717,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
+window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
 };
