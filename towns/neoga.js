@@ -122,7 +122,8 @@ const NW_SHARE = 0.35;                             // share of inbound cars that
 const WORK_H = 10;                                 // hours at the spot to unload / load
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
-const EDGE_PAD = 100; const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
+const EDGE_PAD = 100, NG_YT = -2900, NG_YB = 1500; // vertical scroll limits (farm side top / town side bottom, N&W is drawn 100+ ft beyond both, so its ends never show)
+const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
 function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a parallel track `off` ft away, then `tail` ft straight
   const h = Math.abs(off) / 2, th = Math.acos(1 - h / R), sg = Math.sign(off), pts = [], n = 16;
   for (let i = 0; i <= n; i++) { const a = th * i / n; pts.push([x0 + sx * R * Math.sin(a), y0 + sg * R * (1 - Math.cos(a))]); }
@@ -396,13 +397,14 @@ function drawGround() { const [vL, vR] = visX(), GL = Math.min(-400, vL), GR = M
   const field = (x0, y0, x1, y1, tint) => { if (sp) { sp.setTransform(new DOMMatrix([cam.z / pxft, 0, 0, cam.z * K / pxft * 1.6, sx(0), sy(0)])); g.fillStyle = sp; } else g.fillStyle = '#b8a77c';
     g.fillRect(sx(x0), sy(y0), (x1 - x0) * cam.z, (y1 - y0) * cam.z * K); if (tint) { g.fillStyle = tint; g.fillRect(sx(x0), sy(y0), (x1 - x0) * cam.z, (y1 - y0) * cam.z * K); } };
   const tints = [null, 'rgba(120,100,50,.10)', 'rgba(255,240,200,.08)', 'rgba(90,80,40,.12)', null];
-  fx.forEach((x, i) => { if (i === fx.length - 1) return; const x1 = fx[i + 1]; field(x, -3000, x1, -60, tints[(i + 50) % tints.length]); field(x, 470, x1, 3000, tints[(i + 52) % tints.length]);
-    line([[x1, -3000], [x1, -62]], Math.max(1, 1.4 * cam.z), 'rgba(92,104,62,.75)'); line([[x1, 472], [x1, 3000]], Math.max(1, 1.4 * cam.z), 'rgba(92,104,62,.75)'); });
+  fx.forEach((x, i) => { if (i === fx.length - 1) return; const x1 = fx[i + 1]; field(x, -3000, x1, -60, tints[(i + 50) % tints.length]);
+    line([[x1, -3000], [x1, -62]], Math.max(1, 1.4 * cam.z), 'rgba(92,104,62,.75)'); });
   for (const y of [-700, -1500]) line([[GL, y], [GR, y]], Math.max(1, 1.4 * cam.z), 'rgba(92,104,62,.75)');
-  rectW(GL, -60, GR, 200, '#8f9e62'); rectW(GL, -66, GR, -56, '#7f9a52'); // right of way + grass, weed verge along the field edge (as Mattoon)
-  rectW(GL, 200, GR, 470, '#a4ab84'); rectW(GL, 466, GR, 474, '#7f9a52'); rectW(GL, 252, GR, 272, '#6d6b66'); line([[GL, 262], [GR, 262]], 1, 'rgba(255,255,255,.35)'); // town lawns + street
-  rectW(360, -1200, 400, 1000, '#6d6b66'); // county road crossing the main
-  line([[NWX, -1300], [NWX, 1100]], Math.max(3, 10 * cam.z), '#9a8f7c'); // N&W right of way (ballast)
+  rectW(GL, -60, GR, 200, '#86a35a'); rectW(GL, -66, GR, -56, '#7f9a52'); // right of way + grass, weed verge along the field edge (as Mattoon)
+  rectW(GL, 200, GR, NG_YB + 200, '#7fa356'); // town side: lawn green all the way down (Stephen)
+  rectW(GL, 252, GR, 272, '#6d6b66'); line([[GL, 262], [GR, 262]], 1, 'rgba(255,255,255,.35)'); // town lawns + street
+  rectW(360, -3000, 400, NG_YB + 200, '#6d6b66'); // county road crossing the main
+  line([[NWX, -3000], [NWX, NG_YB + 200]], Math.max(3, 10 * cam.z), '#9a8f7c'); // N&W right of way (ballast)
 }
 // background elevator (farm side, set well back from the N&W and the main); Danny's neoga-elevator@2x wins when it arrives
 const ELEV = { x: 2450, y: -520 };
@@ -426,8 +428,8 @@ function drawTrack(t) { const tr = T[t], pts = tr.p;
   if (cam.z > 0.55) { g.strokeStyle = '#5a4634'; g.lineWidth = Math.max(1, 0.8 * cam.z); g.beginPath(); for (let d = 1; d < Math.min(tr.len, dirt0); d += 3) { const [x, y, a] = ptAt(t, d), nx = -Math.sin(a) * 4.3, ny = Math.cos(a) * 4.3; g.moveTo(sx(x - nx), sy(y - ny)); g.lineTo(sx(x + nx), sy(y + ny)); } g.stroke(); }
   for (const o of [-2.35, 2.35]) { g.beginPath(); for (let d = 0; d <= tr.len; d += Math.max(2, 6 / cam.z)) { const [x, y, a] = ptAt(t, Math.min(d, tr.len)); const X = sx(x - Math.sin(a) * o), Y = sy(y + Math.cos(a) * o); d ? g.lineTo(X, Y) : g.moveTo(X, Y); } const [x, y, a] = ptAt(t, tr.len); g.lineTo(sx(x - Math.sin(a) * o), sy(y + Math.cos(a) * o)); g.lineWidth = Math.max(1, 0.5 * cam.z); g.strokeStyle = '#4a4a4a'; g.stroke(); } }
 function drawNWMain() { // N&W main, straight bottom to top (not part of our track: the diamond is just a crossing)
-  g.strokeStyle = '#5a4634'; g.lineWidth = Math.max(1, 0.8 * cam.z); g.beginPath(); for (let y = -1300; y < 1100; y += 3) { g.moveTo(sx(NWX - 4.3), sy(y)); g.lineTo(sx(NWX + 4.3), sy(y)); } if (cam.z > 0.55) g.stroke();
-  for (const o of [-2.35, 2.35]) line([[NWX + o, -1300], [NWX + o, 1100]], Math.max(1, 0.5 * cam.z), '#4a4a4a');
+  g.strokeStyle = '#5a4634'; g.lineWidth = Math.max(1, 0.8 * cam.z); g.beginPath(); for (let y = Math.max(-3000, cam.y - H / cam.z / K); y < Math.min(NG_YB + 200, cam.y + H / cam.z / K); y += 3) { g.moveTo(sx(NWX - 4.3), sy(y)); g.lineTo(sx(NWX + 4.3), sy(y)); } if (cam.z > 0.55) g.stroke();
+  for (const o of [-2.35, 2.35]) line([[NWX + o, -3000], [NWX + o, NG_YB + 200]], Math.max(1, 0.5 * cam.z), '#4a4a4a');
   g.fillStyle = '#6b5e4c'; g.fillRect(sx(NWX - 7), sy(-6), 14 * cam.z, 12 * cam.z * K); // diamond frog plate
   for (const o of [-2.35, 2.35]) { line([[NWX - 7, o], [NWX + 7, o]], Math.max(1, 0.6 * cam.z), '#333'); line([[NWX + o, -7], [NWX + o, 7]], Math.max(1, 0.6 * cam.z), '#333'); } }
 function box3(x, y, w, d, h, col, roof, gable) { // simple building: front face at y (toward the viewer), depth d behind it
@@ -513,7 +515,8 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
 let flashT = 0;
 function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
   const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 20; }
-  { const span = XS - XN + 2 * EDGE_PAD; cam.z = Math.max(cam.z, W / span); const half = W / 2 / cam.z; cam.x = Math.max(XN - EDGE_PAD + half, Math.min(XS + EDGE_PAD - half, cam.x)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
+  { const span = XS - XN + 2 * EDGE_PAD; cam.z = Math.max(cam.z, W / span); const half = W / 2 / cam.z; cam.x = Math.max(XN - EDGE_PAD + half, Math.min(XS + EDGE_PAD - half, cam.x));
+    cam.z = Math.max(cam.z, H / ((NG_YB - NG_YT) * K)); const hh = H / 2 / (cam.z * K), lo = NG_YT + hh, hi = NG_YB - hh; cam.y = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, cam.y)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
   drawGround(); drawMainOff(); for (const t of Object.keys(T)) drawTrack(t); drawNWMain();
   // bumper / wheel stop
   for (const [t, d] of [['HT', T.HT.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }
