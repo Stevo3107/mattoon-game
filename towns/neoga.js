@@ -122,7 +122,7 @@ const NW_SHARE = 0.35;                             // share of inbound cars that
 const WORK_H = 10;                                 // hours at the spot to unload / load
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
-const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
+const EDGE_PAD = 100; const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
 function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a parallel track `off` ft away, then `tail` ft straight
   const h = Math.abs(off) / 2, th = Math.acos(1 - h / R), sg = Math.sign(off), pts = [], n = 16;
   for (let i = 0; i <= n; i++) { const a = th * i / n; pts.push([x0 + sx * R * Math.sin(a), y0 + sg * R * (1 - Math.cos(a))]); }
@@ -494,6 +494,7 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
 let flashT = 0;
 function draw() { resize(); g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
   const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 20; }
+  { const span = XS - XN + 2 * EDGE_PAD; cam.z = Math.max(cam.z, W / span); const half = W / 2 / cam.z; cam.x = Math.max(XN - EDGE_PAD + half, Math.min(XS + EDGE_PAD - half, cam.x)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
   drawGround(); drawMainOff(); for (const t of Object.keys(T)) drawTrack(t); drawNWMain();
   // bumper / wheel stop
   for (const [t, d] of [['HT', T.HT.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }

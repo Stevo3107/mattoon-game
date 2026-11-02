@@ -1589,7 +1589,11 @@ function sceneLayout() {
   BASE = Math.min(VW / (land ? 95 : 118), VH * 0.40 / 15);
   view.z = zLim(view.z);
   ZS = BASE * view.z / dsc(view.ys); RAIL = VH * (land ? 0.62 : 0.52);
+  clampView();
 }
+// Nov 1 (Stephen): the screen edge (on the main) can go at most ~100 ft past each 'to the next town' end (N to Champaign = NW_X, to Neoga = P.nE)
+const EDGE_PAD = 100;
+function clampView() { if (!ZS) return; const half = VW / 2 / ZS, lo = NW_X - EDGE_PAD + half, hi = P.nE[0] + EDGE_PAD - half; view.x = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, view.x)); }
 function locoMid() { const l = locoOf(locoCons()); const [fx, fy] = xy(l.f.s, l.f.d), [rx, ry] = xy(l.r.s, l.r.d); return [(fx + rx) / 2, (fy + ry) / 2]; }
 function camTarget() { // the engine, or the whole train when it fits, never letting the engine leave the picture (image coords)
   const [lx, ly] = locoMid(), c = locoCons(), F = xy(front(c).s, front(c).d), R = xy(rear(c).s, rear(c).d), l = locoOf(c);
@@ -1649,7 +1653,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
     x += w + (R() < 0.3 ? 4 + R() * 10 : 0);
   }
   // street behind the yard with utility poles
-  for (let px = -720; px < P.nE[0] + 300; px += 115) { const p0 = px, p1 = px + 115; SCENERY.push({ key: 198, x0: p0 - 6, x1: p1 + 6, y: 198, draw: g => pole(g, p0, 198, p1) }); }
+  for (let px = -720; px < P.nE[0] + 1500; px += 115) { const p0 = px, p1 = px + 115; SCENERY.push({ key: 198, x0: p0 - 6, x1: p1 + 6, y: 198, draw: g => pole(g, p0, 198, p1) }); }
   // across the street from the stores (the yard side): the backs of buildings that face the street, sheds, fences and bins (own random stream)
   const BACKS = []; { const R3 = rng(4417);
     // Danny's backs (town-back-*.png, @2x = 10.1 px/ft, 1 ft pad each side): [name, width ft]
@@ -2035,9 +2039,9 @@ function drawGround(g) {
   g.lineTo(VW, yT); g.closePath(); g.fill();
   drawCountry(g, HOR);
   // street behind the yard, gravel access road on the viewer side, road crossings
-  groundRect(g, NW_X - 400, P.nE[0] + 400, 204, 224, '#6b6b6b'); groundRect(g, NW_X - 400, P.nE[0] + 400, 202.5, 204, '#a6a59f');
+  groundRect(g, NW_X - 1500, P.nE[0] + 1500, 204, 224, '#6b6b6b'); groundRect(g, NW_X - 1500, P.nE[0] + 1500, 202.5, 204, '#a6a59f');
   groundRect(g, -345, -315, -170, 204, '#5f5f5f'); groundRect(g, RDX - 15, RDX + 15, -170, 204, '#5f5f5f');
-  groundRect(g, NW_X - 400, P.nE[0] + 400, -34, -24, '#a89f8c');
+  groundRect(g, NW_X - 1500, P.nE[0] + 1500, -34, -24, '#a89f8c');
   // gravel lanes from the county road behind the line to the customers out in the fields
   for (const [x0, x1, y0] of [[IFS_X + 476, IFS_X + 498, 60], [PG_X + 122, PG_X + 142, 40]]) { groundRect(g, x0 - 1.5, x1 + 1.5, y0, 203, '#8f8775'); groundRect(g, x0, x1, y0, 203, '#a89f8c'); }
   groundRect(g, PG_X - 20, PG_X + 150, 40, 75, '#a89f8c'); // truck apron at the elevator
@@ -2075,6 +2079,15 @@ function drawCountry(g, HOR) {
   g.restore();
 }
 function groundRect(g, x0, x1, y0, y1, col) { const A = pr(x0, y0), B = pr(x1, y0), C = pr(x1, y1), D = pr(x0, y1); if (Math.max(A[0], B[0]) < 0 && Math.max(C[0], D[0]) < 0 || Math.min(A[0], B[0]) > VW && Math.min(C[0], D[0]) > VW) return; poly(g, [A, B, C, D], col); }
+// Nov 1: scenery-only main past both travel edges (to Champaign / to Neoga), so the track runs off screen instead of ending
+function drawMainOff(g) { const k = ZS, R = 1500;
+  for (const [x0, x1] of [[NW_X - R, NW_X + 3], [P.nE[0] - 3, P.nE[0] + R]]) {
+    const A = pr(x0, 0), B = pr(x1, 0); if (B[0] < -20 || A[0] > VW + 20) continue;
+    const q = (o) => [pr(x0, o), pr(x1, o)]; poly(g, [...q(6.5), ...q(-8.2).reverse()], '#7a7266'); poly(g, [...q(6.5), ...q(-6.5).reverse()], '#948b7d');
+    const sp = 1.75; if (sp * k < 3.2) { g.globalAlpha = 0.7; poly(g, [...q(4.3), ...q(-4.3).reverse()], '#5c4835'); g.globalAlpha = 1; }
+    else { const xa = Math.max(x0, view.x - VW / 2 / k - 5), xb = Math.min(x1, view.x + VW / 2 / k + 5); g.fillStyle = '#5c4835'; g.beginPath();
+      for (let x = Math.ceil(xa / sp) * sp; x <= xb; x += sp) { const a = pr(x - 0.36, -4.3), b = pr(x + 0.36, -4.3), c = pr(x + 0.36, 4.3), d = pr(x - 0.36, 4.3); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.lineTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.closePath(); } g.fill(); }
+    for (const o of [-2.35, 2.35]) { const [a, b] = q(o); g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.strokeStyle = '#3b3a3a'; g.lineWidth = Math.max(1.1, 0.42 * k); g.stroke(); g.strokeStyle = '#b8b6b0'; g.lineWidth = Math.max(0.6, 0.16 * k); g.stroke(); } } }
 function drawTrack(g) {
   HIT.tracks = [];
   const gaps = {}; for (const k of SWITCHES) { const n = NODES[k], other = state.sw[k] === 'N' ? 'R' : 'N', l = n[other]; (gaps[l.seg] = gaps[l.seg] || {})[l.end] = 9; }
@@ -2254,7 +2267,7 @@ function drawSpotMarks(g) {
 function drawScene(dt) {
   const g = gctx; g.setTransform(DPR, 0, 0, DPR, 0, 0); sceneLayout();
   HIT.stands = []; HIT.couplers = []; HIT.vehs = []; HIT.ptr = null; HZ = 0;
-  drawGround(g); drawTrack(g); if (spotsOn) drawSpotMarks(g);
+  drawGround(g); drawMainOff(g); drawTrack(g); if (spotsOn) drawSpotMarks(g);
   const c = locoCons() || { veh: [] }, job = state.job, ly = locoCons() ? locoMid()[1] : 0;
   // the engine's own train on screen: things standing in front of it are drawn see-through where they would hide it
   let ox0 = 1e9, ox1 = -1e9; for (const id of c.veh) { const q = vehScreen(V(id)); ox0 = Math.min(ox0, q.Pl[0], q.Pr[0]); ox1 = Math.max(ox1, q.Pl[0], q.Pr[0]); }
