@@ -117,7 +117,7 @@ const SPEED = { main: 25, other: 10 };            // same as game.js
 const RED_FINE = 500, RED_REP = 15;                // running a red home signal at the diamond
 const ROUTE_CLEAR_ODDS = 0.80;                     // tower clears us right away; else hold for an N&W train
 const NW_ROUTE_ODDS = 0.20;                        // outbound car reassigned to the other interchange (IC <-> N&W)
-const INBOUND_ODDS = { HOUSE: 0.35, COAL: 0.30, OIL: 0.25 }; // chance per customer per day of an interchange car
+const INBOUND_ODDS = { HOUSE: 0.21, COAL: 0.32, OIL: 0.10 }; // Nov 1: ~1.5 / 2.2 / 0.7 cars a 7-day week // chance per customer per day of an interchange car
 const NW_SHARE = 0.35;                             // share of inbound cars that the N&W sets on the N&W Interchange (rest come down from IC at Mattoon)
 const WORK_H = 10;                                 // hours at the spot to unload / load
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
