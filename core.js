@@ -2070,19 +2070,42 @@ function drawGround(g) {
 const COUNTRY_X = -1700, FIELD_Y = 32, FENCE_ROWS = [420, 950, 1650];
 const FARM_SPRITES = [['farm-farmstead', -2700, 560], ['farm-binset', -3900, 600, 0.45], ['farm-elevator-coop', -5600, 650, 0.3], ['farm-farmstead', -6900, 560], ['farm-binset', -8200, 540, 0.45]];
 let stubPat = null;
+// perf (Nov 2): each stubble slice (pattern + haze) is painted once into a strip one pattern-repeat wider than the screen and then
+// copied in at the pattern's offset (snapped to a device pixel), instead of a scaled pattern fill over the full width every frame;
+// a strip is repainted only when its size, height on screen or zoom changes
+const FIELD_STRIPS = []; let FIELD_BUDGET = 1;
+function fieldStrip(g, i, st, k, ox, y, h, haze) {
+  const per = st.naturalWidth * k; if (!(per * DPR >= 4) || !(h > 0)) return false;
+  // the pattern is anchored at the slice's top edge, so a slice's look depends only on the zoom (k), the haze, and its height:
+  // the strip is painted from its own top, a bit taller than needed, and reused while the camera eases up and down
+  let S = FIELD_STRIPS[i]; const key = VW + '|' + DPR + '|' + haze;
+  // repaint a stale strip only one per frame (so a zoom change never costs a burst of repaints in one frame); until then a strip
+  // within 15% of the zoom is drawn scaled, and past that the slice falls back to the plain pattern fill for that frame
+  const far = !S || S.key !== key || Math.abs(S.k - k) > k * 0.15 || S.h * k / S.k < h;
+  if (far) { if (FIELD_BUDGET > 0) { FIELD_BUDGET--; S = null; } else return false; }
+  if (!S) { const c = (FIELD_STRIPS[i] && FIELD_STRIPS[i].c) || document.createElement('canvas'), w = VW + 20 + per, H = Math.ceil(h * 1.25 + 4);
+    c.width = Math.ceil(w * DPR) + 2; c.height = Math.ceil(H * DPR); const x = c.getContext('2d');
+    x.setTransform(DPR, 0, 0, DPR, 0, 0); const pat = x.createPattern(st, 'repeat'); pat.setTransform(new DOMMatrix([k, 0, 0, k * 0.35, 0, 0]));
+    x.fillStyle = pat; x.fillRect(0, 0, w, H); x.fillStyle = haze; x.fillRect(0, 0, w, H); S = FIELD_STRIPS[i] = { key, c, h: H, k }; }
+  // the zoom eases by tiny steps: within 3% the strip is drawn scaled by the exact ratio, so the texture keeps the true size
+  const r = k / S.k, p = st.naturalWidth * k; let sx = ox - p * Math.ceil((ox + 10) / p); sx = Math.round(sx * DPR) / DPR; const yy = Math.round(y * DPR) / DPR, sh = Math.min(S.c.height, h * DPR / r);
+  g.drawImage(S.c, 0, 0, S.c.width, sh, sx, yy, S.c.width / DPR * r, sh / DPR * r); return true;
+}
 function drawCountry(g, HOR) {
   const im = n => { const i = IMG['B:' + n]; return i && i.complete && i.naturalWidth ? i : null; };
   const yNear = gyOf(FIELD_Y), edge = [[COUNTRY_X, FIELD_Y - 8], [COUNTRY_X, 1e6]].map(([x, y]) => pr(x, y));
   if (edge[0][0] <= 0 && edge[1][0] <= 0) return; // all town
   g.save(); g.beginPath(); g.moveTo(-10, Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], HOR); g.lineTo(edge[0][0], edge[0][1]); g.lineTo(edge[0][0], VH + 10); g.lineTo(-10, VH + 10); g.closePath(); g.clip();
   // stubble fields: depth slices, the texture scaled to each slice's distance; haze toward the horizon
-  const st = im('farm-field-stubble'); if (st && !stubPat) stubPat = g.createPattern(st, 'repeat');
+  FIELD_BUDGET = 1; const st = im('farm-field-stubble'); if (st && !stubPat) stubPat = g.createPattern(st, 'repeat');
   const cuts = [FIELD_Y, 70, 110, 170, 260, 400, 600, 900, 1300, 1900, 2800, 4500, 9000, 1e5];
   for (let i = 0; i < cuts.length - 1; i++) { const D0 = cuts[i], D1 = cuts[i + 1], y0 = gyOf(D1), y1 = gyOf(D0); if (y1 < HOR - 1 || y1 - y0 < 0.3) continue;
     const k = ZS * dsc((D0 + D1) / 2) / 5.05;
+    const haze = `rgba(201,212,220,${Math.min(0.45, 0.04 + (D0 + D1) / 2 / 20000)})`;
+    if (stubPat && fieldStrip(g, i, st, k, pr(0, (D0 + D1) / 2)[0], y0, y1 - y0 + 0.6, haze)) continue;
     if (stubPat) { const m = new DOMMatrix([k, 0, 0, k * 0.35, pr(0, (D0 + D1) / 2)[0], y0]); stubPat.setTransform(m); g.fillStyle = stubPat; } else g.fillStyle = '#b8a77c';
     g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6);
-    g.fillStyle = `rgba(201,212,220,${Math.min(0.45, 0.04 + (D0 + D1) / 2 / 20000)})`; g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6); }
+    g.fillStyle = haze; g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6); }
   for (const D of FENCE_ROWS) { const y = gyOf(D); g.fillStyle = 'rgba(92,104,62,.8)'; g.fillRect(-10, y - Math.max(1, ZS * dsc(D) * 1.2), VW + 20, Math.max(1, ZS * dsc(D) * 1.2)); }
   // thin weed / grass strip just behind the ballast
   const yW = gyOf(FIELD_Y - 6); g.fillStyle = '#7f9a52'; g.fillRect(-10, yNear, VW + 20, yW - yNear + 0.5);
