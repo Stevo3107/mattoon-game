@@ -236,7 +236,9 @@ const switchFee = v => ECON.SWITCH + (v.loaded ? ECON.SWITCH_LOAD : 0) + (v.type
 const LED0 = () => ({ earn: 0, hire: 0, dem: 0, crew: 0, fuel: 0, sand: 0 });
 function book(k, amt) { if (!state.led) state.led = LED0(); state.led[k] += amt; state.money += (k === 'earn' || k === 'dem') ? amt : -amt; }
 function hireRate(v, day) { return ECON.HIRE_HR + (/^boxcar/.test(v.type) && winterMonth(day) ? ECON.HIRE_BOX_WINTER : 0); }
-function accrueHire(dt) { const day = dayNo(); let h = 0; for (const v of Object.values(state.veh)) if (TYPES[v.type].kind === 'car' && roadOf(v) !== 'NII') h += hireRate(v, day); if (h) book('hire', h * dt / 3600); }
+function accrueHire(dt) { const day = dayNo(); let h = 0; for (const v of Object.values(state.veh)) if (TYPES[v.type].kind === 'car' && roadOf(v) !== 'NII') { const r = hireRate(v, day); h += r; if (r && dt > 0) IND(NII.indKey(v.dest) !== 'ICG' ? v.dest : v.relK || v.from || 'ICG', 'cost', r * dt / 3600); } if (h) book('hire', h * dt / 3600); }
+// Industries page (Nov 1): per-customer counters live in the shared save (NII.ind); keys come from car dests
+function IND(dest, f, amt) { try { NII.ind(NII.indKey(dest), f, amt == null ? 1 : amt); } catch (e) { } }
 function demurrage(from, to) { // weekday hours past the free time, priced by chargeable day
   let free = ECON.DEM_FREE_H, ch = 0, amt = 0;
   for (let t = from; t + 3600 <= to; t += 3600) { const dw = Math.floor(t / 86400) % 7; if (dw >= 5) continue; if (free > 0) { free--; continue; }
@@ -400,7 +402,7 @@ function icSetOut(day) { // set out the day's IC cut (plus any cars held from be
     const num = c.num || freeNum(c.kind, c.road, c.painted, used, seeded(c.seed || state.icSeq)); if (!num) { held.push(c); continue; } used.add(c.road + ' ' + num);
     if (c.load && !c.vtype && seeded((c.seed || 1) * 7 + day)() < ECON.HOT_ODDS) o.hot = true;
     if (c.vtype) { o.road = 'NII'; if (c.art) o.art = c.art; addVeh(id, c.vtype, Object.assign(o, { num })); } else addVeh(id, KIND_TYPE[c.kind], Object.assign(o, { num, art: c.art, road: c.road })); ids.push(id); }
-  if (ids.length) place(ids, { s: SI.ICI, d: top, dir: 1 }, ids.map(() => true));
+  if (ids.length) { place(ids, { s: SI.ICI, d: top, dir: 1 }, ids.map(() => true)); IND('ICG', 'in', ids.length); }
   const why = held.length ? `IC held ${held.length} car${held.length > 1 ? 's' : ''}: IC Inbound full` : ids.length ? null : 'no cars for us today';
   return { ids, why, held: held.length };
 }
@@ -883,12 +885,12 @@ function endDay() {
     lines.push({ id: v.id, name: `${roadOf(v)} ${v.num}${v.hot ? ' (hot)' : ''}`, loaded: ld, what: v.rent ? 'Rented to IC' : ld && roadOf(v) === 'NII' ? `Away on load (${l.c} ${l.t}T)` : ld ? `${l.c} ${l.t}T` : 'empty', pay: amt });
     if (roadOf(v) === 'NII') { const [a, b] = v.rent ? ECON.RENT_DAYS : ECON.NII_BACK_DAYS; state.away.push({ vtype: v.type, num: v.num, art: v.art, back: day + a + r0() * (b - a + 1) /* hidden: random day and hour, never shown */, rentFrom: v.rent ? state.time : null }); }
     const c = C(v.cid); if (c) { c.veh = c.veh.filter(id => id !== v.id); if (!c.veh.length) delete state.cons[c.id]; } delete state.veh[v.id]; }
-  if (pay) book('earn', pay);
+  if (pay) { book('earn', pay); IND('ICG', 'inc', pay); } if (picked.length) IND('ICG', 'out', picked.length);
   { const t1 = day * 86400 + 6 * 3600; accrueHire(t1 - state.time); state.time = t1; } reindex(); const bfLines = bfNewDay(day + 1); if (bfLines.length) setTimeout(() => toast(bfLines.join('. ') + '.', 'bad'), 2500);
   // NI&I cars due back from IC come on this set-out, empty (rent paid on return)
   let rentPay = 0; const back = state.away.filter(a => a.back <= day + 1.25); state.away = state.away.filter(a => a.back > day + 1.25); // returns on the first IC cut after its hidden time
   for (const a of back) { if (a.rentFrom != null) rentPay += ECON.RENT_HR * (state.time - a.rentFrom) / 3600; (state.icHold = state.icHold || []).unshift({ vtype: a.vtype, num: a.num, art: a.art, road: 'NII', dest: null, load: null, niiBack: true }); }
-  if (rentPay) { rentPay = Math.round(rentPay * 100) / 100; book('earn', rentPay); pay += rentPay; }
+  if (rentPay) { rentPay = Math.round(rentPay * 100) / 100; book('earn', rentPay); IND('ICG', 'inc', rentPay); pay += rentPay; }
   // each idle empty NI&I car may be requested by the freight house or Illini Farm Supply (bagged goods)
   const reqs = [];
   for (const v of Object.values(state.veh)) if (v.idle && !v.loaded && !v.rent && roadOf(v) === 'NII' && !locoOf(C(v.cid)) && r0() < ECON.NII_REQ_ODDS) {
@@ -956,8 +958,8 @@ const atKey = (v, k) => k === 'HOUSE' ? carWhere(v).house : carWhere(v).spot(k);
 function relStart(v) { if (v.relK !== 'CIC') return v.relT; let d = Math.floor(v.relT / 86400) + 2; while (!cicDay(d)) d++; return (d - 1) * 86400 + 6 * 3600; }
 function repWatch() {
   for (const v of Object.values(state.veh)) { if (TYPES[v.type].kind !== 'car') continue; const loco = !!locoOf(C(v.cid));
-    if (v.relK) { if (!atKey(v, v.relK)) { if (!v.demUs) repAdd(REP.PULL, `pulled ${roadOf(v)} ${v.num} before demurrage`); delete v.relK; delete v.relT; delete v.demUs; delete v.demPaid; }
-      else { const dm = isLease(v) ? 0 : demurrage(relStart(v), state.time); if (dm > (v.demPaid || 0)) { book('dem', -(dm - (v.demPaid || 0))); v.demPaid = dm; if (!v.demUs) { v.demUs = true; repAdd(REP.DEM_US, `${roadOf(v)} ${v.num} sat released past its free time; we pay the demurrage`); } } } }
+    if (v.relK) { if (!atKey(v, v.relK)) { IND(v.relK, 'out'); if (!v.demUs) repAdd(REP.PULL, `pulled ${roadOf(v)} ${v.num} before demurrage`); delete v.relK; delete v.relT; delete v.demUs; delete v.demPaid; }
+      else { const dm = isLease(v) ? 0 : demurrage(relStart(v), state.time); if (dm > (v.demPaid || 0)) { book('dem', -(dm - (v.demPaid || 0))); IND(v.relK, 'cost', dm - (v.demPaid || 0)); v.demPaid = dm; if (!v.demUs) { v.demUs = true; repAdd(REP.DEM_US, `${roadOf(v)} ${v.num} sat released past its free time; we pay the demurrage`); } } } }
     const k = !loco && !v.work ? SPOT_KEYS().find(k => atKey(v, k)) : null;
     if (k && v.dest !== k && v.relK !== k) { if (v.wrongK !== k) { v.wrongK = k; v.wrongT = state.time; v.wrongHit = false; } else if (!v.wrongHit && state.time - v.wrongT > 30 * 60) { v.wrongHit = true; repAdd(REP.WRONG, `${roadOf(v)} ${v.num} left on the wrong spot (${k === 'HOUSE' ? 'blocking the freight house door' : SPOTS[k].name})`); } }
     else if (v.wrongK) { delete v.wrongK; delete v.wrongT; delete v.wrongHit; } }
@@ -999,7 +1001,7 @@ function carTag(v) { const code = carDest(v); if (!code) return null; const d = 
 function workHours(v) { const [a, b] = WORK_H[v.dest] || [2, 3], r = seeded(state.icSeq * 131 + (+v.num || 7) + Math.round(state.time)); return a + (b - a) * r(); }
 const CIC_HOLD_ODDS = 0.15; // now and then the box plant keeps one of the pair until the next switch day
 function nextCicMorning() { let d = dayNo() + 1; while (!cicDay(d)) d++; return (d - 1) * 86400 + 8 * 3600; }
-function startWork(v) { if (v.work) return; { const fee = switchFee(v); book('earn', fee); toast(`Switching fee: $${fee} for ${roadOf(v)} ${v.num}`, 'good'); } if (v.spotT == null) v.spotT = state.time; const h = workHours(v); v.work = { from: state.time, until: state.time + h * 3600, what: v.dest === 'GRAIN' ? 'loading' : v.out ? 'loading' : 'unloading' };
+function startWork(v) { if (v.work) return; { const fee = switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`Switching fee: $${fee} for ${roadOf(v)} ${v.num}`, 'good'); } if (v.spotT == null) v.spotT = state.time; const h = workHours(v); v.work = { from: state.time, until: state.time + h * 3600, what: v.dest === 'GRAIN' ? 'loading' : v.out ? 'loading' : 'unloading' };
   if (v.dest === 'CIC' && Object.values(state.veh).some(o => o !== v && o.work && o.dest === 'CIC' && !o.work.hold) && seeded(+v.num * 3 + Math.round(state.time))() < CIC_HOLD_ODDS) {
     v.work.until = nextCicMorning(); v.work.hold = true; toast(`CIC is keeping ${roadOf(v)} ${v.num} until the next switch day.`); } }
 const workLine = v => `${v.dest === 'GRAIN' ? 'Prairie Grain is loading it' : v.dest === 'HOUSE' ? `The freight agent is ${v.work.what} it` : `The customer is ${v.work.what} it`} (done about ${clockStr(v.work.until)})`;
@@ -1010,8 +1012,8 @@ function doneWork(v) { // finish one car: returns a summary line
   if (v.dest === 'GRAIN') { const r = seeded(+v.num + state.icSeq * 17 + Math.round(v.work.until)); v.load = pickLoad(FREIGHT.grain, T.cap, r); v.loaded = true; what = `loaded ${v.load.c} ${v.load.t}T`; }
   else if (v.out) { v.load = { c: v.out.c, t: Math.min(T.cap, v.out.t) }; v.loaded = true; delete v.out; what = `loaded ${v.load.c} ${v.load.t}T`; }
   else { what = l ? `unloaded ${l.c} ${l.t}T` : 'unloaded'; v.loaded = false; v.load = null; }
-  if (v.loaded && roadOf(v) === 'NII') { book('earn', ECON.NII_LOADED); pay += ECON.NII_LOADED; }
-  const dm = isLease(v) ? 0 : demurrage(v.spotT != null ? v.spotT : v.work.from, Math.min(state.time, v.work.until)); if (dm > 0) { book('dem', dm); pay += dm; what += `, demurrage $${dm.toFixed(2)}`; } delete v.spotT;
+  if (v.loaded && roadOf(v) === 'NII') { book('earn', ECON.NII_LOADED); pay += ECON.NII_LOADED; IND(v.dest, 'inc', ECON.NII_LOADED); }
+  const dm = isLease(v) ? 0 : demurrage(v.spotT != null ? v.spotT : v.work.from, Math.min(state.time, v.work.until)); if (dm > 0) { book('dem', dm); pay += dm; IND(v.dest, 'inc', dm); what += `, demurrage $${dm.toFixed(2)}`; } delete v.spotT;
   const k0 = v.dest; v.wt = T.tare + (v.load ? v.load.t : 0); v.dest = roadOf(v) === 'NII' && !v.loaded ? 'YARD 2' : 'IC-INT'; delete v.work;
   v.relK = k0; v.relT = state.time; delete v.wb; waybillOf(v); // released: now it's on us to pull it before the free time runs out
   return { id: v.id, name, what, pay };
