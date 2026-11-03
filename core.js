@@ -899,6 +899,7 @@ function endDay() {
   }
   // idle NI&I cars rented to IC go out on this pickup from wherever they stand (not if coupled to the engine)
   for (const v of Object.values(state.veh)) if (v.rent && !picked.includes(v) && !locoOf(C(v.cid))) picked.push(v);
+  storTick(); const storLines = []; for (const [K, a] of Object.entries(state.stor || {})) { const amt = Math.round(a * 100) / 100; if (amt <= 0) continue; book('dem', amt); IND(K, 'inc', amt); IND(K, 'dem', amt); storLines.push(`${SPOTS[K] ? SPOTS[K].name.replace(/^inside /, '') : K} paid $${amt.toFixed(2)} storage for cars it had no room for`); } state.stor = {};
   const repLines = []; { const cuts = new Set(picked.filter(v => !v.rent).map(v => v.cid)).size; if (cuts) { state.rep += REP.CUT * cuts; repLines.push(`+${REP.CUT * cuts}: ${cuts} cut${cuts > 1 ? 's' : ''} interchanged to IC on time`); }
     const late = Object.values(state.veh).filter(v => v.dest === 'IC-INT' && !v.rent && !picked.includes(v) && (state.tasks || []).some(t => t.car === v.id && !t.done && t.type === 'icout' && t.day < day)).length;
     if (late) { state.rep += REP.LATE; repLines.push(`${REP.LATE}: late interchange (${late} car${late > 1 ? 's' : ''} ready for IC since an earlier day)`); }
@@ -926,7 +927,7 @@ function endDay() {
   for (const id of so.ids) { const v = V(id); if (roadOf(v) === 'NII' && !v.loaded && !v.dest) { v.dest = 'YARD 2'; } } // our own empties come home: to the yard, then idle
   const set = so.ids.map(id => { const v = V(id), l = carLoad(v); return { id, name: `${roadOf(v)} ${v.num}`, what: l ? `${l.c} ${l.t}T` : 'empty', dest: v.dest }; });
   state.tasks = (state.tasks || []).filter(t => !t.done); syncTasks();
-  const sum = { repLines, day, next: day + 1, picked: lines, pay, left: left.map(v => `${roadOf(v)} ${v.num}`), set, setWhy: so.why, held: so.held || 0, worked, reqs, rentPay, returned: back.map(a => `NII ${a.num} returned from IC`), led: { ...(state.led || LED0()) } };
+  const sum = { repLines, storLines, day, next: day + 1, picked: lines, pay, left: left.map(v => `${roadOf(v)} ${v.num}`), set, setWhy: so.why, held: so.held || 0, worked, reqs, rentPay, returned: back.map(a => `NII ${a.num} returned from IC`), led: { ...(state.led || LED0()) } };
   sum.led.net = sum.led.earn + sum.led.dem - sum.led.hire - sum.led.crew - sum.led.fuel - sum.led.sand; state.led = LED0();
   state.lastDay = sum; save(); return sum;
 }
@@ -953,6 +954,7 @@ function showDaySummary(r) {
     ${r.led ? `<table class="money">${[['Earned', r.led.earn], ['Demurrage', r.led.dem], ['Car hire', -r.led.hire], ['Crew', -r.led.crew], ['Fuel / sand', -(r.led.fuel + r.led.sand)], ['Net', r.led.net]].map(([k, a]) => `<tr${k === 'Net' ? ' style="font-weight:700"' : ''}><td>${k}</td><td style="text-align:right">${a < 0 ? '-' : '+'}$${Math.abs(a).toFixed(2)}</td></tr>`).join('')}</table>` : ''}
     ${r.left.length ? `<p>Left on IC Outbound (still coupled to cars off the track): ${r.left.join(', ')}.</p>` : ''}
     <p><b>IC set out</b> ${r.set.length ? `${r.set.length} car${r.set.length > 1 ? 's' : ''} on IC Inbound:</p><ul>${li(r.set.map(c => `${c.name}, ${c.what} &rarr; ${c.dest}`))}</ul>` : `nothing (${r.setWhy}).</p>`}${r.set.length && r.setWhy ? `<p>${r.setWhy}.</p>` : ''}
+    ${r.storLines && r.storLines.length ? `<p><b>Storage</b>:</p><ul>${li(r.storLines)}</ul>` : ''}
     ${r.repLines && r.repLines.length ? `<p><b>Reputation</b> (now ${state.rep}):</p><ul>${li(r.repLines)}</ul>` : ''}
     <p>Now ${weekday(r.next)} · Day ${r.next}, 6:00 AM.</p><div class="btns"><button data-act="close">Start ${weekday(r.next)}</button></div>`);
 }
@@ -988,8 +990,18 @@ function relStart(v) { let d = Math.floor(v.relT / 86400) + 2; while (!swDay(v.r
 const PULL_GRACE_H = 24; // pulled cars must be on their way (IC Outbound or their yard track) within this, or the railroad pays demurrage
 const movedOn = v => { const w = carWhere(v), y = /^YARD (\d)$/.exec(v.dest || ''); return v.dest === 'IC-INT' ? w.icOut : y ? w.yard(+y[1]) : true; };
 // when the customer's demurrage clock starts: the car's arrival (cars waiting for room or a switch day are on the customer), restarted after any switch we skipped
-const custFrom = v => v.demFrom != null ? v.demFrom : v.day != null ? (v.day - 1) * 86400 + 6 * 3600 : (v.spotT != null ? v.spotT : v.work.from);
-function repWatch() {
+const arrT = v => v.day != null ? (v.day - 1) * 86400 + 6 * 3600 : null;
+// Nov 2 (Stephen): demurrage free time starts when the car becomes the customer's Spot car (spotted, or constructively placed: a spot free for it);
+// before that, a car held because the customer has no free spot is storage, paid daily from its arrival with no free time
+const custFrom = v => v.demFrom != null ? v.demFrom : v.desT != null ? v.desT : arrT(v) != null ? arrT(v) : (v.spotT != null ? v.spotT : v.work.from);
+const STORAGE_DAY = 16; // $/day, at least that day's car hire on the car
+const storHeld = v => SPOTS[v.dest] && v.dest !== 'GRAIN' && !v.work && !carWhere(v).spot(v.dest) && TYPES[v.type].kind === 'car' && (v.dest === 'CIC' ? cicHeld(v) : Object.values(state.veh).some(o => o !== v && carWhere(o).spot(v.dest)));
+function storTick() { const now = state.time;
+  for (const v of Object.values(state.veh)) { if (!SPOTS[v.dest] || v.dest === 'GRAIN' || TYPES[v.type].kind !== 'car') continue;
+    if (storHeld(v) && !isLease(v)) { const t0 = Math.max(v.storT != null ? v.storT : (arrT(v) != null ? arrT(v) : now), arrT(v) || 0); if (now > t0) { const r = Math.max(STORAGE_DAY / 24, roadOf(v) !== 'NII' ? hireRate(v, dayNo()) : 0), a = (now - t0) / 3600 * r;
+        const S = state.stor || (state.stor = {}); S[v.dest] = (S[v.dest] || 0) + a; } v.storT = Math.max(now, t0); delete v.desT; }
+    else { if (v.storT != null) delete v.storT; if (v.desT == null && !v.work) v.desT = now; } } }
+function repWatch() { storTick();
   for (const v of Object.values(state.veh)) { if (TYPES[v.type].kind !== 'car') continue; const loco = !!locoOf(C(v.cid));
     if (v.relK) { if (!atKey(v, v.relK)) { IND(v.relK, 'out'); if (!v.demUs) repAdd(REP.PULL, `pulled ${roadOf(v)} ${v.num} before demurrage`); v.pullT = state.time; delete v.relK; delete v.relT; delete v.demUs; delete v.demPaid; }
       else { const dm = isLease(v) ? 0 : demurrage(relStart(v), state.time, v.relK, 0); if (dm > (v.demPaid || 0)) { book('dem', -(dm - (v.demPaid || 0))); IND(v.relK, 'cost', dm - (v.demPaid || 0)); v.demPaid = dm; if (!v.demUs) { v.demUs = true; repAdd(REP.DEM_US, `${roadOf(v)} ${v.num} sat released past its free time; we pay the demurrage`); } } } }
@@ -1048,7 +1060,7 @@ function doneWork(v) { // finish one car: returns a summary line
   else { what = l ? `unloaded ${l.c} ${l.t}T` : 'unloaded'; v.loaded = false; v.load = null; }
   if (v.loaded && roadOf(v) === 'NII') { book('earn', ECON.NII_LOADED); pay += ECON.NII_LOADED; IND(v.dest, 'inc', ECON.NII_LOADED); }
   const dm = isLease(v) ? 0 : demurrage(custFrom(v), Math.min(state.time, v.work.until), v.dest); delete v.demFrom; if (dm > 0) { book('dem', dm); pay += dm; IND(v.dest, 'inc', dm); IND(v.dest, 'dem', dm); what += `, demurrage $${dm.toFixed(2)}`; } delete v.spotT;
-  const k0 = v.dest; v.wt = T.tare + (v.load ? v.load.t : 0); v.dest = roadOf(v) === 'NII' && !v.loaded ? 'YARD 2' : 'IC-INT'; delete v.work;
+  delete v.desT; delete v.storT; const k0 = v.dest; v.wt = T.tare + (v.load ? v.load.t : 0); v.dest = roadOf(v) === 'NII' && !v.loaded ? 'YARD 2' : 'IC-INT'; delete v.work;
   v.relK = k0; v.relT = state.time; delete v.wb; waybillOf(v); // released: now it's on us to pull it before the free time runs out
   return { id: v.id, name, what, pay };
 }
