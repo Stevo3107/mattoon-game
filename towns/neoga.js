@@ -306,11 +306,17 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
   if (n) { book('earn', Math.round(pay * 100) / 100); IND('NW', 'inc', Math.round(pay * 100) / 100); IND('NW', 'out', n); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
   const nw = []; for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
-  if (nw.length) { let hd = T.NWI.len - 6; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)) .map(x => x - 2)); // couple behind what's already there
-    const L = nw.reduce((a, v) => a + vL(v), 0), c = placeCut(nw, nw.map(() => true), 'NWI', hd, 1);
-    if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); else { S.cuts.push(c); IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } }
-  if (S.pendIC.length) note(`${S.pendIC.length} IC car${S.pendIC.length > 1 ? 's' : ''} for Neoga wait at Mattoon: they come down with the next train.`);
+  if (nw.length) { if (setOutNWI(nw)) { IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } else note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); }
+  dropIC();
 }
+// set a cut out on the interchange track, coupled behind what's already there; false if there's no room
+function setOutNWI(cars) { let hd = T.NWI.len - 6; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)).map(x => x - 2));
+  const L = cars.reduce((a, v) => a + vL(v), 0), c = placeCut(cars, cars.map(() => true), 'NWI', hd, 1);
+  if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) return false; S.cuts.push(c); return true; }
+// Nov 2 fix: IC cars for Neoga are set out on the interchange by the IC way freight, never hung on the player's train
+function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendIC.length;
+  if (setOutNWI(S.pendIC.slice())) { S.pendIC = []; note(`The IC way freight set out ${n} car${n > 1 ? 's' : ''} for Neoga on the interchange track.`); }
+  else note(`${n} IC car${n > 1 ? 's' : ''} for Neoga wait at Mattoon: the interchange track is full.`); }
 function jobs() { const L = []; for (const q of standingCars()) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), what = v.dest === 'NG HOUSE' ? 'the freight house door or team spot' : v.dest === 'NG COAL' ? 'coal pit 1 or 2' : 'the fuel oil rack';
       L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && !q.live ? ` - spotted, ${Math.floor(v.work || 0)}/${WORK_H} h` : ''}` }); }
@@ -369,10 +375,9 @@ function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the line
   toast('Can\'t get there on the route as lined. Check the switches.', 'bad'); return false; }
 // ================================================================= TRAVEL
 function arrive() { const tr = E.trainIn; if (!tr) return; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
-  const extra = S.pendIC.splice(0); if (extra.length) { veh.unshift(...extra); aT.unshift(...extra.map(() => true)); }
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
-  if (extra.length) note(`${extra.length} IC car${extra.length > 1 ? 's' : ''} for Neoga came down with you (on the rear).`); save(); }
+  dropIC(); save(); }
 function askNorth() { showModal(`<h2>Head north to Mattoon?</h2><p>11.5 miles at 25 mph, about 28 minutes. Cars you leave in Neoga stay here.</p><div class="btns"><button data-a="goN">Go to Mattoon</button><button data-a="close" class="alt">Stay in Neoga</button></div>`); }
 function go() { const c = liveCut(); let train = [];
   if (c) { const q = vehPos(c).map(q => { const xa = ptAt((q.aT ? q.p0 : q.p1).t, (q.aT ? q.p0 : q.p1).d)[0], xb = ptAt((q.aT ? q.p1 : q.p0).t, (q.aT ? q.p1 : q.p0).d)[0]; return { v: q.v, x: (xa + xb) / 2, aN: xa < xb }; }).sort((a, b) => a.x - b.x);
@@ -565,7 +570,14 @@ function drawVeh(q) { const v = q.v, A = q.aT ? q.p0 : q.p1, B = q.aT ? q.p1 : q
   const Pl = far ? pb : pa, Pr = far ? pa : pb, a = C.ART[v.art || v.type], L = q.L, src = a && (far ? (a.far === 'same' ? a.src : a.far) : a.src), im = img(src);
   const X0 = sx(Pl[0]), Y0 = sy(Pl[1] + 2.35), X1 = sx(Pr[0]), Y1 = sy(Pr[1] + 2.35);
   g.fillStyle = 'rgba(30,25,20,.25)'; g.beginPath(); g.ellipse((X0 + X1) / 2, (Y0 + Y1) / 2 + 1, Math.max(2, Math.abs(X1 - X0) / 2), 2 * cam.z, 0, 0, 7); g.fill();
-  if (a && ok(im)) { const px = a.px, sa = (X1 - X0) / (L * px), sb = (Y1 - Y0) / (L * px), sd = cam.z * HK / px; g.setTransform(DPR * sa, DPR * sb, 0, DPR * sd, DPR * X0, DPR * Y0); g.drawImage(im, a.x0 * px, a.y0 * px, im.naturalWidth, im.naturalHeight); g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  if (a && ok(im)) { const px = a.px, sa = (X1 - X0) / (L * px), sb = (Y1 - Y0) / (L * px), sd = cam.z * HK / px; g.setTransform(DPR * sa, DPR * sb, 0, DPR * sd, DPR * X0, DPR * Y0);
+    // Nov 2 fix: Mattoon's layered stock (GP9, caboose) has its trucks and the GP9's short hood (nose) as separate pictures: draw them too
+    const T = a.solid && a.solid.truck, X = C.XART || {}, lay = n => { const x = X[n]; return x && ok(img(x.src)) ? x : null; };
+    if (T) { const xb = lay('truck-' + T.kind + '-back'), xf = lay('truck-' + T.kind + '-front'), xw = lay('wheel-' + T.kind);
+      for (const c of T.c) { if (xb) g.drawImage(img(xb.src), (c + xb.x0) * px, xb.y0 * px, xb.w, xb.h); if (xw) for (const ax of T.axles) g.drawImage(img(xw.src), (c + ax + xw.x0) * px, xw.y0 * px, xw.w, xw.h); if (xf) g.drawImage(img(xf.src), (c + xf.x0) * px, xf.y0 * px, xf.w, xf.h); } }
+    g.drawImage(im, a.x0 * px, a.y0 * px, im.naturalWidth, im.naturalHeight);
+    { const hn = (v.art || v.type) + '-shorthood' + (far ? '-far' : ''), xh = lay(hn); if (xh) g.drawImage(img(xh.src), xh.x0 * px, xh.y0 * px, xh.w, xh.h); }
+    g.setTransform(DPR, 0, 0, DPR, 0, 0); }
   else { const h = hz(v.coal ? 10.5 : 13); g.fillStyle = v.coal ? '#26272a' : '#3a3f4a'; g.beginPath(); g.moveTo(X0, Y0 - hz(3)); g.lineTo(X1, Y1 - hz(3)); g.lineTo(X1, Y1 - h); g.lineTo(X0, Y0 - h); g.closePath(); g.fill();
     g.fillStyle = '#111'; for (const t of [0.15, 0.85]) { const X = X0 + (X1 - X0) * t, Y = Y0 + (Y1 - Y0) * t; g.fillRect(X - 3 * cam.z, Y - hz(3), 6 * cam.z, hz(3)); }
     if (cam.z > 0.7) { g.fillStyle = '#e8e2d2'; g.font = `700 ${Math.max(6, 1.6 * cam.z)}px Arial`; g.textAlign = 'center'; g.fillText(`${roadOf(v)} ${v.num}`, (X0 + X1) / 2, (Y0 + Y1) / 2 - h * 0.45); } }
