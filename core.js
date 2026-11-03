@@ -626,8 +626,8 @@ function cabooseRule(c, x0) { if (!c.v) return; const sg = Math.sign(c.v); if (c
   const room = ylRoom(c, sg); if (room < CABOOSE_RULE.warnFt) { if (!live.ylw) { live.ylw = true; toast('Yard limit: the rear of your train is near the board. The caboose must be on the rear to go past.', 'bad'); } } else if (room > CABOOSE_RULE.warnFt + 100) live.ylw = false;
 }
 // ---- BLUE FLAGS at the customers. Raised when the crew has spotted cars and left the customer's track; the customer works behind it.
-// At the next switch window it's down (BLUE_FLAG.downOdds), or still up until the player taps the building and asks (15-30 game min).
-const BLUE_FLAG = { rep: 20, fine: 250, downOdds: 0.85, rmMin: [15, 30], warnFt: 150, flagIn: 110 };
+// At the next switch window it's down (BLUE_FLAG.downOdds), or still up until the player taps the building and asks (5-10 game min).
+const BLUE_FLAG = { rep: 20, fine: 250, downOdds: 0.85, rmMin: [5, 10], warnFt: 150, flagIn: 110 };
 // per customer: its track, where the flag stands (ft from the switch end, inside the fouling point), which way is "in", the building to tap
 const BF = {
   CIC: { name: 'Central Illinois Corrugated', short: 'CIC', seg: SI.CIC, inDir: 1, dests: ['CIC'], bx: [CIC_X - 10, CIC_X + 490], bh: 45, by: 20, day: d => cicDay(d) },
@@ -638,6 +638,13 @@ for (const K in BF) { const z = BF[K], L = SEG[z.seg].len; z.d = z.inDir > 0 ? B
 const bfS = () => state.bf || (state.bf = Object.fromEntries(Object.keys(BF).map(K => [K, { up: false, rm: null, visit: 0, raised: 0, stuck: false }])));
 const inBF = (K, p) => p.s === BF[K].seg && (p.d - BF[K].d) * BF[K].inDir > 0;
 const consInBF = (K, c) => c.veh.some(id => { const v = V(id); return inBF(K, v.f) || inBF(K, v.r); });
+// Nov 2 (Stephen): a customer won't raise its flag while the player's train (engine or any attached car) is on its track or within
+// BF_NEAR ft of its switch (either end of the train, either direction along the rails); the flag waits until the train has left the area
+const BF_NEAR = 300;
+const trainNearBF = (K, c) => { const z = BF[K];
+  if (c.veh.some(id => { const v = V(id); return v.f.s === z.seg || v.r.s === z.seg; })) return true;
+  const node = z.inDir > 0 ? SEG[z.seg].a : SEG[z.seg].b, hit = p => walk(p, BF_NEAR, 'loose', null, id => id === node ? true : undefined) === true;
+  return [front(c), rear(c)].some(p => hit(p) || hit(rev(p))); };
 // feet before the moving end runs past an UP flag going in (Infinity if none ahead within maxD)
 function bfAhead(p, maxD) { let best = { t: Infinity, K: null }; const S = bfS();
   for (const K in BF) { if (!S[K].up || inBF(K, p)) continue; const z = BF[K], a = routeTo(p, { s: z.seg, d: z.d }, maxD); if (!a) continue;
@@ -654,7 +661,7 @@ function bfTick() { const S = bfS(), c = locoCons(), day = dayNo();
   for (const K in BF) { const f = S[K];
     if (consInBF(K, c)) f.visit = day;
     if (f.rm != null && state.time >= f.rm) { f.up = false; f.rm = null; f.stuck = false; toast(`${BF[K].name} took down its blue flag. You can switch them now.`, 'good'); save(); }
-    if (!f.up && f.visit === day && f.raised !== day && !consInBF(K, c) && Object.values(state.veh).some(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r)))) {
+    if (!f.up && f.visit === day && f.raised !== day && !consInBF(K, c) && !trainNearBF(K, c) && Object.values(state.veh).some(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r)))) {
       f.up = true; f.raised = day; f.stuck = false; toast(`${BF[K].name} put up its blue flag: they're working the cars. Stay off their track.`); save(); } } }
 function bfNewDay(day) { const S = bfS(), r = seeded(day * 613 + 41), out = [];
   for (const K in BF) { const f = S[K], x = r(); if (!f.up || f.rm != null || !BF[K].day(day)) continue;
@@ -1238,7 +1245,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 <li><b>Drive mode:</b> set the reverser to F or R, release the brake, and notch the throttle up. F runs short hood first.</li>
 <li><b>Tap mode:</b> tap the track (or a car) in the picture or on the Map and the engine goes there at yard speed. Tapping a car couples to it. The engine lines the switches itself (you'll see the stands flip) and makes any reversing move it needs, pulling the whole cut clear of the switch first. If a car is in the way it tells you which one. In Drive mode you throw every switch yourself.</li>
 <li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Once the rear of your move passes one, the caboose must be the last car on that rear end (1970s rule). The front can go past freely, so you can shove or run around partway. A light engine (engines only, no cars) is exempt and can run past the boards. Break the rule and you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
-<li><b>Blue flags:</b> when you've spotted cars at a customer and left, they put a blue flag on their track and work the cars behind it. It's usually down by their next switch window (CIC: Mon / Wed / Fri; the others daily), but now and then they leave it up: tap the building and Request removal (15-30 min). Running past a blue flag costs $250 and 20 rep.</li>
+<li><b>Blue flags:</b> when you've spotted cars at a customer and left, they put a blue flag on their track and work the cars behind it. It's usually down by their next switch window (CIC: Mon / Wed / Fri; the others daily), but now and then they leave it up: tap the building and Request removal (5-10 min). Running past a blue flag costs $250 and 20 rep.</li>
 <li><b>Waybills:</b> every car has a waybill. Tap a car's tag (or any car in Drive mode) to read it; the menu's Waybills list shows where every car is going and which are ready for IC.</li>
 <li><b>Coupling:</b> ease into a car under 4 mph. Faster costs you money and reputation.</li>
 <li><b>Uncoupling:</b> stop, then tap the &#9986; between two cars in the picture.</li>
@@ -2073,9 +2080,9 @@ let stubPat = null;
 // perf (Nov 2): the stubble texture is pre-shrunk into small tiles, one per zoom bucket (steps of 1.25x), and each slice is filled
 // with a pattern of the nearest bucket's tile at the exact scale, so the full-size texture is never shrunk across the screen every
 // frame, and nothing is repainted while the camera drifts (a tile is a few hundred pixels, made once per bucket and kept)
-const FIELD_TILES = new Map();
+const FIELD_TILES = new Map(); let FIELD_IDS = 0;
 function fieldTile(g, st, k) {
-  const b = Math.round(Math.log(k * DPR) / Math.log(1.25)), key = b + '|' + DPR; let T = FIELD_TILES.get(key); if (T) return T;
+  const b = Math.round(Math.log(k * DPR) / Math.log(1.25)), key = b + '|' + DPR + '|' + (st.__fid || (st.__fid = ++FIELD_IDS)); let T = FIELD_TILES.get(key); if (T) return T;
   const kb = Math.pow(1.25, b) / DPR, W = Math.max(1, Math.round(st.naturalWidth * kb * DPR)), H = Math.max(1, Math.round(st.naturalHeight * kb * 0.35 * DPR));
   if (W * H > 4e6) return null;
   const c = document.createElement('canvas'); c.width = W; c.height = H; const x = c.getContext('2d'); x.imageSmoothingQuality = 'high'; x.drawImage(st, 0, 0, W, H);
@@ -2095,11 +2102,11 @@ function fsPaint(g, st, i, b, hNeed, haze) { const kb = Math.pow(1.25, b) / DPR,
   return { c, b, W, H, TW: T.W, TH: T.H }; }
 function fsGet(i, b) { const L = FS[i] || (FS[i] = []); return L.find(e => e.b === b); }
 function fsPut(i, e, bNow) { const L = FS[i] || (FS[i] = []); L.push(e); L.sort((p, q) => Math.abs(p.b - bNow) - Math.abs(q.b - bNow)); while (L.length > (window.__FSMAX || 3)) FS_POOL.push(L.pop().c); }
-function fsWant(i, b, h, haze) { const e = fsGet(i, b); if (e && e.hOK >= h) return; if (!FS_Q.some(q => q.i === i && q.b === b)) { FS_Q.push({ i, b, h, haze }); (window.__fsr = window.__fsr || {})[(e ? 'h' : 'n') + i] = ((window.__fsr || {})[(e ? 'h' : 'n') + i] || 0) + 1; } }
+function fsWant(i, b, h, haze, st) { const e = fsGet(i, b); if (e && e.hOK >= h) return; if (!FS_Q.some(q => q.i === i && q.b === b)) { FS_Q.push({ i, b, h, haze, st }); (window.__fsr = window.__fsr || {})[(e ? 'h' : 'n') + i] = ((window.__fsr || {})[(e ? 'h' : 'n') + i] || 0) + 1; } }
 function fsWork(g, st, bNow) { const t0 = performance.now(); let n = 0;
   FS_Q.sort((p, q) => Math.abs(p.b - bNow[p.i]) - Math.abs(q.b - bNow[q.i]));
-  while (FS_Q.length && (n === 0 || performance.now() - t0 < 6)) { const q = FS_Q.shift(); const old = fsGet(q.i, q.b); if (old && old.hOK >= q.h) continue;
-    const e = fsPaint(g, st, q.i, q.b, q.h, q.haze); n++; if (!e) continue; e.hOK = Math.floor((e.H - e.TH) / DPR / 1.15);
+  while (FS_Q.length && (n === 0 || (n < 2 && performance.now() - t0 < 4))) { const q = FS_Q.shift(); const old = fsGet(q.i, q.b); if (old && old.hOK >= q.h) continue;
+    const e = fsPaint(g, q.st || st, q.i, q.b, q.h, q.haze); n++; if (!e) continue; e.hOK = Math.floor((e.H - e.TH) / DPR / 1.15);
     if (old) { const L = FS[q.i]; L.splice(L.indexOf(old), 1); FS_POOL.push(old.c); } fsPut(q.i, e, bNow[q.i]); } }
 function fsDraw(g, st, i, k, ox, y0, h) { const L = FS[i]; if (!L || !L.length) return false; const b = fsBucket(k);
   const e = L.slice().sort((p, q) => Math.abs(p.b - b) - Math.abs(q.b - b))[0]; const kb = Math.pow(1.25, e.b) / DPR;
@@ -2113,17 +2120,18 @@ function drawCountry(g, HOR) {
   if (edge[0][0] <= 0 && edge[1][0] <= 0) return; // all town
   g.save(); g.beginPath(); g.moveTo(-10, Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], Math.max(-10, HOR - 400)); g.lineTo(edge[1][0], HOR); g.lineTo(edge[0][0], edge[0][1]); g.lineTo(edge[0][0], VH + 10); g.lineTo(-10, VH + 10); g.closePath(); g.clip();
   // stubble fields: depth slices, the texture scaled to each slice's distance; haze toward the horizon
-  const st = im('farm-field-stubble'); if (st && !stubPat) stubPat = g.createPattern(st, 'repeat');
-  const cuts = [FIELD_Y, 70, 110, 170, 260, 400, 600, 900, 1300, 1900, 2800, 4500, 9000, 1e5];
+  // Nov 2 (Stephen): Neoga's corn / bean stubble, alternated field by field between the fence rows (same 1024x128 tile, 5.05 px/ft)
+  const stC = im('neoga-field-stubble') || im('farm-field-stubble'), stB = im('neoga-field-stubble-bean') || stC; if (stC && !stubPat) stubPat = g.createPattern(stC, 'repeat');
+  const cuts = [FIELD_Y, 70, 110, 170, 260, 420, 600, 950, 1300, 1650, 1900, 2800, 4500, 9000, 1e5];
   for (let i = 0; i < cuts.length - 1; i++) { const D0 = cuts[i], D1 = cuts[i + 1], y0 = gyOf(D1), y1 = gyOf(D0); if (y1 < HOR - 1 || y1 - y0 < 0.3) continue;
-    const k = ZS * dsc((D0 + D1) / 2) / 5.05;
+    const k = ZS * dsc((D0 + D1) / 2) / 5.05, st = FENCE_ROWS.filter(f => f <= D0).length % 2 ? stB : stC;
     const haze = `rgba(201,212,220,${Math.min(0.45, 0.04 + (D0 + D1) / 2 / 20000)})`, ox = pr(0, (D0 + D1) / 2)[0];
     if (window.__NOF) continue;
-    if (stubPat) { const b = fsBucket(k), h = y1 - y0 + 0.6; FS_BN[i] = b; fsWant(i, b, h, haze); if (FS_STILL > 20) { fsWant(i, b - 1, h, haze); fsWant(i, b + 1, h, haze); } if (fsDraw(g, st, i, k, ox, y0, h)) continue; }
+    if (stubPat) { const b = fsBucket(k), h = y1 - y0 + 0.6; FS_BN[i] = b; fsWant(i, b, h, haze, st); if (FS_STILL > 20) { fsWant(i, b - 1, h, haze, st); fsWant(i, b + 1, h, haze, st); } if (fsDraw(g, st, i, k, ox, y0, h)) continue; }
     if (!(stubPat && fieldFill(g, st, k, ox, y0))) { if (stubPat) { const m = new DOMMatrix([k, 0, 0, k * 0.35, ox, y0]); stubPat.setTransform(m); g.fillStyle = stubPat; } else g.fillStyle = '#b8a77c'; }
     g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6);
     g.fillStyle = haze; g.fillRect(-10, y0, VW + 20, y1 - y0 + 0.6); }
-  if (stubPat) { fsWork(g, st, FS_BN); const bz = fsBucket(ZS); FS_STILL = bz === FS_LASTB ? FS_STILL + 1 : 0; FS_LASTB = bz; }
+  if (stubPat) { fsWork(g, stC, FS_BN); const bz = fsBucket(ZS); FS_STILL = bz === FS_LASTB ? FS_STILL + 1 : 0; FS_LASTB = bz; }
   for (const D of FENCE_ROWS) { const y = gyOf(D); g.fillStyle = 'rgba(92,104,62,.8)'; g.fillRect(-10, y - Math.max(1, ZS * dsc(D) * 1.2), VW + 20, Math.max(1, ZS * dsc(D) * 1.2)); }
   // thin weed / grass strip just behind the ballast
   const yW = gyOf(FIELD_Y - 6); g.fillStyle = '#7f9a52'; g.fillRect(-10, yNear, VW + 20, yW - yNear + 0.5);
@@ -2980,7 +2988,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
