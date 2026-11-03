@@ -298,13 +298,17 @@ function advance(dt) { // game time passes in Neoga: car hire, work at the spots
     const due = demurrage(v.doneAt, E.time, v.from) - (v.demPaid || 0); if (due > 0) { book('dem', due); IND(v.from, 'inc', due); v.demPaid = (v.demPaid || 0) + due; } }
 }
 function onWyeInterchange(c) { return c.path.every(g => g.t === 'NWI') && !c.veh.some(isLoco); } // N&W Interchange (one track, in + out)
+// Nov 2: Neoga's customers are locked until the railroad's reputation reaches 100 (one-time, permanent flag in Mattoon's record)
+const NG_MSG = '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>';
+function ngOpen() { return !!(M.unlocks && M.unlocks.neoga); }
+function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 100) return; (M.unlocks || (M.unlocks = {})).neoga = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
 function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
   const d = dayNo(); if (S.day === d) return; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
   let pay = 0, n = 0; for (const c of S.cuts.slice()) if (onWyeInterchange(c)) { const keep = [], kA = [];
     c.veh.forEach((v, i) => { if (v.dest === 'NW-INT') { pay += ECON.CAR + (v.load ? ECON.PER_TON * v.load.t : 0); n++; } else { keep.push(v); kA.push(c.aT[i]); } });
     if (!keep.length) S.cuts.splice(S.cuts.indexOf(c), 1); else if (keep.length < c.veh.length) { const nc = placeCut(keep, kA, 'NWI', T.NWI.len - 6, 1); S.cuts.splice(S.cuts.indexOf(c), 1, nc); } }
   if (n) { book('earn', Math.round(pay * 100) / 100); IND('NW', 'inc', Math.round(pay * 100) / 100); IND('NW', 'out', n); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
-  const nw = []; for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
+  ngCheckUnlock(); const nw = []; if (ngOpen()) for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
   if (nw.length) { if (setOutNWI(nw)) { IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } else note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); }
   dropIC();
@@ -640,7 +644,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('N&W', sx(NWX) + 18, Math.min(H - 8, sy(600))); g.fillText('N&W Interchange', sx(1330), sy(-170)); g.fillText('Run-around', sx(2500), sy(-40));
   if (cam.z < 1.3) { g.fillText('House track', sx(HX0 + 200), sy(HOUSE_OFF) + 20); g.fillText('Miller & Sons Fuel', sx(FX0 + 110), sy(FUEL_OFF) + 22); g.fillText('Neoga tower (N&W)', sx(TWX + 18), sy(-60)); }
   const tw = S.tower; $('rtBtn').textContent = !tw ? 'Request route' : tw.st === 'hold' ? 'Holding for N&W' : 'Route lined';
-  $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Neoga';
+  $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; ngCheckUnlock(); $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Neoga';
   $('ngSpd').textContent = (ctl.v / FTS).toFixed(0) + ' mph'; $('ngX').textContent = (S.speedX || 1) + 'x';
 }
 const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 60) % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
@@ -682,7 +686,7 @@ function crossArrive() { const x = E.cross; if (!x || x.to !== 'neoga') return; 
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Neoga map. Stopped at the edge.", 'bad'); return; }
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) toast(`Continuing to ${x.label}.`); save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
-function showJobs() { const L = jobs(); showModal(`<h2>Neoga jobs</h2><ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>
+function showJobs() { const L = jobs(); showModal(`<h2>Neoga jobs</h2><ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Neoga\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
   <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (set on the N&amp;W Interchange; leave N&amp;W cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length;
@@ -737,5 +741,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects };
+window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen };
 };

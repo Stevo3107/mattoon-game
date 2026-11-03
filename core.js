@@ -846,8 +846,11 @@ function tapTarget(target) { if (VISIT) { toast(NII.visitNote(), 'bad'); return;
 }
 // ---- today's jobs: a checklist built from every car's standing order, done in any order. Rep is how the railroad grows.
 const REP = { SPOT: 2, HOT: 3, CUT: 2, PULL: 1, CLEAN: 2, WRONG: -2, DEM_US: -3, LATE: -2, DERAIL: -5 };
-const UNLOCKS = [{ name: 'Next area', rep: 100 }]; // placeholder until Stephen names the next area and its cost
-function nextUnlock() { const u = UNLOCKS.find(u => state.rep < u.rep) || UNLOCKS[UNLOCKS.length - 1], prev = UNLOCKS.filter(x => x.rep < u.rep).reduce((a, x) => Math.max(a, x.rep), 0); return { ...u, prev, pct: Math.max(0, Math.min(1, (state.rep - prev) / (u.rep - prev))) }; }
+const UNLOCKS = [{ key: 'neoga', name: 'Neoga customers', rep: 100, msg: '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>' }]; // one-time, permanent (state.unlocks[key])
+function nextUnlock() { const U = state.unlocks || {}, u = UNLOCKS.find(x => !U[x.key]); if (!u) return { done: true, name: 'All areas open', rep: 0, prev: 0, pct: 1 };
+  const prev = UNLOCKS.filter(x => x.rep < u.rep).reduce((a, x) => Math.max(a, x.rep), 0); return { ...u, prev, pct: Math.max(0, Math.min(1, (state.rep - prev) / Math.max(1, u.rep - prev))) }; }
+function checkUnlocks() { if (VISIT || !state) return; const U = state.unlocks || (state.unlocks = {});
+  for (const u of UNLOCKS) if (!U[u.key] && state.rep >= u.rep) { U[u.key] = { day: dayNo() }; try { NII.saveTown('mattoon', state); } catch (e) { } showModal(u.msg + '<div class="btns"><button data-act="close">OK</button></div>'); } }
 function repAdd(n, why) { state.rep += n; if (why) toast(`${n > 0 ? '+' : ''}${n} rep: ${why}`, n < 0 ? 'bad' : 'good'); }
 // Nov 2 (Stephen): CIC takes its oldest waiting cars, one per door spot; every other CIC car stays HOLD until a spot opens (stable, oldest first).
 // Age = the day IC set the car out, then its IC sequence number; nothing is stored, so old saves fix themselves on load.
@@ -940,7 +943,7 @@ function showTasks() {
   syncTasks(); const u = nextUnlock(), T = state.tasks || [];
   const row = t => `<li class="task${t.done ? ' done' : ''}${t.id === state.sel ? ' sel' : ''}"${t.done ? '' : ` data-act="selTask" data-id="${t.id}"`}><span class="ck">${t.done ? '✅' : '⬜'}</span><span class="tt">${t.text}</span><span class="tr">${t.done ? (t.rep ? `+${t.rep}` : '') : taskRepLabel(t)}</span></li>`;
   showModal(`<h2>Today's jobs · ${weekday(dayNo())} · Day ${dayNo()}</h2>
-    <p class="repline"><b>Reputation ${state.rep}</b> · ${u.name} unlocks at ${u.rep}</p><div class="repbar"><div style="width:${Math.round(u.pct * 100)}%"></div></div>
+    <p class="repline"><b>Reputation ${state.rep}</b> · ${u.done ? 'All areas open' : `${u.name} unlock at ${u.rep}`}</p><div class="repbar"><div style="width:${Math.round(u.pct * 100)}%"></div></div>
     ${T.length ? `<ul class="tasks">${T.map(row).join('')}</ul><p style="font-size:12.5px;color:#666">Do them in any order. Tap a job to point the waybill marker at its car.</p>` : `<p>${noTaskText()}</p>`}
     <details><summary>How rep is earned</summary><ul style="font-size:13px"><li>+${REP.SPOT} spot a car at the right spot on the day it's asked for; +${REP.HOT} more for a hot car</li><li>+${REP.CUT} per cut on IC Outbound when IC picks up</li><li>+${REP.PULL} pull a finished car before demurrage starts</li><li>+${REP.CLEAN} clean day (no derailments or hard hits)</li><li>${REP.WRONG} car left on the wrong spot or blocking a door (30 min)</li><li>${REP.DEM_US} finished car left so long the customer gets demurrage (we pay it)</li><li>${REP.LATE} late interchange</li><li>${REP.DERAIL} derailment (running through a switch)</li></ul></details>
     <div class="btns"><button data-act="close">Close</button></div>`);
@@ -2953,6 +2956,7 @@ function updateUI0() {
   const c = locoCons(), l = locoOf(c), mph = Math.abs(c.v) * MPH, ctl = state.ctl;
   { const L = state.led || LED0(), n = L.earn + L.dem - L.hire - L.crew - L.fuel - L.sand; $('cash').textContent = `${fmtMoney(state.money)} · today ${n < 0 ? '-' : '+'}$${Math.abs(n).toFixed(0)}`; $('cash').title = `Today: earned $${L.earn.toFixed(2)}, demurrage $${L.dem.toFixed(2)}, car hire $${L.hire.toFixed(2)}, crew $${L.crew.toFixed(2)}, fuel $${L.fuel.toFixed(2)}, sand $${L.sand.toFixed(2)}`; } $('cash').classList.toggle('neg', state.money < 0);
   $('rep').textContent = state.rep;
+  checkUnlocks();
   const t = state.time % 86400, h = Math.floor(t / 3600), mi = Math.floor(t / 60) % 60; $('clock').textContent = `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; $('day').textContent = wd3(dayNo()) + ' · Day ' + dayNo();
   $('speedBtn').textContent = state.speed + 'x';
   $('mph').textContent = mph.toFixed(1); $('speedo').classList.toggle('fast', mph > trackLimit(c) * MPH - 0.5); $('speedo').title = `Track speed here: ${Math.round(trackLimit(c) * MPH)} mph`; { let e = $('mphLim'); if (!e) { e = document.createElement('span'); e.id = 'mphLim'; e.style.cssText = 'font-size:0.7em;opacity:0.8;margin-left:4px'; $('mph').after(e); } e.textContent = `/${Math.round(trackLimit(c) * MPH)}`; }
