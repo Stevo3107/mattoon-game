@@ -849,9 +849,17 @@ const REP = { SPOT: 2, HOT: 3, CUT: 2, PULL: 1, CLEAN: 2, WRONG: -2, DEM_US: -3,
 const UNLOCKS = [{ name: 'Next area', rep: 100 }]; // placeholder until Stephen names the next area and its cost
 function nextUnlock() { const u = UNLOCKS.find(u => state.rep < u.rep) || UNLOCKS[UNLOCKS.length - 1], prev = UNLOCKS.filter(x => x.rep < u.rep).reduce((a, x) => Math.max(a, x.rep), 0); return { ...u, prev, pct: Math.max(0, Math.min(1, (state.rep - prev) / (u.rep - prev))) }; }
 function repAdd(n, why) { state.rep += n; if (why) toast(`${n > 0 ? '+' : ''}${n} rep: ${why}`, n < 0 ? 'bad' : 'good'); }
+// Nov 2 (Stephen): CIC takes its oldest waiting cars, one per door spot; every other CIC car stays HOLD until a spot opens (stable, oldest first).
+// Age = the day IC set the car out, then its IC sequence number; nothing is stored, so old saves fix themselves on load.
+const cicAge = v => [v.day != null ? v.day : -1, +(/\d+$/.exec(v.id) || [0])[0]];
+function cicNext() { const cars = Object.values(state.veh).filter(v => TYPES[v.type].kind === 'car'), n = SPOTS.CIC.spots.length;
+  const used = cars.filter(v => carWhere(v).spot('CIC') || (v.work && v.dest === 'CIC')).length;
+  const wait = cars.filter(v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC')).sort((a, b) => { const A = cicAge(a), B = cicAge(b); return A[0] - B[0] || A[1] - B[1]; });
+  return new Set(wait.slice(0, Math.max(0, n - used)).map(v => v.id)); }
+const cicHeld = v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC') && !cicNext().has(v.id);
 function needOf(v) { // what this car needs moved to right now, or null
   if (TYPES[v.type].kind !== 'car' || v.work) return null; const w = carWhere(v), d = v.dest || '';
-  if (SPOTS[d] && !w.spot(d)) return d === 'CIC' && !cicDay(dayNo()) ? null : { type: 'spot', spot: d };
+  if (SPOTS[d] && !w.spot(d)) return d === 'CIC' && (!cicDay(dayNo()) || cicHeld(v)) ? null : { type: 'spot', spot: d };
   if (d === 'HOUSE' && !w.house) return { type: 'house' };
   const ym = /^YARD (\d)$/.exec(d); if (ym && !w.yard(+ym[1])) return { type: 'yard', yard: +ym[1] };
   if (d === 'IC-INT' && !w.icOut) return { type: 'icout' };
@@ -873,8 +881,8 @@ function syncTasks() {
   state.sel = sel ? sel.id : null;
   state.job = sel ? { n: 0, done: false, type: sel.type, car: sel.car, spot: sel.spot, yard: sel.yard, rep: sel.rep, text: sel.text, id: sel.id } : { n: 0, done: false, type: 'none', car: null, rep: 0, text: noTaskText() };
 }
-function noTaskText() { const cars = Object.values(state.veh), today = dayNo(), busy = cars.filter(v => v.work).length, held = cars.filter(v => v.dest === 'CIC' && !cicDay(today) && !carWhere(v).spot('CIC')).length;
-  return busy || held ? `No jobs right now${busy ? `: ${busy} car${busy > 1 ? 's are' : ' is'} being worked by customers` : ''}${held ? `${busy ? '; ' : ': '}${held} for the box plant held until ${cicDay(today + 1) ? 'tomorrow' : 'the next Mon / Wed / Fri'}` : ''}. Open the menu (&#9776;) and tap <b>End Day</b> to finish the day.`
+function noTaskText() { const cars = Object.values(state.veh), today = dayNo(), busy = cars.filter(v => v.work).length, held = cars.filter(v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC') && (!cicDay(today) || cicHeld(v))).length;
+  return busy || held ? `No jobs right now${busy ? `: ${busy} car${busy > 1 ? 's are' : ' is'} being worked by customers` : ''}${held ? `${busy ? '; ' : ': '}${held} for the box plant held until ${cicDay(today) ? 'a door spot opens there' : cicDay(today + 1) ? 'tomorrow' : 'the next Mon / Wed / Fri'}` : ''}. Open the menu (&#9776;) and tap <b>End Day</b> to finish the day.`
     : 'All of today\'s jobs are done. Open the menu (&#9776;) and tap <b>End Day</b>: IC picks up IC Outbound and sets out new cars.'; }
 function makeJob() { syncTasks(); return state.job; } // (kept for old callers: the "job" is now just the selected checklist task)
 function taskThere(t) { const v = state.veh[t.car]; if (!v) return false; const w = carWhere(v); return t.type === 'house' ? w.house : t.type === 'icout' ? w.icOut : t.type === 'spot' ? w.spot(t.spot) : w.yard(t.yard); }
@@ -992,7 +1000,7 @@ const DEST = {
   'IC-INT': { sub: 'MAT', name: 'To the Illinois Central: leave on IC Outbound (red until a separate subdivision exists)' },
   HOLD: { sub: 'MAT', name: 'No orders yet: hold it in the Mattoon yard' },
   CIC: { sub: 'MAT', name: 'Central Illinois Corrugated (box plant): spot inside the plant' },
-  'CIC HOLD': { sub: 'MAT', name: 'Central Illinois Corrugated: held, the plant is switched Mon / Wed / Fri only' },
+  'CIC HOLD': { sub: 'MAT', name: 'Central Illinois Corrugated: held until one of its two door spots is free (oldest cars go first; switched Mon / Wed / Fri)' },
   'IFS NH3': { sub: 'MAT', name: 'Illini Farm Supply: anhydrous ammonia (NH3) spot' },
   'IFS UAN': { sub: 'MAT', name: 'Illini Farm Supply: UAN spot' },
   'IFS DOCK': { sub: 'MAT', name: 'Illini Farm Supply: boxcar dock (ramp)' },
@@ -1003,7 +1011,7 @@ function carDest(v) { // destination code for a car, or null for engines
   if (TYPES[v.type].kind === 'loco') return null;
   const j = state.job;
   if (v.id === j.car && !j.done) return j.type === 'house' ? 'HOUSE' : j.type === 'icout' ? 'IC-INT' : j.type === 'spot' ? j.spot : 'YARD ' + j.yard;
-  if (v.dest === 'CIC' && !v.work && !cicDay(dayNo()) && !carWhere(v).spot('CIC')) return 'CIC HOLD';
+  if (cicHeld(v)) return 'CIC HOLD';
   return v.dest || 'HOLD'; // standing orders (IC cars' destinations, IC-INT for cars going back to IC)
 }
 function carLoad(v) { // what's in the car, from its data: { c, t } or null when empty (older saves only had 'loaded' + weight)
@@ -2988,7 +2996,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
