@@ -255,7 +255,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw0344dn";</script>
+<script>window.NII_BUILD = "mw037dla";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -324,7 +324,7 @@ function industries() { const m = document.getElementById('modal'), bg = documen
   const money = n => Math.abs(n) < 0.005 ? '$0.00' : (n < 0 ? '−$' : '+$') + Math.abs(n).toFixed(2);
   const card = c => { const o = I[c.k] || {}, pl = (o.inc || 0) - (o.cost || 0);
     return `<div class="indCard"><img src="loading/cards/${c.img}.jpg" alt=""><div class="indB"><b>${c.name}</b><span class="indT">${TOWNS[c.t] ? TOWNS[c.t].name : c.t}${c.x ? ' · interchange' : ''}</span>
-    <table><tr><td>Cars delivered</td><td>${o.in || 0}</td></tr><tr><td>Cars picked up</td><td>${o.out || 0}</td></tr><tr><td>${c.x ? 'Income' : 'Switching fees + demurrage'}</td><td>$${(o.inc || 0).toFixed(2)}</td></tr><tr><td>${c.x ? 'Car hire' : 'Car hire / demurrage we paid'}</td><td>−$${(o.cost || 0).toFixed(2)}</td></tr><tr><td><b>Profit / loss</b></td><td class="${pl <= -0.005 ? 'neg' : 'pos'}"><b>${money(pl)}</b></td></tr><tr><td>Switch days</td><td>${c.days}</td></tr></table>
+    <table><tr><td>Cars delivered</td><td>${o.in || 0}</td></tr><tr><td>Cars picked up</td><td>${o.out || 0}</td></tr><tr><td>${c.x ? 'Income' : 'Switching fees + demurrage'}</td><td>$${(o.inc || 0).toFixed(2)}</td></tr>${!c.x && o.dem ? `<tr><td>&nbsp;&nbsp;of that, demurrage they paid</td><td>$${o.dem.toFixed(2)}</td></tr>` : ''}<tr><td>${c.x ? 'Car hire' : 'Car hire / demurrage we paid'}</td><td>−$${(o.cost || 0).toFixed(2)}</td></tr><tr><td><b>Profit / loss</b></td><td class="${pl <= -0.005 ? 'neg' : 'pos'}"><b>${money(pl)}</b></td></tr><tr><td>Switch days</td><td>${c.days}</td></tr></table>
     <p class="indF">1970s: ${c.fact}</p></div></div>`; };
   m.innerHTML = `<h2>Industries</h2>${['mattoon', 'neoga'].map(t => `<h3>${TOWNS[t] ? TOWNS[t].name : t}</h3><div class="indGrid">${IND_CARDS.filter(c => c.t === t).map(card).join('')}</div>`).join('')}<div class="btns"><button data-nm="close">Back to game</button></div>`;
   m.classList.add('ind'); bg.classList.add('show'); m.scrollTop = 0; }
