@@ -103,7 +103,7 @@ const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illin
   'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'] };
 const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'IC–Mattoon–NI&I' : `${road}–${j}–IC–Mattoon–NI&I`; };
 const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–IC' : `NI&I–Mattoon–IC–${j}–${road}`; };
-const WB_KIND = { boxcarIC: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' };
+const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' };
 const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', hopper: 'LO COV HOPPER' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
 
@@ -191,12 +191,12 @@ E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 let R = seeded((E.time | 0) ^ 0x5eed);
-const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar40: 46.01, tank: 41.99, hopper: 60.54 };
+const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar50: 55.96, boxcar40: 46.01, tank: 41.99, hopper: 60.54 };
 const vL = v => (/^coal_hopper40_/.test(v.art || '') ? 37 : v.L) || (C.ART[v.art || v.type] || {}).L || TYPE_L[v.type] || 50;
 const isLoco = v => v.type === 'gp9';
 const roadOf = v => v.road || ({ boxcarIC: 'IC', boxcar40: 'NII' })[v.type] || 'NII';
 const isLease = v => /X$/.test(roadOf(v));
-const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
+const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
 const liveCut = () => S.cuts.find(c => c.veh.some(isLoco));
@@ -232,7 +232,8 @@ if (S.ra === 1) { S.ra = 2; const OLD_S = 3150; // Nov 1 (2): run-around shorten
 // ================================================================= CARS & WAYBILLS
 const NUMSP = C.NUMSPEC || {};
 const numOf = k => (NUMSP[k] && NUMSP[k].painted) || (k.startsWith('boxcarIC_') ? k.slice(9) : null);
-const BOX_ART = { IC: Object.keys(C.ART).filter(k => /^boxcarIC_/.test(k)), 'N&W': ['boxcar40_nw'], PC: ['boxcar40_pc'], 'C&NW': ['boxcar40_cnw'], GTW: ['boxcar40_gtw'] };
+const BOX_ART = { IC: ['boxcar50dd_icg', 'boxcar50dd_bn', 'boxcar50dd_np', 'boxcar50dd_npbrn', 'boxcar50plug_ssw', 'boxcar50plug2_css'], // Nov 2: Danny's 50 ft cars replace the retired IC boxcar
+  'N&W': ['boxcar40_nw'], PC: ['boxcar40_pc'], 'C&NW': ['boxcar40_cnw'], GTW: ['boxcar40_gtw'] };
 const HOP_K = { 'N&W': 'nw', IC: 'ic', NYC: 'nyc' }; // coal-hopper40.json: side canvas 10.1 px/ft @2x, x 0 = A knuckle, bottom row = top of rail, 16 ft tall
 for (const k of Object.values(HOP_K)) { const src = BA('coal-hopper40-' + k + '@2x'); if (src) C.ART['coal_hopper40_' + k] = { L: 37, px: 10.1, x0: 0, y0: -16, w: 376, h: 162, truckC: [6.335, 30.665], src, far: BA('coal-hopper40-' + k + '-far@2x') || 'same' }; }
 const TANK_ART = { GATX: 'tank_gatx', ACFX: 'tank_acfx', UTLX: 'tank_utlx' };
@@ -243,7 +244,7 @@ function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC
     const x = R(), road = via === 'NW' ? (x < 0.8 ? 'N&W' : x < 0.9 ? 'IC' : 'NYC') : (x < 0.55 ? 'IC' : x < 0.9 ? 'NYC' : 'N&W'), k = HOP_K[road];
     v = { id, type: 'hopper', coal: true, art: 'coal_hopper40_' + k, L: 37, road, num: String(road === 'N&W' ? 30000 + Math.floor(R() * 9999) : road === 'IC' ? 70000 + Math.floor(R() * 9999) : 860000 + Math.floor(R() * 9999)), load: { c: 'Coal (stoker)', t: 50 } }; }
   else { const roads = via === 'NW' ? ['N&W', 'N&W', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
-    v = { id, type: art.startsWith('boxcarIC_') ? 'boxcarIC' : 'boxcar40', art, road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
+    v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
     if (R() < 0.75) v.load = { c: ['Groceries', 'Feed', 'Hardware', 'Bagged fertilizer', 'Seed', 'Appliances'][Math.floor(R() * 6)], t: 30 + Math.floor(R() * 15) }; else v.forLoad = { c: 'Bagged grain', t: 40 }; }
   v.loaded = !!v.load; v.wt = 30 + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
@@ -654,7 +655,7 @@ let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; 
 const notes = []; function note(t) { notes.push(t); toast(t); }
 function showModal(h) { $('modal').innerHTML = h; $('modalBg').classList.add('show'); } function hideModal() { $('modalBg').classList.remove('show'); }
 // big map town tabs (Oct 30): Neoga's big map is the shared tab map; this light copy also goes in the save for Mattoon's Neoga tab
-const NCOL = { gp9: '#1c2b50', boxcar: '#7a3426', boxcarIC: '#c8642a', boxcar40: '#7a3426', hopper: '#3a3a3a', tank: '#1d1d1d', caboose: '#b8322a' };
+const NCOL = { gp9: '#1c2b50', boxcar: '#7a3426', boxcarIC: '#c8642a', boxcar50: '#287038', boxcar40: '#7a3426', hopper: '#3a3a3a', tank: '#1d1d1d', caboose: '#b8322a' };
 const r1 = v => Math.round(v * 10) / 10, flat = pts => pts.flatMap(p => [r1(p[0]), r1(p[1])]);
 function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined = [];
   for (const [k, sw] of Object.entries(SWITCHES)) { const [t, e] = sw[S.sw[k]] || [], tr = T[t]; if (!tr) continue; const L = Math.min(40, tr.len * 0.45), pts = []; for (let i = 0; i <= 6; i++) { const d = e === 'a' ? L * i / 6 : tr.len - L * i / 6; pts.push(ptAt(t, d)); } lined.push(flat(pts)); }
