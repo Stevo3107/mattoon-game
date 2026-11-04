@@ -628,6 +628,7 @@ function moveWithContacts(c, dx) {
     const mph = Math.abs(c.v) * MPH;
     if (ob.kind === 'veh') {
       const o = C(ob.veh.cid), m1 = weight(c), m2 = weight(o);
+      for (const id of o.veh) V(id).ngPicked = true; // Nov 3: the player coupled these himself (the stray-car cleanup never takes them)
       merge(c, o, ob, sign); c.v = c.v * m1 / (m1 + m2); event('couple', mph);
       if (state.ap) { state.ap = null; c.v = 0; }
     } else { c.v = 0; if (state.ap) state.ap = null; event(ob.kind, ob.kind === 'edge' ? ob.node : mph); }
@@ -1209,6 +1210,18 @@ function departTo(to) { const c = locoCons(); if (!c) return; hideModal(); { con
   putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } paused = true;
   NII.travel('mattoon', to, train);
 }
+// Nov 3 (late): stray cleanup in Mattoon too. A Neoga car (ngIn) that is still inbound and unworked and that the player never coupled himself
+// (no ngPicked) comes off the train wherever it sits; the cars on either side close up toward the engine, and the car goes back to
+// Neoga's interchange track (the IC way freight sets it out there).
+function stripStraysM() { const c = locoCons(); if (!c || VISIT) return 0; const stray = v => TYPES[v.type] && TYPES[v.type].kind === 'car' && v.ngIn && !v.ngPicked && !v.doneAt && !v.spotT && !v.work;
+  const out = c.veh.map(V).filter(stray); if (!out.length) return 0;
+  const keep = c.veh.filter(id => !stray(V(id))), L = keep.findIndex(id => TYPES[V(id).type].kind === 'loco'), lo = V(keep[L]);
+  let p = { ...lo.f }; for (let i = L - 1; i >= 0; i--) { const v = V(keep[i]); v.r = { ...p }; v.f = advance(p, v.L); p = { ...v.f }; }
+  p = { ...lo.r }; for (let i = L + 1; i < keep.length; i++) { const v = V(keep[i]); v.f = { ...p }; v.r = retreat(p, v.L); p = { ...v.r }; }
+  c.veh = keep; const E = NII.env(), ng = E.towns && E.towns.neoga;
+  for (const v of out) { delete state.veh[v.id]; const w = JSON.parse(JSON.stringify(v)); if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.f; delete w.r; delete w.cid; delete w.aFront;
+    if (ng) (ng.pendIC = ng.pendIC || []).push(w); }
+  reindex(); toast(`${out.length} car${out.length > 1 ? 's' : ''} for Neoga came off your train: the IC way freight takes ${out.length > 1 ? 'them' : 'it'} to the Neoga interchange track.`); return out.length; }
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (!state.awayTrain || env.town !== 'mattoon') return;
   const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - state.awayTrain.left); state.time = Math.max(state.time, env.time || 0);
@@ -1255,7 +1268,7 @@ function migrateICC() { // saves from before switch ICC: MS was iM->nE (800 ft);
 }
 function load() {
   try { localStorage.removeItem('nii-mattoon-test-v4'); localStorage.removeItem('nii-mattoon-test-v5'); localStorage.removeItem('nii-mattoon-test-v6'); localStorage.removeItem('nii-mattoon-test-v7'); } catch (e) { } // old saves can hold unapproved cars (Day 1 flour car)
-  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateICC(); migrateTasks(); trainHome(); return true; } } catch (e) { }
+  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateICC(); migrateTasks(); trainHome(); try { stripStraysM(); } catch (e) { } return true; } } catch (e) { }
   return false;
 }
 
@@ -2635,7 +2648,7 @@ function solidHeadOn(G) { const t = SOLID_DBG.view, k = G.k, EX = [0, 0.3 * k], 
 // ---------------------------------------------------------------- trucks
 function drawTrucks(g, v, G) {
   const T = G.S.truck, back = IMG['truck-' + T.kind + '-back'], front = IMG['truck-' + T.kind + '-front'], wh = IMG['wheel-' + T.kind];
-  const xb = XART['truck-' + T.kind + '-back'], xw = XART['wheel-' + T.kind], px = G.a.px;
+  const xb = XART['truck-' + T.kind + '-back'], xw = XART['wheel-' + T.kind], px = T.px || G.a.px; // Nov 3: truck/wheel art carries its own scale (ft70 = 12 px/ft) even under a 10.1 px/ft body
   if (!back || !back.complete || !front.complete || !wh.complete) return;
   const half = Math.max(...T.axles.map(Math.abs));
   for (const c of T.c) {
@@ -2727,7 +2740,7 @@ function solidBox(g, G, b) {
   if (b.side) poly(g, [P(b.x0, 0, h0), P(b.x1, 0, h0), P(b.x1, 0, h1), P(b.x0, 0, h1)], b.side); // seen only through openings in the side art (caboose windows)
   // roof
   if (rg) { poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w / 2, rg), P(b.x0, w / 2, rg)], mixC(b.col, 26)); poly(g, [P(b.x0, w / 2, rg), P(b.x1, w / 2, rg), P(b.x1, w, h1), P(b.x0, w, h1)], mixC(b.col, 8)); }
-  else poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w, h1), P(b.x0, w, h1)], b.top || mixC(b.col, 22));
+  else { const va = b.openTop ? 1 - solidLampAlpha(G) : 1; if (va > 0.02) { g.save(); g.globalAlpha *= va; poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w, h1), P(b.x0, w, h1)], b.top || mixC(b.col, 22)); g.restore(); } } // Nov 3: an open top (twin hopper) is only seen when the camera looks down into it
   if (b.roof && SOLID_ROOF[b.roof]) solidPaint(g, G, 'roof', rg ? (h1 + rg) / 2 : h1, 0, () => SOLID_ROOF[b.roof](g, G, b));
   // end face (only when it is turned toward us; on straight track its width is 0)
   if (G.faceW * w < 0.15) return;
@@ -2786,6 +2799,7 @@ const SOLID_END = {
     for (const u of [2.3, w - 2.3]) { fr(g, u - 0.35, 3.0, u + 0.35, 3.6, '#2a2c31'); fr(g, u - 0.06, 1.9, u + 0.06, 3.0, '#111'); } // MU receptacles + hoses
     fr(g, c + 1.0, 1.6, c + 1.12, 2.8, '#111'); fr(g, 0, 1.45, w, 1.62, '#2c2f36');
   },
+  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', b.col, (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
   box40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'box40-end-B-brake' : 'box40-end-A', b.col, 0, 0, 10.33, 15.4); },   // hand brake on the x0 end
   tankEnd(g, G, b, outer, xe) { g.save(); g.beginPath(); g.rect(-5, -5, 20, b.h1 - b.w / 2 + 5); g.moveTo(b.w + 0.05, b.h1 - b.w / 2); g.arc(b.w / 2, b.h1 - b.w / 2, b.w / 2 + 0.05, 0, Math.PI * 2); g.clip(); solidArt(g, xe === b.x0 ? 'tank-end-B-brake' : 'tank-end-A', b.col, -(b.u0 || 0), 0, 9.6, 15.6); g.restore(); }, // clipped at the jacket top: the dome in that view stands at mid-car // frame-wide: round head + sill + dome rails
   boxEnd(g, G, b, outer, xe) { const w = b.w, col = b.endCol ? mixC(b.endCol, -18) : '#6a2d21';
@@ -2883,6 +2897,10 @@ const SOLID_ROOF = {
         if (!pass) { g.drawImage(tb, 0, sy, W, sh, b.x0, v.u0, L, du); g.fillStyle = `rgba(255,255,255,${0.22 * Math.pow(v.c, 8)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); g.fillStyle = `rgba(0,0,0,${0.55 * (1 - v.c)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); }
         else g.drawImage(rd, 0, sy, W, sh, b.x0, v.u0, L, du); }); }
   },
+  hopper40Roof(g, G, b) { const im = IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' + hopLV(G.v) : 'empty')] || IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' : 'empty')]; if (!im || !im.complete || !im.naturalWidth) return;
+    const va = 1 - solidLampAlpha(G); if (va < 0.02) return; g.save(); g.globalAlpha *= va; hopperRoofDraw(g, b, im); g.restore(); }, // Nov 3 (Stephen): the inside (slopes / load top) only shows once the camera looks down into the car (angled track); a straight-on side shows just the side wall
+  hopper40RoofRaw(g, G, b) { const im = IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' : 'empty')]; if (!im || !im.complete || !im.naturalWidth) return; // Nov 3: twin hopper roof by load state; art spans the car coupler to coupler
+    hopperRoofDraw(g, b, im); },
   hopperRoof(g, G, b) { const rb = IMG['hopper-roof-body'], rd = IMG['hopper-roof-detail']; // PS-4750 roof: Danny's roof art (body tinted, detail on top)
     if (!rb || !rb.complete || !rb.naturalWidth || !rd.complete) return; g.drawImage(solidTint(rb, b.col), b.x0, 0, b.x1 - b.x0, b.w); g.drawImage(rd, b.x0, 0, b.x1 - b.x0, b.w); },
   walkway(g, G, b) { fr(g, b.x0, 0, b.x1, b.w, '#3b3e45'); fr(g, b.x0, b.w - 0.12, b.x1, b.w, '#ea7424'); },
@@ -2906,6 +2924,24 @@ const SOLID_ROOF = {
 };
 // side-lamp opacity: 1 on straight track, fading to 0 by the time the end face is ~1.4 ft wide on screen-feet (faceW per ft of depth)
 const SOLID_LAMP_FADE = [0.02, 0.14];
+// Nov 4: twin hopper load variant (A = '', '-b', '-d'), stable per car: stored on the car (v.lv), else seeded from its number
+function hopLV(v) { if (!v) return ''; if (v.lv === '' || v.lv === '-b' || v.lv === '-d') return v.lv; let h = 0; for (const ch of String(v.num || v.id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return ['', '-b', '-d'][h % 3]; }
+function hopSidePic(v, G) { const n = G.S.sidePic; if (!n || !v || !v.loaded) return null; const im = IMG[n + '-body-loaded' + (G.far ? '-far' : '') + hopLV(v)] || IMG[n + '-body-loaded' + (G.far ? '-far' : '')]; return im && im.complete && im.naturalWidth ? im : null; }
+function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 0, (b.w - w) / 2, im.naturalWidth / 10.1, w); }
+// Nov 3: coal load mound. Hook for Danny: if IMG['coal-mound-<liv>-side'] (side elevation of the heap above the top chord, 10.1 px/ft,
+// x 0 = A knuckle, bottom row = top chord) is in the pack it is drawn in the side-wall plane; otherwise a shaded placeholder heap
+// (one peak per bay, from a heightfield) is built here. G.S.mound = { x0, x1, h, peak, bays, u } in feet.
+const SOLID_MOUND_HF = (t, bays) => { const f = t * bays % 1; return Math.pow(Math.sin(Math.PI * f), 0.8) * (0.55 + 0.45 * Math.sin(Math.PI * t)); };
+function solidMound(g, G, M) { if (!G.v || !G.v.loaded || hopSidePic(G.v, G)) return; // fallback only: Danny's loaded sides carry the real mound
+  const liv = M.liv, im = IMG['coal-mound-' + liv + '-side'];
+  if (im && im.complete && im.naturalWidth) { const px = 10.1, X = G.far ? (x => G.L - x) : (x => x); const o = G.P(0, M.u, M.h);
+    solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0], G.O[1] - M.h * G.k, 'mound'); g.drawImage(im, 0, -im.naturalHeight, im.naturalWidth, im.naturalHeight); g.setTransform(DPR, 0, 0, DPR, 0, 0); return; }
+  const n = 48, pts = [], up = [];
+  for (let i = 0; i <= n; i++) { const t = i / n, x = M.x0 + (M.x1 - M.x0) * t, hh = M.h + M.peak * SOLID_MOUND_HF(t, M.bays); pts.push(G.P(x, M.u, hh)); up.push(hh); }
+  const base = [G.P(M.x1, M.u, M.h - 0.05), G.P(M.x0, M.u, M.h - 0.05)], top = Math.min(...pts.map(p => p[1])), bot = base[0][1];
+  const gr = g.createLinearGradient(0, top, 0, bot); gr.addColorStop(0, '#5a5a5c'); gr.addColorStop(0.35, '#2c2c2e'); gr.addColorStop(1, '#121214');
+  g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); base.forEach(q => g.lineTo(q[0], q[1])); g.closePath(); g.fillStyle = gr; g.fill();
+  g.save(); g.clip(); g.fillStyle = 'rgba(255,255,255,.07)'; for (let i = 0; i < 70; i++) { const t = ((i * 37) % 97) / 97, x = M.x0 + (M.x1 - M.x0) * t, hh = M.h + M.peak * SOLID_MOUND_HF(t, M.bays) * (((i * 53) % 89) / 89); const q = G.P(x, M.u, hh); g.fillRect(q[0], q[1], Math.max(1, G.k * 0.25), Math.max(1, G.k * 0.18)); } g.restore(); }
 function solidLampAlpha(G) { const f = G.faceW / G.k, [a, b] = SOLID_LAMP_FADE, t = Math.max(0, Math.min(1, (f - a) / (b - a))); return 1 - t * t * (3 - 2 * t); }
 // ---------------------------------------------------------------- the whole car
 // tank dome: a standing piece on the crown at mid-car, billboarded (upright, facing the screen) like stands. Danny's tank-dome /
@@ -2954,7 +2990,7 @@ function solidTankSide(g, v, G) { const k = artOf(v), xa = XART && XART[k + '-si
     g.globalAlpha = 0.6 + 0.4 * Math.max(0, Math.min(1, 0.55 + 0.6 * nh)); at(u); g.drawImage(lt, 0, y, lt.naturalWidth, st, 0, y, lt.naturalWidth, st + 0.6); }
   g.globalAlpha = 1; g.setTransform(DPR, 0, 0, DPR, 0, 0); if (G.S.rail) solidTankRail(g, G, G.S.rail, tb); at(0); g.drawImage(hw, 0, 0); g.setTransform(DPR, 0, 0, DPR, 0, 0); return true; }
 function drawSolid(g, v, G, alpha) {
-  const a = G.a, im = carPic(v, G.far), P = G.P, L = G.L, px = a.px;
+  const a = G.a, im = hopSidePic(v, G) || carPic(v, G.far), P = G.P, L = G.L, px = a.px;
   g.globalAlpha = alpha;
   // ground shadow under the car's footprint
   poly(g, [P(1, -0.6, 0.15), P(L - 1, -0.6, 0.15), P(L - 1, 10.5, 0.15), P(1, 10.5, 0.15)], 'rgba(30,25,20,.26)');
@@ -2974,6 +3010,7 @@ function drawSolid(g, v, G, alpha) {
     const la = solidLampAlpha(G);
     if (la > 0.01) for (const end of G.S.lamps || []) { const li = IMG[artOf(v) + '-lamp' + end + (G.far ? '-far' : '')]; if (li && li.complete && li.naturalWidth) { g.globalAlpha = alpha * la; const o = hb && hb.inset === end ? hu : 0; solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + o * G.wv[0], G.O[1] + o * G.wv[1], 'lamp'); g.drawImage(li, a.x0 * px, a.y0 * px, li.naturalWidth, li.naturalHeight); } }
     g.globalAlpha = alpha; g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  if (G.S.mound) solidMound(g, G, G.S.mound);
   g.globalAlpha = 1;
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
   for (const x of [0, L]) for (const u of [0, 10.5]) for (const h of [0, 15.5]) { const p = P(x, u, h); x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
@@ -3179,7 +3216,7 @@ function solidHeadOn(G) { const t = SOLID_DBG.view, k = G.k, EX = [0, 0.3 * k], 
 // ---------------------------------------------------------------- trucks
 function drawTrucks(g, v, G) {
   const T = G.S.truck, back = IMG['truck-' + T.kind + '-back'], front = IMG['truck-' + T.kind + '-front'], wh = IMG['wheel-' + T.kind];
-  const xb = XART['truck-' + T.kind + '-back'], xw = XART['wheel-' + T.kind], px = G.a.px;
+  const xb = XART['truck-' + T.kind + '-back'], xw = XART['wheel-' + T.kind], px = T.px || G.a.px; // Nov 3: truck/wheel art carries its own scale (ft70 = 12 px/ft) even under a 10.1 px/ft body
   if (!back || !back.complete || !front.complete || !wh.complete) return;
   const half = Math.max(...T.axles.map(Math.abs));
   for (const c of T.c) {
@@ -3271,7 +3308,7 @@ function solidBox(g, G, b) {
   if (b.side) poly(g, [P(b.x0, 0, h0), P(b.x1, 0, h0), P(b.x1, 0, h1), P(b.x0, 0, h1)], b.side); // seen only through openings in the side art (caboose windows)
   // roof
   if (rg) { poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w / 2, rg), P(b.x0, w / 2, rg)], mixC(b.col, 26)); poly(g, [P(b.x0, w / 2, rg), P(b.x1, w / 2, rg), P(b.x1, w, h1), P(b.x0, w, h1)], mixC(b.col, 8)); }
-  else poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w, h1), P(b.x0, w, h1)], b.top || mixC(b.col, 22));
+  else { const va = b.openTop ? 1 - solidLampAlpha(G) : 1; if (va > 0.02) { g.save(); g.globalAlpha *= va; poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w, h1), P(b.x0, w, h1)], b.top || mixC(b.col, 22)); g.restore(); } } // Nov 3: an open top (twin hopper) is only seen when the camera looks down into it
   if (b.roof && SOLID_ROOF[b.roof]) solidPaint(g, G, 'roof', rg ? (h1 + rg) / 2 : h1, 0, () => SOLID_ROOF[b.roof](g, G, b));
   // end face (only when it is turned toward us; on straight track its width is 0)
   if (G.faceW * w < 0.15) return;
@@ -3330,6 +3367,7 @@ const SOLID_END = {
     for (const u of [2.3, w - 2.3]) { fr(g, u - 0.35, 3.0, u + 0.35, 3.6, '#2a2c31'); fr(g, u - 0.06, 1.9, u + 0.06, 3.0, '#111'); } // MU receptacles + hoses
     fr(g, c + 1.0, 1.6, c + 1.12, 2.8, '#111'); fr(g, 0, 1.45, w, 1.62, '#2c2f36');
   },
+  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', b.col, (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
   box40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'box40-end-B-brake' : 'box40-end-A', b.col, 0, 0, 10.33, 15.4); },   // hand brake on the x0 end
   tankEnd(g, G, b, outer, xe) { g.save(); g.beginPath(); g.rect(-5, -5, 20, b.h1 - b.w / 2 + 5); g.moveTo(b.w + 0.05, b.h1 - b.w / 2); g.arc(b.w / 2, b.h1 - b.w / 2, b.w / 2 + 0.05, 0, Math.PI * 2); g.clip(); solidArt(g, xe === b.x0 ? 'tank-end-B-brake' : 'tank-end-A', b.col, -(b.u0 || 0), 0, 9.6, 15.6); g.restore(); }, // clipped at the jacket top: the dome in that view stands at mid-car // frame-wide: round head + sill + dome rails
   boxEnd(g, G, b, outer, xe) { const w = b.w, col = b.endCol ? mixC(b.endCol, -18) : '#6a2d21';
@@ -3427,6 +3465,10 @@ const SOLID_ROOF = {
         if (!pass) { g.drawImage(tb, 0, sy, W, sh, b.x0, v.u0, L, du); g.fillStyle = `rgba(255,255,255,${0.22 * Math.pow(v.c, 8)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); g.fillStyle = `rgba(0,0,0,${0.55 * (1 - v.c)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); }
         else g.drawImage(rd, 0, sy, W, sh, b.x0, v.u0, L, du); }); }
   },
+  hopper40Roof(g, G, b) { const im = IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' + hopLV(G.v) : 'empty')] || IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' : 'empty')]; if (!im || !im.complete || !im.naturalWidth) return;
+    const va = 1 - solidLampAlpha(G); if (va < 0.02) return; g.save(); g.globalAlpha *= va; hopperRoofDraw(g, b, im); g.restore(); }, // Nov 3 (Stephen): the inside (slopes / load top) only shows once the camera looks down into the car (angled track); a straight-on side shows just the side wall
+  hopper40RoofRaw(g, G, b) { const im = IMG['coal-hopper40-' + b.liv + '-roof-' + (G.v && G.v.loaded ? 'loaded' : 'empty')]; if (!im || !im.complete || !im.naturalWidth) return; // Nov 3: twin hopper roof by load state; art spans the car coupler to coupler
+    hopperRoofDraw(g, b, im); },
   hopperRoof(g, G, b) { const rb = IMG['hopper-roof-body'], rd = IMG['hopper-roof-detail']; // PS-4750 roof: Danny's roof art (body tinted, detail on top)
     if (!rb || !rb.complete || !rb.naturalWidth || !rd.complete) return; g.drawImage(solidTint(rb, b.col), b.x0, 0, b.x1 - b.x0, b.w); g.drawImage(rd, b.x0, 0, b.x1 - b.x0, b.w); },
   walkway(g, G, b) { fr(g, b.x0, 0, b.x1, b.w, '#3b3e45'); fr(g, b.x0, b.w - 0.12, b.x1, b.w, '#ea7424'); },
@@ -3450,6 +3492,24 @@ const SOLID_ROOF = {
 };
 // side-lamp opacity: 1 on straight track, fading to 0 by the time the end face is ~1.4 ft wide on screen-feet (faceW per ft of depth)
 const SOLID_LAMP_FADE = [0.02, 0.14];
+// Nov 4: twin hopper load variant (A = '', '-b', '-d'), stable per car: stored on the car (v.lv), else seeded from its number
+function hopLV(v) { if (!v) return ''; if (v.lv === '' || v.lv === '-b' || v.lv === '-d') return v.lv; let h = 0; for (const ch of String(v.num || v.id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return ['', '-b', '-d'][h % 3]; }
+function hopSidePic(v, G) { const n = G.S.sidePic; if (!n || !v || !v.loaded) return null; const im = IMG[n + '-body-loaded' + (G.far ? '-far' : '') + hopLV(v)] || IMG[n + '-body-loaded' + (G.far ? '-far' : '')]; return im && im.complete && im.naturalWidth ? im : null; }
+function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 0, (b.w - w) / 2, im.naturalWidth / 10.1, w); }
+// Nov 3: coal load mound. Hook for Danny: if IMG['coal-mound-<liv>-side'] (side elevation of the heap above the top chord, 10.1 px/ft,
+// x 0 = A knuckle, bottom row = top chord) is in the pack it is drawn in the side-wall plane; otherwise a shaded placeholder heap
+// (one peak per bay, from a heightfield) is built here. G.S.mound = { x0, x1, h, peak, bays, u } in feet.
+const SOLID_MOUND_HF = (t, bays) => { const f = t * bays % 1; return Math.pow(Math.sin(Math.PI * f), 0.8) * (0.55 + 0.45 * Math.sin(Math.PI * t)); };
+function solidMound(g, G, M) { if (!G.v || !G.v.loaded || hopSidePic(G.v, G)) return; // fallback only: Danny's loaded sides carry the real mound
+  const liv = M.liv, im = IMG['coal-mound-' + liv + '-side'];
+  if (im && im.complete && im.naturalWidth) { const px = 10.1, X = G.far ? (x => G.L - x) : (x => x); const o = G.P(0, M.u, M.h);
+    solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0], G.O[1] - M.h * G.k, 'mound'); g.drawImage(im, 0, -im.naturalHeight, im.naturalWidth, im.naturalHeight); g.setTransform(DPR, 0, 0, DPR, 0, 0); return; }
+  const n = 48, pts = [], up = [];
+  for (let i = 0; i <= n; i++) { const t = i / n, x = M.x0 + (M.x1 - M.x0) * t, hh = M.h + M.peak * SOLID_MOUND_HF(t, M.bays); pts.push(G.P(x, M.u, hh)); up.push(hh); }
+  const base = [G.P(M.x1, M.u, M.h - 0.05), G.P(M.x0, M.u, M.h - 0.05)], top = Math.min(...pts.map(p => p[1])), bot = base[0][1];
+  const gr = g.createLinearGradient(0, top, 0, bot); gr.addColorStop(0, '#5a5a5c'); gr.addColorStop(0.35, '#2c2c2e'); gr.addColorStop(1, '#121214');
+  g.beginPath(); pts.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); base.forEach(q => g.lineTo(q[0], q[1])); g.closePath(); g.fillStyle = gr; g.fill();
+  g.save(); g.clip(); g.fillStyle = 'rgba(255,255,255,.07)'; for (let i = 0; i < 70; i++) { const t = ((i * 37) % 97) / 97, x = M.x0 + (M.x1 - M.x0) * t, hh = M.h + M.peak * SOLID_MOUND_HF(t, M.bays) * (((i * 53) % 89) / 89); const q = G.P(x, M.u, hh); g.fillRect(q[0], q[1], Math.max(1, G.k * 0.25), Math.max(1, G.k * 0.18)); } g.restore(); }
 function solidLampAlpha(G) { const f = G.faceW / G.k, [a, b] = SOLID_LAMP_FADE, t = Math.max(0, Math.min(1, (f - a) / (b - a))); return 1 - t * t * (3 - 2 * t); }
 // ---------------------------------------------------------------- the whole car
 // tank dome: a standing piece on the crown at mid-car, billboarded (upright, facing the screen) like stands. Danny's tank-dome /
@@ -3498,7 +3558,7 @@ function solidTankSide(g, v, G) { const k = artOf(v), xa = XART && XART[k + '-si
     g.globalAlpha = 0.6 + 0.4 * Math.max(0, Math.min(1, 0.55 + 0.6 * nh)); at(u); g.drawImage(lt, 0, y, lt.naturalWidth, st, 0, y, lt.naturalWidth, st + 0.6); }
   g.globalAlpha = 1; g.setTransform(DPR, 0, 0, DPR, 0, 0); if (G.S.rail) solidTankRail(g, G, G.S.rail, tb); at(0); g.drawImage(hw, 0, 0); g.setTransform(DPR, 0, 0, DPR, 0, 0); return true; }
 function drawSolid(g, v, G, alpha) {
-  const a = G.a, im = carPic(v, G.far), P = G.P, L = G.L, px = a.px;
+  const a = G.a, im = hopSidePic(v, G) || carPic(v, G.far), P = G.P, L = G.L, px = a.px;
   g.globalAlpha = alpha;
   // ground shadow under the car's footprint
   poly(g, [P(1, -0.6, 0.15), P(L - 1, -0.6, 0.15), P(L - 1, 10.5, 0.15), P(1, 10.5, 0.15)], 'rgba(30,25,20,.26)');
@@ -3518,6 +3578,7 @@ function drawSolid(g, v, G, alpha) {
     const la = solidLampAlpha(G);
     if (la > 0.01) for (const end of G.S.lamps || []) { const li = IMG[artOf(v) + '-lamp' + end + (G.far ? '-far' : '')]; if (li && li.complete && li.naturalWidth) { g.globalAlpha = alpha * la; const o = hb && hb.inset === end ? hu : 0; solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + o * G.wv[0], G.O[1] + o * G.wv[1], 'lamp'); g.drawImage(li, a.x0 * px, a.y0 * px, li.naturalWidth, li.naturalHeight); } }
     g.globalAlpha = alpha; g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  if (G.S.mound) solidMound(g, G, G.S.mound);
   g.globalAlpha = 1;
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
   for (const x of [0, L]) for (const u of [0, 10.5]) for (const h of [0, 15.5]) { const p = P(x, u, h); x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
