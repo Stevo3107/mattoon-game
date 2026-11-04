@@ -109,7 +109,7 @@ window.NII_SHARED = (() => {
   const STOP_DEC = 3; // the STOP button in Tap mode: ease to a stand at 3 ft/s²
   // NOTE (Nov 4, parity 3): Mattoon's stepConsist moves the consist once in apStep and again by v*dt afterwards, so a Tap run covers
   // twice the ground the speedometer shows (AP_MOVES = 2). That is how Mattoon feels; every town copies it until Stephen decides.
-  const AP_MOVES = 2;
+  const AP_MOVES = 1; // Nov 4 3:53 PM trial: true speed. Classic double move = 2 (backup checks/*.tapclassic1104)
   return { STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
@@ -668,6 +668,7 @@ function stepConsist(c, dt) {
   const vm = Math.abs(c.v) * MPH;
   live.slip = false; live.slide = false;
   const Rroll = weight(c) * (1.6 + 0.03 * vm) + (vm < 0.3 ? weight(c) * 4 : 0);
+  const apRan = !!state.ap; // AP_MOVES: apStep already moved the consist
   if (state.ap) { apStep(c, dt, running); live.eq = state.ap ? state.ap.eq : 0; }
   else { // Nov 3: the physics step is shared (src/shared.js driveStep), same math as before
     const r = NII_SHARED.driveStep({ v: c.v, W: weight(c), Wl: l.wt, notch: ctl.notch, rev: ctl.rev, sign: locoSign(c), brake: ctl.brake, sand: sanding, running, tapIdle: state.mode === 'tap', lim: trackLimit(c) }, dt);
@@ -677,7 +678,7 @@ function stepConsist(c, dt) {
   if (running) { l.fuel = Math.max(0, l.fuel - (1 + 2.5 * live.eq) / 60 * dt); if (l.fuel <= 0) { toast('Out of fuel! The engine shut down. Fill up at the fuel pad, or call the fuel truck.', 'bad'); sfx('crash'); save(); } }
   if (ctl.sand) { if (l.sand > 0) { const u = Math.min(l.sand, 0.8 * dt); book('sand', u * ECON.SAND_PER_PCT); l.sand = Math.max(0, l.sand - 0.8 * dt); ctl.sandT += dt; } if (l.sand <= 0 || ctl.sandT > 12) { ctl.sand = false; ctl.sandT = 0; if (l.sand <= 0) toast('Sand boxes are empty.', 'bad'); } }
   const ylx0 = c.v ? tailX(c, Math.sign(c.v)) : 0;
-  moveWithContacts(c, c.v * dt);
+  if (!apRan || NII_SHARED.AP_MOVES > 1) moveWithContacts(c, c.v * dt);
   cabooseRule(c, ylx0);
   bfMove(c, Math.sign(c.v) || 1);
 }
