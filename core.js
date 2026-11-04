@@ -99,7 +99,14 @@ window.NII_SHARED = (() => {
   }
   // a tag's load line, the same words in every town
   const tagLoad = v => v.type === 'caboose' ? null : (v.loaded || v.load) ? `${v.load && v.load.c ? v.load.c : 'LOADED'}${v.load && v.load.t ? ' ' + v.load.t + 'T' : ''}` : 'EMPTY';
-  return { PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+
+  // ---- TAP AUTOPILOT (Nov 4 parity 2): Mattoon's run speed and stopping curve, and the route planner's rules, for every town.
+  // apVdes: the speed wanted with `limit` ft to go (approach = closing on a car to couple); apAccel: speed up 1.6 ft/s², slow 2.5 ft/s².
+  const FTS_ = 5280 / 3600, AP = { acc: 1.6, dec: 1.4, couple: 2.0 * FTS_, slow: 2.5 }, PLAN = { CLEAR: 25, REV_COST: 60, MAX_REV: 5 };
+  function apVdes(limit, approach, trackLim) { let v = Math.min(trackLim, Math.sqrt(2 * AP.dec * Math.max(0, limit - (approach ? 25 : 0))));
+    if (approach && limit < 120) v = Math.max(Math.min(v, AP.couple), 1.2 * FTS_); return Math.max(v, 0.5 * FTS_); }
+  function apAccel(sp, vdes, dt) { if (sp < vdes) return { sp: Math.min(vdes, sp + AP.acc * dt), eq: 4 }; const n = Math.max(vdes, sp - AP.slow * dt); return { sp: n, eq: n > 0.5 ? 1 : 0 }; }
+  return { AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -791,12 +798,10 @@ function apStep(c, dt, running) {
   if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(`Stopped at the blue flag at ${BF[a.K].name}. Tap the building to have it taken down.`, 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } apArrive(c); return; }
   { const a = bfAhead(lead, rt.t + 80); if (a.K) { const room = a.t - 12; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast(`Stopped at the blue flag at ${BF[a.K].name}. Tap the building to have it taken down.`, 'bad'); return; } limit = Math.max(0, room); approach = false; } } }
   { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
-  let vdes = Math.min(trackLimit(c), Math.sqrt(2 * AP.dec * Math.max(0, limit - (approach ? 25 : 0))));
-  if (approach && limit < 120) vdes = Math.max(Math.min(vdes, AP.couple), 1.2 * FTS);
-  vdes = Math.max(vdes, 0.5 * FTS);
+  let vdes = NII_SHARED.apVdes(limit, approach, trackLimit(c)); // Nov 4: the shared stopping curve (every town)
   let sp = Math.abs(c.v); ap.eq = 0;
   if (!running) { vdes = 0; if (sp < 0.05) { state.ap = null; c.v = 0; toast('No fuel - the engine is dead.', 'bad'); return; } }
-  if (sp < vdes) { sp = Math.min(vdes, sp + AP.acc * dt); ap.eq = 4; } else { sp = Math.max(vdes, sp - 2.5 * dt); ap.eq = sp > 0.5 ? 1 : 0; }
+  { const r = NII_SHARED.apAccel(sp, vdes, dt); sp = r.sp; ap.eq = r.eq; }
   let dx = sp * dt; if (!approach && dx > limit) dx = limit;
   c.v = sign * sp;
   if (!approach && dx >= limit - 1e-6) { moveWithContacts(c, sign * dx); if (ylRoom(c, sign) - 5 <= 0.5) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } if (state.ap) apArrive(c); else c.v = 0; return; }
@@ -806,7 +811,7 @@ function apStep(c, dt, running) {
 // whatever it has coupled, to the tapped car or spot; then line each move's switches just before making it.
 // Every reversing move first takes the WHOLE cut CLEAR feet past the switch points. Run-arounds: to reach the far end of a
 // car, the route may go past it on another track (yard track, main, ladder) and come back in from the other end.
-const CLEAR = 25, REV_COST = 60, MAX_REV = 5;
+const { CLEAR, REV_COST, MAX_REV } = NII_SHARED.PLAN; // Nov 4: the planner's rules live in shared.js
 const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', ME2: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the IC switch)', MS2: 'the main (south end)', ICX: 'the IC Connection', ICL: 'the IC lead', ICK: 'the IC lead', ICI: 'IC Inbound', ICO: 'IC Outbound', ICT: 'the IC Tail',
   MNC: 'the main (north of town)', MN0: 'the main (north of town)', MN1: 'the main at Illini Farm Supply', MN2: 'the main (north of town)', MN3: 'the main (north of town)', MN4: 'the main (north of Prairie Grain)',
   CIC: 'the CIC box plant spur', IFS: 'the Farm Supply spur', IRA: 'the Farm Supply run-around', GL: 'the Prairie Grain lead', GLD: 'the Prairie Grain loading track', GRA: 'the Prairie Grain run-around', GT: 'the Prairie Grain tail track' };

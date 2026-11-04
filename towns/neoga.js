@@ -388,8 +388,8 @@ function step(dt) {
   const c = liveCut(); if (!c) return; { const l0 = locoV(c), cf = SH.crewFuel(dt, ctl.notch, !!(l0 && l0.fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); } // Nov 4: crew + fuel every step in every mode (Drive or Tap), as in Mattoon
   const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
   if (!ctl.ap && (S.mode || 'drive') === 'drive') { const sgn = drivePhys(c, dt, lim); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); }
+  if (ctl.ap) return apStep(c, dt, lim); // Nov 4: Mattoon's autopilot (shared stopping curve, legs, switch lining)
   let want = ctl.dir ? Math.min(ctl.mph * FTS, lim) : 0, sgn = ctl.dir;
-  if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; if (!S.crossT) toast('Arrived.'); crossDone(); return; } }
   if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
   ctl.v += Math.max(-2.5 * dt, Math.min(1.2 * dt, want - ctl.v)); if (!sgn || ctl.v <= 0.01) { ctl.v = Math.max(0, ctl.v); if (!sgn) return; }
   let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left); ctl.sv = ctl.v * sgn; moveStep(c, sgn, s); }
@@ -401,28 +401,76 @@ function moveStep(c, sgn, s) {
 }
 // Nov 4 parity: Tap lines the switches itself, like Mattoon's tapTarget. Tries every lining of the switches that are free to throw
 // (no car on their points), probes both ways, and takes the shortest run (fewest throws on a tie). The locked N&W switch is never thrown.
-function swBusy(k) { const s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
-  return S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e)))); }
-function probeTo(c, t, d, sgn) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
-  for (let i = 0; i < 6000; i += 2) { const e0 = leadingEnd(probe, sgn); const r = moveCut(probe, sgn * 2); dist += r.moved; const e = leadingEnd(probe, sgn);
-    if (e.t === t && (Math.abs(e.d - d) <= 2.5 || (e0.t === t && (e0.d - d) * (e.d - d) <= 0))) return dist;
-    if (r.stop || r.moved < 1.9) break; } return null; }
 function carTag(v) { const code = v.dest || (v.type === 'caboose' ? 'HOLD' : 'NII'), sub = DEST[code] ? 'NEO' : 'MAT', sd = SH.SUBDIVS[sub]; return { code, load: SH.tagLoad(v), sub, subName: sd.name, color: sd.color, ink: sd.ink, name: DEST[code] ? DEST[code].name : code }; }
-function apTo(t, d) { const c = liveCut(); if (!c) return; // run to the tapped point (either way), lining the switches, stopping at red home signals
-  const keys = Object.keys(SWITCHES), free = keys.filter(k => !swBusy(k)), save0 = { ...S.sw }; let best = null;
-  for (let m = 0; m < (1 << free.length); m++) { free.forEach((k, i) => { S.sw[k] = (m >> i) & 1 ? (save0[k] === 'N' ? 'R' : 'N') : save0[k]; });
-    const throws = free.filter(k => S.sw[k] !== save0[k]);
-    for (const sgn of [1, -1]) { const dist = probeTo(c, t, d, sgn); if (dist != null && (!best || dist < best.dist - 0.5 || (Math.abs(dist - best.dist) <= 0.5 && throws.length < best.throws.length))) best = { dist, sgn, throws, sw: { ...S.sw } }; } }
-  Object.assign(S.sw, save0);
-  if (!best) { toast(keys.some(swBusy) ? "Can't line a route there: a car is on the switch points." : "Can't get there from here.", 'bad'); return false; }
-  Object.assign(S.sw, best.sw); ctl.ap = { sgn: best.sgn, left: best.dist }; ctl.dir = 0; ctl.brake = 0;
-  if (best.throws.length) toast(`Auto-route: lining switch${best.throws.length > 1 ? 'es' : ''} ${best.throws.map(k => SWITCHES[k].name).join(', ')}.`);
+function busyFor(k, cuts) { const s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
+  return cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e)))); }
+function swBusy(k) { return busyFor(k, S.cuts); }
+const cloneCut = c => ({ path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT });
+const swBetween = (t1, t2) => Object.keys(SWITCHES).find(k => { const s = SWITCHES[k], ts = [s.stem[0], s.N[0], s.R[0]]; return ts.includes(t1) && ts.includes(t2); });
+const cutName = o => { const v = o.veh.find(v => !isLoco(v)) || o.veh[0]; return `${roadOf(v)} ${v.num}`; };
+// Mattoon's planRoute, on Neoga's track: cheapest set of moves (distance + REV_COST per reversal, at most MAX_REV), lining switches on the way;
+// a move may reverse once the whole train is CLEAR past a switch it trailed through; cars in the way block, the goal car is coupled to.
+function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c), keys = Object.keys(SWITCHES), save0 = { ...S.sw };
+  let best = null; const blocks = [], seen = new Set(), queue = [{ p: cloneCut(c), sgn: 1, sw: { ...S.sw }, legs: [], cost: 0 }, { p: cloneCut(c), sgn: -1, sw: { ...S.sw }, legs: [], cost: 0 }];
+  try { for (let guard = 0; queue.length && guard < 200; guard++) {
+    queue.sort((a, b) => a.cost - b.cost); const q = queue.shift(); if (best && q.cost >= best.cost) break;
+    const le = leadingEnd(q.p, q.sgn), key = `${le.t}:${Math.round(le.d / 4)}:${q.sgn}:${q.legs.length ? 1 : 0}`; if (seen.has(key)) continue; seen.add(key);
+    const free = keys.filter(k => !busyFor(k, [q.p, ...others])), runs = new Set();
+    for (let m = 0; m < (1 << free.length); m++) { const sw = { ...q.sw }; free.forEach((k, i) => { if ((m >> i) & 1) sw[k] = sw[k] === 'N' ? 'R' : 'N'; }); Object.assign(S.sw, sw);
+      const p = cloneCut(q.p), trav = [], revs = []; let dist = 0, sig = '';
+      for (let i = 0; i < 5000; i++) { const l0 = leadingEnd(p, q.sgn), t0 = leadingEnd(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = leadingEnd(p, q.sgn), t1 = leadingEnd(p, -q.sgn);
+        if (l1.t !== l0.t) { const k = swBetween(l0.t, l1.t); if (k) { trav.push([k, S.sw[k], dist]); sig += k + S.sw[k]; } }
+        if (t1.t !== t0.t) { const k = swBetween(t0.t, t1.t); if (k) revs.push({ at: dist + CLEAR, req: trav.map(x => [x[0], x[1]]) }); }
+        for (const rv of revs) if (!rv.p && dist >= rv.at) { rv.p = cloneCut(p); rv.dist = dist; }
+        if (goal.t && l1.t === goal.t && (Math.abs(l1.d - goal.d) <= 2.5 || (e0.t === goal.t && (e0.d - goal.d) * (l1.d - goal.d) <= 0))) { if (runs.has(sig + '|g')) break; runs.add(sig + '|g');
+          const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, legs: q.legs.concat([{ sgn: q.sgn, left: dist, req: trav.map(x => [x[0], x[1]]) }]) }; break; }
+        const hit = others.find(o => segsOverlap(p, o, 0));
+        if (hit) { const hp = leadingEnd(p, q.sgn), A = pathPt(hit, 0), B = pathPt(hit, cutLen(hit)), he = (A.t === hp.t ? Math.abs(A.d - hp.d) : 1e9) <= (B.t === hp.t ? Math.abs(B.d - hp.d) : 1e9) ? 'a' : 'b';
+          if (goal.cut === hit && (!goal.end || goal.end === he)) { const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, hit: he, legs: q.legs.concat([{ sgn: q.sgn, left: dist + 3, req: trav.map(x => [x[0], x[1]]), couple: true }]) }; }
+          else blocks.push({ cost: q.cost + dist, o: hit }); break; }
+        if (r.stop || r.moved < 1.9) break; }
+      if (q.legs.length < MAX_REV) for (const rv of revs) if (rv.p && !runs.has(sig + '|r' + Math.round(rv.dist))) { runs.add(sig + '|r' + Math.round(rv.dist));
+        queue.push({ p: rv.p, sgn: -q.sgn, sw: { ...S.sw }, legs: q.legs.concat([{ sgn: q.sgn, left: rv.dist, req: rv.req }]), cost: q.cost + rv.dist + REV_COST }); }
+      Object.assign(S.sw, save0); } } } finally { Object.assign(S.sw, save0); }
+  if (best) return best;
+  blocks.sort((a, b) => a.cost - b.cost); if (blocks[0]) return { msg: `Route blocked by ${cutName(blocks[0].o)}.` };
+  return { msg: goal.cut ? `Can't reach ${cutName(goal.cut)} from here: there's no clear way around to it.` : 'No way to get there from here.' }; }
+function apTo(t, d, goal) { const c = liveCut(); if (!c) return; // Mattoon's tapTarget: plan, line the switches, run (reversing as needed)
+  if (!goal) { const o = S.cuts.find(o => o !== c && o.path.some(g => g.t === t && Math.min(g.d0, g.d1) - 1 <= d && Math.max(g.d0, g.d1) + 1 >= d)); goal = o ? { cut: o } : { t, d }; } // a spot under a car: couple to it (either end)
+  if (ctl.ap && ctl.v > 0.5 * FTS) { ctl.ap = { replan: { t, d, goal }, sgn: ctl.ap.sgn, legs: [], k: 0, pend: [], tw: 0, left: 0 }; toast('Stopping first, then lining the new route.'); return true; }
+  const r = planRoute(c, goal); if (!r.legs) { toast(r.msg, 'bad'); return false; }
+  const sim = { ...S.sw }, throws = []; r.legs.forEach(L => L.req.forEach(([k, g]) => { if (sim[k] !== g) { if (!throws.includes(k)) throws.push(k); sim[k] = g; } }));
+  ctl.ap = { legs: r.legs, k: -1, sgn: r.legs[0].sgn, left: 0, pend: [], tw: 0 }; ctl.dir = 0; ctl.brake = 0; nextLegN();
+  const rv = r.legs.length - 1;
+  if (goal.cut && goal.end && rv) toast(`Auto-route: running around ${cutName(goal.cut)}, ${rv} reversing move${rv === 1 ? '' : 's'}.`);
+  else if (rv || throws.length) toast(`Auto-route: ${throws.length ? `lining switch${throws.length > 1 ? 'es' : ''} ${throws.map(k => SWITCHES[k].name).join(', ')}` : 'switches already lined'}${rv ? `, ${rv} reversing move${rv > 1 ? 's' : ''}` : ''}.`);
   SH.sfx('tick'); save(); return true; }
+function nextLegN() { const ap = ctl.ap; ap.k++; const L = ap.legs[ap.k]; ap.sgn = L.sgn; ap.left = L.left; ap.pend = L.req.filter(([k, g]) => S.sw[k] !== g).map(x => x.slice()); ap.tw = ap.k ? 0.5 : ap.pend.length ? 0.2 : 0; }
+function apArriveN() { const ap = ctl.ap; ctl.v = 0; ctl.sv = 0;
+  if (ap && ap.k < ap.legs.length - 1) { nextLegN(); toast(`Clear of the switch. Reversing (move ${ap.k + 1} of ${ap.legs.length}).`); return; }
+  ctl.ap = null; if (!S.crossT) toast('Arrived.'); crossDone(); }
+function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l.fuel > 0; let eq = 0;
+  const brakeRoll = () => { ctl.v = Math.max(0, ctl.v - SH.AP.slow * dt); ctl.sv = ctl.v * ap.sgn; if (ctl.v > 0) moveStep(c, ap.sgn, ctl.v * dt); };
+  if (ap.replan) { if (ctl.v > 0.05) return brakeRoll(); const t = ap.replan; ctl.ap = null; ctl.v = 0; apTo(t.t, t.d, t.goal); return; }
+  if (ap.pend.length) { if (ctl.v > 0.05) return brakeRoll(); ctl.v = 0; ap.tw -= dt; if (ap.tw > 0) return; const [k, g] = ap.pend.shift();
+    if (S.sw[k] !== g) { if (swBusy(k)) { ctl.ap = null; toast(`Route blocked: there's equipment on switch ${SWITCHES[k].name}.`, 'bad'); return; } S.sw[k] = g; SH.sfx('sw'); save(); }
+    ap.tw = ap.pend.length ? 0.45 : 0.3; return; }
+  if (ap.tw > 0) { ap.tw -= dt; return; }
+  const L = ap.legs[ap.k], approach = !!L.couple && ap.k === ap.legs.length - 1; let limit = ap.left;
+  { const sig = signalAhead(c, ap.sgn); if (sig < Infinity) { if (sig - 25 < 1 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } if (sig - 25 < limit) limit = Math.max(0, sig - 25); } }
+  if (!approach && limit <= 0.05) return apArriveN();
+  if (approach && ap.left < -15) return apArriveN();
+  let vdes = SH.apVdes(limit, approach, lim);
+  if (!running) { vdes = 0; if (ctl.v < 0.05) { ctl.ap = null; ctl.v = 0; toast('No fuel - the engine is dead.', 'bad'); return; } }
+  const r = SH.apAccel(ctl.v, vdes, dt); ctl.v = r.sp; eq = r.eq; if (l) { const u = SH.consume(l, ctl, eq, dt); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); }
+  let dx = ctl.v * dt; if (!approach && dx > limit) dx = limit; ctl.sv = ctl.v * ap.sgn;
+  moveStep(c, ap.sgn, dx);
+  if (ctl.ap === ap && !approach && ap.left <= 0.05) apArriveN(); }
+let TAP_FLASH = null, TAGS_DRAWN = [];
 // one switch throw, every way in (scene stand or the Map): Mattoon's rules and words
 function throwSw(k, X, Y) { const s = SWITCHES[k];
   if (swBusy(k)) { TAP_FLASH = { x: X, y: Y, t: performance.now(), bad: true }; toast(`Can't throw switch ${s.name}: there's equipment on it.`, 'bad'); return false; }
   S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; TAP_FLASH = { x: X, y: Y, t: performance.now(), bad: false }; SH.sfx('sw'); save(); return true; }
-let TAP_FLASH = null, TAGS_DRAWN = [];
 // ================================================================= TRAVEL
 // Nov 3 fix: an inbound loaded car for a Neoga customer that the player never coupled to himself is a stray from the old 'IC cars ride down on your train'
 // rule (it then rode back to Mattoon and down again every trip). Take strays off the ends of a cut and set them out on the interchange track.
@@ -865,5 +913,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
