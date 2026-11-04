@@ -112,7 +112,7 @@ const $ = id => document.getElementById(id), C = window.NII_CORE, E = NII.env(),
 const TA = window.NII_TOWN_ART || {}; // Neoga pack art (Danny): fuel dealer now; tower, freight house, signals picked up by name when approved
 const BA = k => TA[k] || (C.BART && C.BART[k]) || null;
 // ---- money (copy of the 1975 plan in game.js ECON; same numbers)
-const ECON = { CAR: 20, PER_TON: 0.60, HIRE_HR: 0.40, DEM_FREE_H: 48, DEM: [[4, 0.40], [6, 0.85], [Infinity, 1.25]], SWITCH: 12, SWITCH_LOAD: 3, SWITCH_TANK: 3 };
+const SH = window.NII_SHARED, ECON = SH.ECON; // Nov 3: the money plan, physics, demurrage, hire and Restart come from core (src/shared.js), same as Mattoon
 const SPEED = { main: 25, other: 10 };            // same as game.js
 const RED_FINE = 500, RED_REP = 15;                // running a red home signal at the diamond
 const ROUTE_CLEAR_ODDS = 0.80;                     // tower clears us right away; else hold for an N&W train
@@ -282,15 +282,14 @@ function IND(dest, f, amt) { try { NII.ind(NII.indKey(dest), f, amt == null ? 1 
 function book(k, amt) { M.led = M.led || { earn: 0, hire: 0, dem: 0, crew: 0, fuel: 0, sand: 0 }; M.led[k] = (M.led[k] || 0) + amt; M.money = (M.money || 0) + ((k === 'earn' || k === 'dem') ? amt : -amt); }
 const MILLER = d => d === 'NG COAL' || d === 'NG OIL'; // Miller & Sons Fuel works Mon-Fri only (Nov 1); the house track any day
 const weekend = t => Math.floor(t / 86400) % 7 >= 5;
-function demurrage(from, to, k) { let free = ECON.DEM_FREE_H, ch = 0, amt = 0; const wk = MILLER(k);
-  for (let t = from; t + 3600 <= to; t += 3600) { const dw = Math.floor(t / 86400) % 7; if (wk && dw >= 5) continue; if (free > 0) { free--; continue; } const d = Math.floor(ch / 24) + 1; amt += ECON.DEM.find(([u]) => d <= u)[1]; ch++; }
-  return Math.round(amt * 100) / 100; }
+const demurrage = (from, to, k) => SH.demurrage(from, to, MILLER(k)); // Miller (Mon-Fri) skips weekends, like CIC in Mattoon
+const winterNow = () => [8, 9, 10, 11, 0, 1].includes(new Date(Date.UTC(1975, 8, 29) + (dayNo() - 1) * 864e5).getUTCMonth()); // same calendar as Mattoon
 const pickVia = v => { const back = v.via || 'IC'; if (R() < NW_ROUTE_ODDS) { v.reassigned = true; return back === 'IC' ? 'NW' : 'IC'; } v.reassigned = false; return back; };
 function advance(dt) { // game time passes in Neoga: car hire, work at the spots, demurrage
   if (dt <= 0) return; const t0 = E.time; E.time += dt; let hire = 0;
-  for (const q of standingCars()) { const v = q.v; if (!isLoco(v) && v.type !== 'caboose' && roadOf(v) !== 'NII') { hire += ECON.HIRE_HR; IND(DEST[v.dest] ? v.dest : v.from || 'NW', 'cost', ECON.HIRE_HR * dt / 3600); }
+  for (const q of standingCars()) { const v = q.v; if (!isLoco(v) && v.type !== 'caboose' && roadOf(v) !== 'NII') { const hr = SH.hireRate(v, winterNow()); hire += hr; IND(DEST[v.dest] ? v.dest : v.from || 'NW', 'cost', hr * dt / 3600); }
     if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue; if (MILLER(v.dest) && weekend(E.time)) continue; // Miller: no switching fee or unloading Sat/Sun
-    if (!v.ngFee) { v.ngFee = 1; const fee = ECON.SWITCH + (v.loaded ? ECON.SWITCH_LOAD : 0) + (v.type === 'tank' ? ECON.SWITCH_TANK : 0); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
+    if (!v.ngFee) { v.ngFee = 1; const fee = SH.switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
     v.work = (v.work || 0) + dt / 3600;
     if (v.work >= WORK_H) { const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
       v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = E.time; delete v.work; delete v.ngFee;
@@ -345,18 +344,15 @@ function towerTick() { const tw = S.tower, c = liveCut(); if (!tw) return;
   else if (tw.st === 'clear' && c) { const occ = interlockOcc(c); if (occ) tw.entered = true; else if (tw.entered) { S.tower = null; save(); } } }
 // ================================================================= MOVEMENT
 const ctl = { dir: 0, mph: 10, v: 0, ap: null, sv: 0, rev: 0, notch: 0, brake: 1, sand: false, sandT: 0, slip: false, slide: false }; // Nov 3: Mattoon cab (reverser, throttle, independent brake, sand)
-const PHY = { TE: 60000, PW: 1750 * 550 * 0.82, MU: 0.20, MU_SAND: 0.33, BRK: 0.30 }, FUEL_CAP = 800, TRUCK_COST = 60; // same numbers as game.js
+const FUEL_CAP = SH.FUEL_CAP, TRUCK_COST = SH.TRUCK_COST;
 const locoV = c => c && c.veh.find(isLoco);
 function fwdSign(c) { const i = c.veh.findIndex(isLoco); return c.aT[i] ? 1 : -1; } // F runs short hood first (GP9 B end); +1 = toward the cut head
-function drivePhys(c, dt, lim) { // Mattoon's stepConsist, in Neoga's cut terms (sv: ft/s, + toward the head)
-  const l = locoV(c); if (l.fuel == null) l.fuel = 320; if (l.sand == null) l.sand = 60;
-  const W = c.veh.reduce((a, v) => a + (v.wt || 30), 0) * 2000, Wl = (l.wt || 124) * 2000, m = W / 32.174, v = ctl.sv, sp = Math.abs(v);
-  const mu = ctl.sand && l.sand > 0 ? PHY.MU_SAND : PHY.MU, n = l.fuel > 0 && ctl.rev ? ctl.notch : 0;
-  let Ft = n ? Math.min(PHY.TE * n / 8, PHY.PW * n / 8 / Math.max(sp, 1)) : 0; ctl.slip = Ft > mu * Wl; if (ctl.slip) Ft = mu * Wl * 0.7;
-  Ft *= ctl.rev * fwdSign(c); let Fb = ctl.brake * PHY.BRK * Wl; ctl.slide = Fb > mu * Wl * 1.05 && sp > 0.5; if (ctl.slide) Fb = mu * Wl * 0.8;
-  const Rr = 0.004 * W + 0.0003 * W * sp / FTS; let a = Ft / m; const stopF = (Fb + Rr) / m;
-  if (sp < 0.05 && Math.abs(a) <= stopF) { ctl.sv = 0; } else { let nv = v + a * dt; const s0 = Math.sign(nv) || Math.sign(v); const dec = stopF * dt; if (Math.abs(nv) <= dec && Math.sign(a) !== s0) nv = 0; else nv -= s0 * dec; if (v && Math.sign(nv) !== Math.sign(v) && !Ft) nv = 0; ctl.sv = nv; }
-  if (n) l.fuel = Math.max(0, l.fuel - (0.4 + n * n * 0.06) * dt / 60 * 60 / 60); if (ctl.sand && l.sand > 0) { l.sand = Math.max(0, l.sand - 1.2 * dt); if (l.sand <= 0) ctl.sand = false; }
+function drivePhys(c, dt, lim) { // the shared engine physics (Mattoon's stepConsist), in Neoga's cut terms (sv: ft/s, + toward the head)
+  const l = locoV(c); if (l.fuel == null) l.fuel = 320; if (l.sand == null) l.sand = 60; const running = l.fuel > 0;
+  const r = SH.driveStep({ v: ctl.sv || 0, W: c.veh.reduce((a, v) => a + (v.wt || 30), 0), Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: false, lim }, dt);
+  ctl.sv = r.v; ctl.slip = r.slip; ctl.slide = r.slide;
+  const u = SH.consume(l, ctl, r.eq, dt); if (u.sandCost) book('sand', u.sandCost); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); if (u.sandEmpty) toast('Sand boxes are empty.', 'bad');
+  if (running) { const cf = SH.crewFuel(dt, ctl.notch, true); book('crew', cf.crew); book('fuel', cf.fuel); } // crew and fuel by the hour, as in Mattoon
   ctl.v = Math.abs(ctl.sv); return Math.sign(ctl.sv); }
 function sideOfHead(c) { const h = pathPt(c, cutLen(c)), t = pathPt(c, 0), a = ptAt(h.t, h.d), b = ptAt(t.t, t.d); return Math.abs(a[0] - b[0]) > 5 ? (a[0] > b[0] ? 1 : -1) : (a[1] < b[1] ? 1 : -1); } // +1: head is screen-right (or up)
 function leadingEnd(c, sgn) { return sgn > 0 ? pathPt(c, cutLen(c)) : pathPt(c, 0); }
@@ -758,9 +754,15 @@ function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.
   showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${DEST[v.dest] ? 'For ' + DEST[v.dest].name : v.dest === 'NW-INT' ? 'To the N&W: leave on the N&W Interchange' : v.dest === 'IC-INT' ? 'To the IC: take it to Mattoon' : 'Tag: ' + esc(v.dest || '-')}${v.work ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
   <div class="btns">${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
-function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideOfHead(c) > 0 ? 'tail' : 'head', toTail = (side === 'L') === (left === 'tail'), k = toTail ? i : i + 1;
+let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
+function setUncouple(on) { UNC_ON = on; const b = $('uncBtn'); if (b) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); } if (on) toast('Uncouple: tap the car to cut off (it and the cars beyond it stay).'); }
+function uncTap(q) { const c = q.c, j = c.veh.indexOf(q.v), L = c.veh.findIndex(isLoco);
+  if (L < 0) { const k = j; if (k <= 0) { toast('Tap a car that is coupled to another.'); return false; } return uncAt(c, k); }
+  if (j === L) { toast('Tap a car, not the engine.'); return false; } return uncAt(c, j > L ? j : j + 1); }
+function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideOfHead(c) > 0 ? 'tail' : 'head', toTail = (side === 'L') === (left === 'tail'), k = toTail ? i : i + 1; return uncAt(c, k); }
+function uncAt(c, k) { if (k <= 0 || k >= c.veh.length) return false; if (c.veh.some(isLoco) && Math.abs(ctl.sv || ctl.v || 0) * 0.6818182 > 1) { toast('Stop first, then pull the pin.', 'bad'); return false; }
   const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s), a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
-  S.cuts.splice(S.cuts.indexOf(c), 1, a, b); toast('Uncoupled.'); save(); }
+  S.cuts.splice(S.cuts.indexOf(c), 1, a, b); toast('Uncoupled.'); save(); return true; }
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
 function build() {
@@ -769,9 +771,9 @@ function build() {
   // Nov 3 (Stephen: "the screen should look the same as mattoon"): Mattoon's top bar, job bar, scene buttons and cab panel drive Neoga too
   const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="route" id="rtBtn">Request route</button><button class="act" data-a="north">To Mattoon</button><button class="act" data-a="endday">End day</button>');
   { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
-  $('restartBtn').onclick = () => toast('Restart from Mattoon: run north first.');
+  $('restartBtn').onclick = () => { if (VISIT) { toast(NII.visitNote(), 'bad'); return; } showModal(SH.RESTART_HTML + '<div class="btns"><button data-a="close" class="alt">Cancel</button><button data-a="ngReset" class="red">Yes, restart</button></div>'); }; // same Restart as Mattoon: whole game back to day 1 in Mattoon
   $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; cam.z = zBase(); };
-  $('tagsBtn').onclick = () => { S.tags = !S.tags; save(); }; $('uncBtn').onclick = () => toast('Tap a car to uncouple it.');
+  $('tagsBtn').onclick = () => { S.tags = !S.tags; save(); }; $('uncBtn').onclick = () => setUncouple(!UNC_ON);
   $('speedBtn').onclick = () => { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; };
   $('drawerBtn').onclick = () => document.body.classList.toggle('drawer');
   const live = () => !VISIT && liveCut(); const stopping = () => ctl.v / FTS > 0.3;
@@ -791,6 +793,7 @@ function build() {
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
     else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the interchange, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
+    else if (a === 'ngReset') { hideModal(); NII.clearSave(); location.reload(); }
     else if (a === 'endGo') endDay(); else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
     else if (a === 'wb') { const v = standingCars().find(q => q.v.id === b.dataset.id); if (v) carModal(v); }
@@ -807,7 +810,7 @@ function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s
   const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s)); if (st && st.lock) { toast(LOCK_MSG, 'bad'); return; } if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
     const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
     if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
-  const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { carModal({ ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }); return; }
+  const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { const q = { ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }; if (UNC_ON) { if (uncTap(q)) setUncouple(false); return; } carModal(q); return; }
   // track: nearest point within 12 px -> autopilot there
   let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const [x, y] = ptAt(t, d), e = Math.hypot(sx(x) - X, sy(y) - Y); if (e < (MOUSE ? 7 : 14) && (!best || e < best.e)) best = { t, d, e }; }
   if (best && liveCut()) apTo(best.t, best.d); }
@@ -819,5 +822,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); if (!S.fix1103) { S.fix1103 = 1; const c = liveCut(); if (c && stripStrays(c)) toast('Stray IC cars taken off your train and set out on the interchange track.'); save(); } NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { HIT, uncTap, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
