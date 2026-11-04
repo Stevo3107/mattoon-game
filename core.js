@@ -106,7 +106,11 @@ window.NII_SHARED = (() => {
   function apVdes(limit, approach, trackLim) { let v = Math.min(trackLim, Math.sqrt(2 * AP.dec * Math.max(0, limit - (approach ? 25 : 0))));
     if (approach && limit < 120) v = Math.max(Math.min(v, AP.couple), 1.2 * FTS_); return Math.max(v, 0.5 * FTS_); }
   function apAccel(sp, vdes, dt) { if (sp < vdes) return { sp: Math.min(vdes, sp + AP.acc * dt), eq: 4 }; const n = Math.max(vdes, sp - AP.slow * dt); return { sp: n, eq: n > 0.5 ? 1 : 0 }; }
-  return { AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+  const STOP_DEC = 3; // the STOP button in Tap mode: ease to a stand at 3 ft/s²
+  // NOTE (Nov 4, parity 3): Mattoon's stepConsist moves the consist once in apStep and again by v*dt afterwards, so a Tap run covers
+  // twice the ground the speedometer shows (AP_MOVES = 2). That is how Mattoon feels; every town copies it until Stephen decides.
+  const AP_MOVES = 2;
+  return { STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -1440,7 +1444,7 @@ $('thrIdle').onclick = () => { state.ctl.notch = 0; sfx('tick'); };
 document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { state.ctl.brake = +b.dataset.brk; sfx('tick'); });
 $('sandBtn').onclick = () => { const l = locoOf(locoCons()); if (!state.ctl.sand && l.sand <= 0) { toast('Sand boxes are empty.', 'bad'); return; } state.ctl.sand = !state.ctl.sand; state.ctl.sandT = 0; };
 $('fuelBtn').onclick = fillFuel; $('sandFillBtn').onclick = fillSand; $('truckBtn').onclick = callTruck;
-$('stopBtn').onclick = () => { if (state.ap) { state.ap.target = null; } state.ap = null; const c = locoCons(); state.mode === 'tap' && (state.stopping = true); toast('Stopping.'); };
+$('stopBtn').onclick = () => { if (state.ap) { state.ap.target = null; } state.ap = null; const c = locoCons(); state.mode === 'tap' && (state.stopping = true); toast('Stopping.'); }; // STOP eases off at NII_SHARED.STOP_DEC (simStep)
 document.querySelectorAll('#mapBtns [data-z]').forEach(b => b.onclick = () => {
   const z = b.dataset.z; if (z === 'in') zoomAt(1.4, MW / 2, MH / 2); else if (z === 'out') zoomAt(1 / 1.4, MW / 2, MH / 2); else if (z === 'fit') fit();
   else { userCam = true; const l = locoOf(locoCons()), [x, y] = xy(l.f.s, l.f.d); cam.x = x; cam.y = y; if (cam.z < 1) cam.z = 1.2; }
@@ -3075,7 +3079,7 @@ let paused = false, lastT = 0, saveT = 0;
 function simStep(dt) {
   state.time += dt; const c = locoCons();
   { const th = Math.max(0, Math.min(1, (state.ctl.notch || 0) / 8)), l0 = locoOf(c); book('crew', ECON.CREW_HR * dt / 3600); if (l0 && l0.fuel > 0) book('fuel', (ECON.FUEL_IDLE_HR + (ECON.FUEL_MAX_HR - ECON.FUEL_IDLE_HR) * th) * dt / 3600); accrueHire(dt); }
-  if (state.stopping) { if (Math.abs(c.v) < 0.05) { c.v = 0; state.stopping = false; } else { const sp = Math.max(0, Math.abs(c.v) - 3 * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; } }
+  if (state.stopping) { if (Math.abs(c.v) < 0.05) { c.v = 0; state.stopping = false; } else { const sp = Math.max(0, Math.abs(c.v) - NII_SHARED.STOP_DEC * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; } }
   stepConsist(c, dt);
   if (Math.abs(c.v) < 0.05 && !state.ap) checkJob(); else repWatch();
   if ((workT += dt) >= 5) { workT = 0; workTick(); bfTick(); }

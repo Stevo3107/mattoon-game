@@ -362,9 +362,9 @@ const ctl = { dir: 0, mph: 10, v: 0, ap: null, sv: 0, rev: 0, notch: 0, brake: 1
 const FUEL_CAP = SH.FUEL_CAP, TRUCK_COST = SH.TRUCK_COST;
 const locoV = c => c && c.veh.find(isLoco);
 function fwdSign(c) { const i = c.veh.findIndex(isLoco); return c.aT[i] ? 1 : -1; } // F runs short hood first (GP9 B end); +1 = toward the cut head
-function drivePhys(c, dt, lim) { // the shared engine physics (Mattoon's stepConsist), in Neoga's cut terms (sv: ft/s, + toward the head)
+function drivePhys(c, dt, lim, tapIdle) { // the shared engine physics (Mattoon's stepConsist), in Neoga's cut terms (sv: ft/s, + toward the head)
   const l = locoV(c); if (l.fuel == null) l.fuel = 320; if (l.sand == null) l.sand = 60; const running = l.fuel > 0;
-  const r = SH.driveStep({ v: ctl.sv || 0, W: c.veh.reduce((a, v) => a + (v.wt || 30), 0), Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: false, lim }, dt);
+  const r = SH.driveStep({ v: ctl.sv || 0, W: c.veh.reduce((a, v) => a + (v.wt || 30), 0), Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: !!tapIdle, lim }, dt);
   ctl.sv = r.v; ctl.slip = r.slip; ctl.slide = r.slide;
   const u = SH.consume(l, ctl, r.eq, dt); if (u.sandCost) book('sand', u.sandCost); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); if (u.sandEmpty) toast('Sand boxes are empty.', 'bad');
   ctl.v = Math.abs(ctl.sv); return Math.sign(ctl.sv); }
@@ -387,7 +387,8 @@ function signalAhead(c, sgn) { // distance to a red home signal ahead on the mai
 function step(dt) {
   const c = liveCut(); if (!c) return; { const l0 = locoV(c), cf = SH.crewFuel(dt, ctl.notch, !!(l0 && l0.fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); } // Nov 4: crew + fuel every step in every mode (Drive or Tap), as in Mattoon
   const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
-  if (!ctl.ap && (S.mode || 'drive') === 'drive') { const sgn = drivePhys(c, dt, lim); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); }
+  if (ctl.stopping) { if (ctl.v < 0.05) { ctl.v = 0; ctl.sv = 0; ctl.stopping = false; } else { const sg = Math.sign(ctl.sv) || ctl.dir || 1; ctl.v = Math.max(0, ctl.v - SH.STOP_DEC * dt); ctl.sv = ctl.v * sg; moveStep(c, sg, ctl.v * dt); return; } } // Mattoon's STOP
+  if (!ctl.ap) { const sgn = drivePhys(c, dt, lim, (S.mode || 'drive') === 'tap'); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); } // Tap mode with no run: Mattoon's idle brake (shared driveStep)
   if (ctl.ap) return apStep(c, dt, lim); // Nov 4: Mattoon's autopilot (shared stopping curve, legs, switch lining)
   let want = ctl.dir ? Math.min(ctl.mph * FTS, lim) : 0, sgn = ctl.dir;
   if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
@@ -450,7 +451,7 @@ function apArriveN() { const ap = ctl.ap; ctl.v = 0; ctl.sv = 0;
   if (ap && ap.k < ap.legs.length - 1) { nextLegN(); toast(`Clear of the switch. Reversing (move ${ap.k + 1} of ${ap.legs.length}).`); return; }
   ctl.ap = null; if (!S.crossT) toast('Arrived.'); crossDone(); }
 function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l.fuel > 0; let eq = 0;
-  const brakeRoll = () => { ctl.v = Math.max(0, ctl.v - SH.AP.slow * dt); ctl.sv = ctl.v * ap.sgn; if (ctl.v > 0) moveStep(c, ap.sgn, ctl.v * dt); };
+  const brakeRoll = () => { ctl.v = Math.max(0, ctl.v - SH.AP.slow * dt); ctl.sv = ctl.v * ap.sgn; if (ctl.v > 0) moveStep(c, ap.sgn, ctl.v * dt * SH.AP_MOVES); }; // Mattoon also moves twice here
   if (ap.replan) { if (ctl.v > 0.05) return brakeRoll(); const t = ap.replan; ctl.ap = null; ctl.v = 0; apTo(t.t, t.d, t.goal); return; }
   if (ap.pend.length) { if (ctl.v > 0.05) return brakeRoll(); ctl.v = 0; ap.tw -= dt; if (ap.tw > 0) return; const [k, g] = ap.pend.shift();
     if (S.sw[k] !== g) { if (swBusy(k)) { ctl.ap = null; toast(`Route blocked: there's equipment on switch ${SWITCHES[k].name}.`, 'bad'); return; } S.sw[k] = g; SH.sfx('sw'); save(); }
@@ -465,7 +466,8 @@ function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l
   const r = SH.apAccel(ctl.v, vdes, dt); ctl.v = r.sp; eq = r.eq; if (l) { const u = SH.consume(l, ctl, eq, dt); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); }
   let dx = ctl.v * dt; if (!approach && dx > limit) dx = limit; ctl.sv = ctl.v * ap.sgn;
   moveStep(c, ap.sgn, dx);
-  if (ctl.ap === ap && !approach && ap.left <= 0.05) apArriveN(); }
+  if (ctl.ap === ap && !approach && ap.left <= 0.05) { apArriveN(); return; }
+  if (ctl.ap === ap && SH.AP_MOVES > 1) { let x2 = ctl.v * dt * (SH.AP_MOVES - 1); if (!approach) x2 = Math.min(x2, Math.max(0, ap.left)); moveStep(c, ap.sgn, x2); } } // Mattoon's second move (see shared.js AP_MOVES)
 let TAP_FLASH = null, TAGS_DRAWN = [];
 // one switch throw, every way in (scene stand or the Map): Mattoon's rules and words
 function throwSw(k, X, Y) { const s = SWITCHES[k];
@@ -873,7 +875,7 @@ function build() {
   $('thrUp').onclick = () => { if (live()) { ctl.notch = Math.min(8, ctl.notch + 1); ctl.ap = null; cam.follow = true; } }; $('thrDn').onclick = () => { ctl.notch = Math.max(0, ctl.notch - 1); }; $('thrIdle').onclick = () => { ctl.notch = 0; };
   document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { ctl.brake = +b.dataset.brk; });
   $('sandBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; if (!ctl.sand && (l.sand ?? 60) <= 0) { toast('Sand boxes are empty.', 'bad'); return; } ctl.sand = !ctl.sand; };
-  $('stopBtn').onclick = () => { ctl.ap = null; ctl.dir = 0; toast('Stopping.'); };
+  $('stopBtn').onclick = () => { ctl.ap = null; if ((S.mode || 'drive') === 'tap') ctl.stopping = true; toast('Stopping.'); };
   $('truckBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; book('fuel', TRUCK_COST); l.fuel = FUEL_CAP * 0.25; toast('Fuel truck came out: 200 gal.'); save(); };
   // pinch zoom on phones (Neoga's +/- buttons are gone with its old bar)
   { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
