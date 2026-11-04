@@ -235,7 +235,8 @@ const numOf = k => (NUMSP[k] && NUMSP[k].painted) || (k.startsWith('boxcarIC_') 
 const BOX_ART = { IC: ['boxcar50dd_icg', 'boxcar50dd_bn', 'boxcar50dd_np', 'boxcar50dd_npbrn', 'boxcar50plug_ssw', 'boxcar50plug2_css'], // Nov 2: Danny's 50 ft cars replace the retired IC boxcar
   'N&W': ['boxcar40_nw'], PC: ['boxcar40_pc'], 'C&NW': ['boxcar40_cnw'], GTW: ['boxcar40_gtw'] };
 const HOP_K = { 'N&W': 'nw', IC: 'ic', NYC: 'nyc' }; // coal-hopper40.json: side canvas 10.1 px/ft @2x, x 0 = A knuckle, bottom row = top of rail, 16 ft tall
-for (const k of Object.values(HOP_K)) { const src = BA('coal-hopper40-' + k + '@2x'); if (src) C.ART['coal_hopper40_' + k] = { L: 37, px: 10.1, x0: 0, y0: -16, w: 376, h: 162, truckC: [6.335, 30.665], src, far: BA('coal-hopper40-' + k + '-far@2x') || 'same' }; }
+for (const k of Object.values(HOP_K)) { const src = BA('coal-hopper40-' + k + '@2x'); if (src) C.ART['coal_hopper40_' + k] = { L: 37, px: 10.1, x0: 0, y0: -16, w: 376, h: 162, truckC: [6.335, 30.665], src, far: BA('coal-hopper40-' + k + '-far@2x') || 'same',
+  solid: { truck: { kind: 'painted', c: [6.335, 30.665], axles: [-2.6, 2.6], r: 1.5 }, lamps: [], boxes: [{ id: 'sill', x0: 1.2, x1: 35.8, h0: 4.6, h1: 5.0, w: 10.17, col: '#1f2023', layer: 0 }, { id: 'body', x0: 1.8, x1: 35.2, h0: 5.0, h1: 10.6, w: 10.17, col: k === 'ic' ? '#2a2b2e' : '#24262a', layer: 1, open: 'hopperDeep', roof: 'hopperRoof' }] } }; } // Nov 3: solid like Mattoon's stock (trucks are painted on this art: 'painted' has no truck layers)
 const TANK_ART = { GATX: 'tank_gatx', ACFX: 'tank_acfx', UTLX: 'tank_utlx' };
 function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC' or 'NW')
   const id = 'ng' + (S.nid++); let v;
@@ -406,7 +407,14 @@ function stripStrays(c) { const out = [];
 function arrive() { const tr = E.trainIn; if (!tr) return; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
-  stripStrays(c); dropIC(); save(); }
+  stripStrays(c); clearNorth(c); dropIC(); save(); }
+// Nov 3 fix: cars left at the north end of the main used to sit under the arriving train and got coupled on its first move.
+// Now they are shoved down the main (south) clear of the train, 4 ft gap, one cut after another.
+function clearNorth(c) { const on = x => x.path.filter(g => g.t === 'M1'), lo = x => Math.min(...on(x).flatMap(g => [g.d0, g.d1])), hi = x => Math.max(...on(x).flatMap(g => [g.d0, g.d1]));
+  let end = hi(c), n = 0; const others = S.cuts.filter(o => o !== c && on(o).length).sort((a, b) => lo(a) - lo(b));
+  for (const o of others) { const need = end + 4 - lo(o); if (need > 0) { const b = lo(o); let r = moveCut(o, need); if (lo(o) < b) { moveCut(o, -r.moved); r = moveCut(o, -need); } n++; }
+    if (on(o).length) end = Math.max(end, hi(o)); }
+  if (n) toast('Cars left at the north end were shoved down the main, clear of your train.'); return n; }
 function askNorth() { showModal(`<h2>Head north to Mattoon?</h2><p>11.5 miles at 25 mph, about 28 minutes. Cars you leave in Neoga stay here.</p><div class="btns"><button data-a="goN">Go to Mattoon</button><button data-a="close" class="alt">Stay in Neoga</button></div>`); }
 function go() { const c = liveCut(); let train = [];
   if (c) { const q = vehPos(c).map(q => { const xa = ptAt((q.aT ? q.p0 : q.p1).t, (q.aT ? q.p0 : q.p1).d)[0], xb = ptAt((q.aT ? q.p1 : q.p0).t, (q.aT ? q.p1 : q.p0).d)[0]; return { v: q.v, x: (xa + xb) / 2, aN: xa < xb }; }).sort((a, b) => a.x - b.x);
@@ -416,7 +424,10 @@ function go() { const c = liveCut(); let train = [];
 const wrap = $('scenewrap'), cv = $('scene'), g = cv.getContext('2d'), IM = {};
 const img = src => { if (!src) return null; if (IM[src]) return IM[src]; const i = new Image(); i.src = src; return (IM[src] = i); };
 const ok = i => i && i.complete && i.naturalWidth;
-const cam = { x: 400, y: 30, z: 1.1, follow: true };
+const cam = { x: 400, y: 30, z: 5, follow: true };
+// Nov 3: Mattoon's camera scale (scene.js sceneLayout/zLim): px per ft at zoom 1, zoom 0.5x..2.6x, never wider than 1,100 ft of track
+const zBase = () => { const land = W > H * 1.25; return Math.max(0.5, Math.min(W / (land ? 95 : 118), H * 0.40 / 15)); };
+const zLim = z => Math.max(Math.min(0.5 * zBase(), W / 1100), Math.min(2.6 * zBase(), z));
 let W = 0, H = 0, DPR = 1;
 const sx = x => W / 2 + (x - cam.x) * cam.z, sy = y => H / 2 + (y - cam.y) * cam.z * K, hz = h => h * cam.z * HK;
 // perf (Nov 1): draw() calls this every frame; only touch the canvas when its size really changed (setting width reallocates and clears it)
@@ -595,7 +606,20 @@ function drawStand(k) { const s = SWITCHES[k], st = S.sw[k], [x, y] = [s.at[0] +
   const r = Math.max(14, 3 * cam.z); HIT.stands.push({ k, x: sx(x), y: sy(y) - hz(h / 2), r });
   if (cam.z < 0.9) { g.beginPath(); g.arc(sx(x), sy(y) - hz(h) - 6, 5, 0, 7); g.fillStyle = st === 'N' ? '#2fa34f' : '#c8281e'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#fff'; g.stroke(); } }
 // ---- rolling stock: approved side pictures (Danny's art, same as Mattoon). Cars with no art yet = dark stand-in block
-function drawVeh(q) { const v = q.v, A = q.aT ? q.p0 : q.p1, B = q.aT ? q.p1 : q.p0, pa = ptAt(A.t, A.d), pb = ptAt(B.t, B.d), far = sx(pa[0]) > sx(pb[0]) || (Math.abs(sx(pa[0]) - sx(pb[0])) < 0.01 && pa[1] > pb[1]);
+// Nov 3 (Stephen): Mattoon's solid rolling stock (src/solid.js via NII_SOLID_KIT), fed Neoga's track. Kit world: x, y' = -y (+y' away from the viewer, like Mattoon).
+const SKH = {
+  xy: (c, d) => { const q = pathPt(c, d), p = ptAt(q.t, q.d); return [p[0], -p[1]]; },
+  advance: (p, d) => ({ s: p.s, d: p.d + d }),
+  pr: (x, y) => [sx(x), sy(-y), cam.z * HK],
+  railPt: (c, d, o) => { const q = pathPt(c, d), a = ptAt(q.t, Math.max(0, q.d - 0.5)), b = ptAt(q.t, Math.min(T[q.t].len, q.d + 0.5)); let tx = b[0] - a[0], ty = -(b[1] - a[1]); const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l; let nx = -ty, ny = tx; if (ny < 0) { nx = -nx; ny = -ny; } const p = ptAt(q.t, q.d); return [p[0] + nx * o, -p[1] + ny * o]; },
+  vehScreen(v) { const A = v.aFront ? v.f : v.r, B = v.aFront ? v.r : v.f, xa = SKH.xy(A.s, A.d), xb = SKH.xy(B.s, B.d), pa = SKH.pr(...SKH.railPt(A.s, A.d, -2.35)), pb = SKH.pr(...SKH.railPt(B.s, B.d, -2.35)), far = pa[0] > pb[0];
+    return { pa, pb, far, Pl: far ? pb : pa, Pr: far ? pa : pb, k: (pa[2] + pb[2]) / 2, depth: (xa[1] + xb[1]) / 2, mid: [(xa[0] + xb[0]) / 2, (xa[1] + xb[1]) / 2] }; } };
+const SK = window.NII_SOLID_KIT ? window.NII_SOLID_KIT(SKH) : null;
+function drawSolidVeh(q, c) { if (!SK || !c) return false; const v = q.v, a = C.ART[v.art || v.type]; if (!a || !a.solid) return false;
+  const w = Object.create(v), s0 = c.veh.slice(0, q.i).reduce((t, u) => t + vL(u), 0); w.L = q.L; w.r = { s: c, d: s0 }; w.f = { s: c, d: s0 + q.L }; w.aFront = !q.aT;
+  SK.setDPR(DPR); SK.HIT.vehs.length = 0; if (!SK.draw(g, w, 1)) return false; const h = SK.HIT.vehs[0]; g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (h) HIT.cars.push({ q, x0: h.x0, x1: h.x1, y0: h.y0, y1: h.y1 }); return true; }
+function drawVeh(q, c) { if (drawSolidVeh(q, c)) return; const v = q.v, A = q.aT ? q.p0 : q.p1, B = q.aT ? q.p1 : q.p0, pa = ptAt(A.t, A.d), pb = ptAt(B.t, B.d), far = sx(pa[0]) > sx(pb[0]) || (Math.abs(sx(pa[0]) - sx(pb[0])) < 0.01 && pa[1] > pb[1]);
   const Pl = far ? pb : pa, Pr = far ? pa : pb, a = C.ART[v.art || v.type], L = q.L, src = a && (far ? (a.far === 'same' ? a.src : a.far) : a.src), im = img(src);
   const X0 = sx(Pl[0]), Y0 = sy(Pl[1] + 2.35), X1 = sx(Pr[0]), Y1 = sy(Pr[1] + 2.35);
   g.fillStyle = 'rgba(30,25,20,.25)'; g.beginPath(); g.ellipse((X0 + X1) / 2, (Y0 + Y1) / 2 + 1, Math.max(2, Math.abs(X1 - X0) / 2), 2 * cam.z, 0, 0, 7); g.fill();
@@ -642,7 +666,8 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
 let flashT = 0;
 function draw() { NII.quiet(draw0); }
 function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.setLineDash([]); g.clearRect(0, 0, cv.width, cv.height); } } g.setTransform(DPR, 0, 0, DPR, 0, 0); HIT.stands = []; HIT.cars = [];
-  const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 20; }
+  if (!cam.z0 && W > 50 && H > 50) { cam.z0 = 1; cam.z = zBase(); } cam.z = zLim(cam.z);
+  const c = liveCut(); if (cam.follow && c) { const m = pathPt(c, cutLen(c) / 2), p = ptAt(m.t, m.d); cam.x = p[0]; cam.y = p[1] - 0.12 * H / (cam.z * K); } // train ~62% down the view, like Mattoon's rail line
   { const span = XS - XN + 2 * EDGE_PAD; cam.z = Math.max(cam.z, W / span); const half = W / 2 / cam.z; cam.x = Math.max(XN - EDGE_PAD + half, Math.min(XS + EDGE_PAD - half, cam.x));
     cam.z = Math.max(cam.z, H / ((NG_YB - NG_YT) * K)); const hh = H / 2 / (cam.z * K), lo = NG_YT + hh, hi = NG_YB - hh; cam.y = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, cam.y)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
   drawGround(); drawFuelGround(); drawRails();
@@ -661,7 +686,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   const A = aspects(); items.push({ y: 9, f: () => drawSignal('double', SIGS, 9, A.SH) }); items.push({ y: -9, f: () => drawSignal('double', SIGN, -9, A.NH) });
   items.push({ y: 180, f: () => drawSignal('single', NWX + 9, 180, A.WB) }); items.push({ y: -180, f: () => drawSignal('single', NWX - 9, -180, A.WT) });
   for (const k of Object.keys(SWITCHES)) items.push({ y: SWITCHES[k].at[1] + SWITCHES[k].side * 7, f: () => drawStand(k) });
-  for (const cc of S.cuts) for (const q of vehPos(cc)) items.push({ y: (ptAt(q.pm.t, q.pm.d)[1]), f: () => drawVeh(q) });
+  for (const cc of S.cuts) for (const q of vehPos(cc)) items.push({ y: (ptAt(q.pm.t, q.pm.d)[1]), f: () => drawVeh(q, cc) });
   items.push({ y: 0.5, f: drawNWTrain });
   items.sort((a, b) => a.y - b.y).forEach(o => o.f());
   if (S.tags) { g.font = '700 11px Arial'; g.textAlign = 'center'; for (const cc of S.cuts) for (const q of vehPos(cc)) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const t = DEST[v.dest] ? DEST[v.dest].name : v.dest || ''; if (!t) continue; const [x, y] = ptAt(q.pm.t, q.pm.d), X = sx(x), Y = sy(y) - 26, w = g.measureText(t).width + 8; g.fillStyle = '#1c2b50'; g.fillRect(X - w / 2, Y - 11, w, 15); g.fillStyle = '#fff'; g.fillText(t, X, Y); } }
@@ -745,7 +770,7 @@ function build() {
   const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="route" id="rtBtn">Request route</button><button class="act" data-a="north">To Mattoon</button><button class="act" data-a="endday">End day</button>');
   { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
   $('restartBtn').onclick = () => toast('Restart from Mattoon: run north first.');
-  $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; };
+  $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; cam.z = zBase(); };
   $('tagsBtn').onclick = () => { S.tags = !S.tags; save(); }; $('uncBtn').onclick = () => toast('Tap a car to uncouple it.');
   $('speedBtn').onclick = () => { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; };
   $('drawerBtn').onclick = () => document.body.classList.toggle('drawer');
@@ -759,7 +784,7 @@ function build() {
   $('truckBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; book('fuel', TRUCK_COST); l.fuel = FUEL_CAP * 0.25; toast('Fuel truck came out: 200 gal.'); save(); };
   // pinch zoom on phones (Neoga's +/- buttons are gone with its old bar)
   { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
-    cv.addEventListener('pointermove', e => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, e); if (pts.size === 2 && d0) { const [a, b] = [...pts.values()]; cam.z = Math.max(0.25, Math.min(4, z0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / d0)); } });
+    cv.addEventListener('pointermove', e => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, e); if (pts.size === 2 && d0) { const [a, b] = [...pts.values()]; cam.z = zLim(z0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / d0); } });
     for (const t of ['pointerup', 'pointercancel']) cv.addEventListener(t, e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; }); }
   document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
@@ -775,7 +800,7 @@ function build() {
   let drag = null; cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
   cv.addEventListener('pointermove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 8) { drag.moved = true; cam.follow = false; } if (drag.moved) { cam.x = drag.cx - dx / cam.z; cam.y = drag.cy - dy / (cam.z * K); } });
   cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = (e.clientX - r.left) * (r.width ? W / r.width : 1), Y = (e.clientY - r.top) * (r.height ? H / r.height : 1); MOUSE = e.pointerType === 'mouse'; tap(X, Y); }); // Nov 1: scaled to the canvas's logical size
-  cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = Math.max(0.25, Math.min(4, cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); }, { passive: false });
+  cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = zLim(cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }, { passive: false });
 }
 let MOUSE = false; const hitR = s => MOUSE ? Math.min(s.r, Math.max(9, s.r * 0.55)) : s.r; // mouse: a tight ring on the stand; touch keeps the generous one
 function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s))) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
@@ -794,5 +819,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); if (!S.fix1103) { S.fix1103 = 1; const c = liveCut(); if (c && stripStrays(c)) toast('Stray IC cars taken off your train and set out on the interchange track.'); save(); } NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays };
+window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

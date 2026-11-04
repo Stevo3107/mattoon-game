@@ -3056,3 +3056,452 @@ window.__game = { carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons
 };
 boot();
 };
+
+window.NII_SOLID_KIT = function (H) {
+const ART = NII_CORE.ART, XART = NII_CORE.XART, NUMSPEC = NII_CORE.NUMSPEC; let DPR = 1, HZ = 0; const HIT = { vehs: [] };
+const artOf = v => v.art || v.type, vehScreen = v => H.vehScreen(v), advance = (p, d) => H.advance(p, d), xy = (s, d) => H.xy(s, d), pr = (x, y) => H.pr(x, y), railPt = (s, d, o) => H.railPt(s, d, o);
+const IMG = {};
+for (const k of Object.keys(ART)) { IMG[k] = new Image(); IMG[k].src = ART[k].src; IMG[k + '-far'] = new Image(); IMG[k + '-far'].src = ART[k].far === 'same' ? ART[k].src : ART[k].far; }
+for (const k of Object.keys(XART)) { IMG[k] = new Image(); IMG[k].src = XART[k].src; }
+for (const [k, sp] of Object.entries(NUMSPEC || {})) { IMG['nonum:' + k] = new Image(); IMG['nonum:' + k].src = sp.src; IMG['nonum:' + k + '-far'] = new Image(); IMG['nonum:' + k + '-far'].src = sp.far || sp.farSrc || sp.src; }
+function shade(hex, amt) { const n = parseInt(hex.slice(1), 16); const c = v => Math.max(0, Math.min(255, v + amt)); return `rgb(${c(n >> 16)},${c((n >> 8) & 255)},${c(n & 255)})`; }
+function poly(g, pts, fill, stroke, lw) { g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw || 1; g.stroke(); } }
+function hull(pts) { // convex hull, screen points
+  const p = pts.map(q => [q[0], q[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]); if (p.length < 3) return p;
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+  for (const q of p) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (const q of p.slice().reverse()) { while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], q) <= 0) hi.pop(); hi.push(q); }
+  return lo.slice(0, -1).concat(hi.slice(0, -1));
+}
+const NUMBER_SPOT = NUMSPEC || {};
+const numKey = art => art && art.startsWith('boxcarIC_') ? 'boxcarIC' : art;
+let NUM_FONTS = false; const NUM_PIC = new Map();
+if (NUMSPEC && typeof document !== 'undefined' && document.fonts) {
+  const fams = new Set(); for (const sp of Object.values(NUMSPEC)) for (const o of sp.occ) if (!o.glyph) fams.add(o.font.split(',')[0]);
+  Promise.all([...fams].map(f => document.fonts.load(`700 20px ${f}`, '0123456789'))).catch(() => 0).then(() => { NUM_FONTS = true; NUM_PIC.clear(); });
+  setTimeout(() => { NUM_FONTS = true; }, 4000);
+}
+function numText(o, num) { // the text one placeholder shows
+  if (o.ph === 'N1') return num.slice(0, Math.ceil(num.length / 2)); if (o.ph === 'N2') return num.slice(Math.ceil(num.length / 2));
+  return /SPACED/.test(o.fmt) ? num.split('').join(' ') : num;
+}
+function paintNumber(g, sp, num, far, W) {
+  for (const o of (far && sp.farOcc) || sp.occ) {
+    if (o.glyph) { // hand-drawn glyph paths (UP): stroked centre lines, unit = cap height; spec px scaled to this picture
+      const G = sp.glyph, s = W / (G.specW || W), t = numText(o, num), x0 = (far && sp.far ? W - o.x : o.x) * s;
+      g.save(); g.translate(x0, o.y * s); g.scale(o.cap * s, o.cap * s); g.strokeStyle = o.fill; g.lineWidth = G.stroke; g.lineJoin = 'miter'; g.miterLimit = 1.6; g.lineCap = 'butt';
+      [...t].forEach((d, i) => { if (G.d[d] && typeof Path2D !== 'undefined') { g.save(); g.translate(i * G.adv, 0); g.stroke(new Path2D(G.d[d])); g.restore(); } });
+      g.restore(); continue;
+    }
+    const t = numText(o, num), x = far && sp.far ? W - o.x : o.x;
+    g.save(); g.globalAlpha = o.opacity == null ? 1 : o.opacity; g.fillStyle = o.fill; g.font = `${o.style || 'normal'} ${o.weight} ${o.size}px ${o.font}`; g.textBaseline = 'alphabetic';
+    if ('letterSpacing' in g) g.letterSpacing = o.ls + 'px';
+    const al = o.share ? 'left' : { start: 'left', middle: 'center', end: 'right' }[o.anchor] || 'center';
+    if (o.stroke) { g.strokeStyle = o.stroke; g.lineWidth = o.strokeW || 1; g.lineJoin = 'round'; g.textAlign = al; g.strokeText(t, x, o.y); } // ICG: heavy number (fill + stroke)
+    if (o.tl) { const w = g.measureText(t).width || 1; g.translate(x, o.y); g.scale(o.tl / w, 1); g.textAlign = al; g.fillText(t, 0, 0); }
+    else { g.textAlign = al; g.fillText(t, x, o.y); }
+    g.restore();
+  }
+}
+// the picture to draw for a car: its paint with its own number on it
+function carPic(v, far) {
+  const art = artOf(v), painted = IMG[art + (far ? '-far' : '')], k = numKey(art), sp = NUMSPEC && NUMSPEC[k], num = v.num && String(v.num);
+  if (!sp || !num || (!NUM_FONTS && !sp.glyph) || num === (art.startsWith('boxcarIC_') ? art.slice(9) : sp.painted)) return painted;
+  const nn = IMG['nonum:' + k + (far ? '-far' : '')]; if (!nn || !nn.complete || !nn.naturalWidth) return painted;
+  const key = k + '|' + num + '|' + (far ? 1 : 0); let c = NUM_PIC.get(key);
+  if (!c) { if (NUM_PIC.size > 300) NUM_PIC.clear(); c = document.createElement('canvas'); c.width = nn.naturalWidth; c.height = nn.naturalHeight; const g = c.getContext('2d');
+    g.drawImage(nn, 0, 0); paintNumber(g, sp, num, far, nn.naturalWidth); c.complete = true; c.naturalWidth = c.width; c.naturalHeight = c.height; NUM_PIC.set(key, c); }
+  return c;
+}
+
+// ================================================================ SOLID ROLLING STOCK (diagonals + curves)
+// The side art stays a true side elevation, but it is no longer a flat cut-out:
+//  * each truck sits on the rail at its own spot along the curve: back layer + side frame follow the rail between its two
+//    axles, the wheels are drawn as upright ellipses (never leaning) on the rail at each axle;
+//  * the body spans truck centre to truck centre (ends overhang on curves like a real car) with a VERTICAL shear only
+//    (canvas transform c = 0, so every vertical line in the art stays vertical);
+//  * behind the side art, simple boxes per car type (ART[type].solid.boxes, feet) give it a roof and the end face that is
+//    angled toward the camera. On straight track the end faces shrink smoothly to nothing and the roof to a thin sliver.
+// End-face and roof art are small painters below, keyed by name from the box list, in feet (face: u across, h up;
+// roof: x along the car from the A end, u across), so each can be refined on its own.
+const SOLID_RHO = { x: 0.8, y: 0.36 };   // car-width compression: x = how wide end faces get, y = how tall roofs read on screen
+const SOLID_DBG = { on: false, log: [], order: [] }; // test hook: every transform used to draw rolling stock
+function solidXf(g, a, b, c, d, e, f, what) { if (SOLID_DBG.on) SOLID_DBG.log.push({ what, a, b, c, d }); g.setTransform(DPR * a, DPR * b, DPR * c, DPR * d, DPR * e, DPR * f); }
+function solidGeom(v) {
+  const a = ART && ART[artOf(v)], S = a && a.solid; if (!S || !XART) return null;
+  const q = vehScreen(v), far = q.far, L = v.L;
+  const tFor = c => Math.max(0, Math.min(L, v.aFront ? L - c : c)); // ft from the A end -> ft along the car from its rear point
+  const at = c => { const p = advance(v.r, tFor(c)); return { w: xy(p.s, p.d), s: pr(...railPt(p.s, p.d, -2.35)) }; };
+  const Xi = c => far ? L - c : c;                                   // art x (ft from the art's left edge)
+  let [c1, c2] = S.truck.c; if (Xi(c1) > Xi(c2)) [c1, c2] = [c2, c1]; // screen-left truck first
+  const A = at(c1), B = at(c2), XA = Xi(c1), XB = Xi(c2);
+  const ex = [(B.s[0] - A.s[0]) / (XB - XA), (B.s[1] - A.s[1]) / (XB - XA)], k = (A.s[2] + B.s[2]) / 2;
+  const O = [A.s[0] - XA * ex[0], A.s[1] - XA * ex[1]];             // art x = 0 on the near rail
+  let tx = B.w[0] - A.w[0], ty = B.w[1] - A.w[1]; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+  let nx = -ty, ny = tx; if (ny < 0) { nx = -nx; ny = -ny; }        // across the car, away from the viewer
+  const mx = (A.w[0] + B.w[0]) / 2, my = (A.w[1] + B.w[1]) / 2, dyd = pr(mx, my)[1] - pr(mx, my + 1)[1];
+  const wv = [nx * k * SOLID_RHO.x, -ny * dyd * SOLID_RHO.y];
+  const EX = far ? [-ex[0], -ex[1]] : ex, OU = far ? [O[0] + L * ex[0], O[1] + L * ex[1]] : O; // frame in unit x (from the A end)
+  const P = (x, u, h) => [OU[0] + x * EX[0] + u * wv[0], OU[1] + x * EX[1] + u * wv[1] - h * k];
+  const endA = (wv[0] < 0) === !far;                                 // is the A end's face the one turned toward us?
+  return { v, q, a, S, far, L, k, ex, O, EX, OU, wv, P, endA, faceW: Math.abs(wv[0]), at };
+}
+// test hook (review shots only): look straight at the B end, from a little above (SOLID_DBG.view = { x: anchor ft from A end })
+function solidHeadOn(G) { const t = SOLID_DBG.view, k = G.k, EX = [0, 0.3 * k], wv = [-k, 0], c = G.P(t.x, 4.8, 0);
+  const OU = [c[0] - t.x * EX[0] - 4.8 * wv[0], c[1] - t.x * EX[1] - 4.8 * wv[1]], P = (x, u, h) => [OU[0] + x * EX[0] + u * wv[0], OU[1] + x * EX[1] + u * wv[1] - h * k];
+  return { ...G, EX, OU, wv, P, ex: G.far ? [-EX[0], -EX[1]] : EX, O: G.far ? [OU[0] + G.L * EX[0], OU[1] + G.L * EX[1]] : OU, endA: false, faceW: k };
+}
+// ---------------------------------------------------------------- trucks
+function drawTrucks(g, v, G) {
+  const T = G.S.truck, back = IMG['truck-' + T.kind + '-back'], front = IMG['truck-' + T.kind + '-front'], wh = IMG['wheel-' + T.kind];
+  const xb = XART['truck-' + T.kind + '-back'], xw = XART['wheel-' + T.kind], px = G.a.px;
+  if (!back || !back.complete || !front.complete || !wh.complete) return;
+  const half = Math.max(...T.axles.map(Math.abs));
+  for (const c of T.c) {
+    let W = T.axles.map(ax => G.at(c + ax).s); if (W[0][0] > W[W.length - 1][0]) W = W.reverse();
+    const W1 = W[0], W2 = W[W.length - 1], e = [(W2[0] - W1[0]) / (2 * half), (W2[1] - W1[1]) / (2 * half)], m = [(W1[0] + W2[0]) / 2, (W1[1] + W2[1]) / 2], kt = (W1[2] + W2[2]) / 2;
+    solidXf(g, e[0] / px, e[1] / px, 0, kt / px, m[0], m[1], 'truck'); g.drawImage(back, xb.x0 * px, xb.y0 * px, xb.w, xb.h);
+    const sx = Math.max(0.3 * kt, Math.abs(e[0]));
+    for (const w of W) { solidXf(g, sx / px, 0, 0, w[2] / px, w[0], w[1], 'wheel'); g.drawImage(wh, xw.x0 * px, xw.y0 * px, xw.w, xw.h); }
+    solidXf(g, e[0] / px, e[1] / px, 0, kt / px, m[0], m[1], 'truck'); g.drawImage(front, xb.x0 * px, xb.y0 * px, xb.w, xb.h);
+  }
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+// ---------------------------------------------------------------- boxes: roof + the end face turned toward the camera
+function solidOrder(G) {
+  const bs = G.S.boxes, face = b => G.endA ? b.x0 : b.x1, near = (p, q) => G.endA ? face(q) - face(p) : face(p) - face(q); // >0: p nearer
+  const kids = {}; for (const b of bs) if (b.on) (kids[b.on] = kids[b.on] || []).push(b);
+  // painter's order: farthest end face first, nearest last (so a nearer box, e.g. the cab, paints over the inner end of the hood behind it)
+  const out = [], put = b => { out.push(b); (kids[b.id] || []).sort(near).forEach(put); };
+  for (const layer of [0, 1]) bs.filter(b => (b.layer || 0) === layer && !b.on).sort(near).forEach(put);
+  return out;
+}
+const mixC = (hex, amt) => shade(hex, amt);
+// cross-section shapes (u across, h up), run along the box: the GP9 nose (hood side, angled corners up to a narrow flat top, the
+// top sloping down over the last few feet to the nose end) and the GP9 cab's arched, overhanging roof
+const SOLID_PROF = {
+  // ACF small tank (SOLID-VIEWS-SPEC tank_acf_small): a round jacket, radius b.round, set in u0 from the frame's near edge
+  tankRound(b) { const r = b.round || b.w / 2, a = b.u0 || 0, cu = a + r, ch = b.h0 + r, n = 128, pts = [];
+    for (let i = 0; i <= n; i++) { const t = -Math.PI / 2 - (2 * Math.PI * i) / n; pts.push([cu + r * Math.cos(t), ch + r * Math.sin(t)]); } // round from the bottom, by the near side, over the top
+    // smooth light around the circumference: crown highlight, darker toward the sides, darkest underneath (no seams: stroke = fill)
+    return { hS: b.h1, pts: pts.slice(0, n), shade: f => (f.nh > 0 ? -22 + 58 * Math.pow(f.nh, 1.6) + 14 * Math.pow(f.nh, 24) : -22 + 16 * f.nh), smooth: true }; },
+  // GP9 short hood (GP9 1753 / PC 7252 refs): flat level top with slightly rounded edges, running straight back to the cab
+  // front; the nose end is three full-height flat faces, a centre face and two angled corner faces (seen from above, the end
+  // is a truncated triangle). front: the corners are cut au ft across and ax ft back. u0: set in from the cab side (centred)
+  gp9Nose(b) { const w = b.w, a = b.u0 || 0, T = b.h1, tc = 0.3;
+    return { hS: T - tc, front: { ax: 0.65, au: 1.2 }, pts: [[a, b.h0], [a, T - tc], [a + tc, T], [a + w - tc, T], [a + w, T - tc], [a + w, b.h0]] }; },
+  gp9Arch(b) { const w = b.w, o = 0.22, e = 13.95, n = 20, pts = [[0, b.h0], [0, e], [-o, e - 0.05], [-o, e + 0.08]];
+    for (let i = 1; i < n; i++) { const t = i / n, s = 2 * t - 1; pts.push([-o + (w + 2 * o) * t, e + 0.08 + (b.h1 - e - 0.08) * Math.pow(1 - s * s, 0.55)]); }
+    pts.push([w + o, e + 0.08], [w + o, e - 0.05], [w, e], [w, b.h0]); return { hS: e, tilt: 7, pts }; },
+};
+// light on a facet: 1 facing straight up, 0 on a wall. A cab roof arch is shallow (about 6 in. of rise across 10 ft), so its
+// profile sets tilt to exaggerate the slope for shading: the crown catches the light and it darkens toward both eaves,
+// so even the thin strip seen on straight track reads as curved
+const solidLit = (f, tilt) => { if (f.nh <= 0) return 0; const t = Math.atan(tilt * Math.abs(f.nu) / f.nh); return Math.cos(t) ** 2; };
+const solidProfH = (b, u) => { const pts = SOLID_PROF[b.prof](b).pts; let h = b.h0; for (let i = 0; i + 1 < pts.length; i++) { const [u0, h0] = pts[i], [u1, h1] = pts[i + 1]; if (u1 > u0 && u >= u0 && u <= u1) h = Math.max(h, h0 + (h1 - h0) * (u - u0) / (u1 - u0)); } return h; };
+function solidProfBox(g, G, b) {
+  const P = G.P, pf = SOLID_PROF[b.prof](b), pts = pf.pts, n = pts.length, bv = pf.bevel, xe = G.endA ? b.x0 : b.x1;
+  const outer = G.endA ? b.x0 <= G.L * 0.1 + 5 : b.x1 >= G.L * 0.9 - 5;
+  const hT = Math.max(...pts.map(p => p[1])), low = p => [p[0], p[1] - bv.drop * Math.max(0, Math.min(1, (p[1] - pf.hS) / (hT - pf.hS)))];
+  const fc = pf.front, a0 = b.u0 || 0, nose = bv && (b.bevelAt === 'x0' ? b.x0 : b.x1), rings = fc ? [[b.x0, pts], [b.x1 - fc.ax, pts], [b.x1, pts.map(([u, h]) => [a0 + fc.au + (u - a0) * (b.w - 2 * fc.au) / b.w, h])]]
+    : !bv ? [[b.x0, pts], [b.x1, pts]]
+    : nose === b.x1 ? [[b.x0, pts], [b.x1 - bv.len, pts], [b.x1, pts.map(low)]] : [[b.x0, pts.map(low)], [b.x0 + bv.len, pts], [b.x1, pts]];
+  // direction toward the viewer in (x, u, h): the null direction of the drawing's (oblique) projection, turned to point up
+  const EX = G.EX, wv = G.wv, k = G.k; let d = [-k * wv[0], k * EX[0], EX[0] * wv[1] - wv[0] * EX[1]]; if (d[2] < 0) d = d.map(z => -z);
+  const cen = [(b.x0 + b.x1) / 2, pts.reduce((a, p) => a + p[0], 0) / n, pts.reduce((a, p) => a + p[1], 0) / n];
+  const sub = (a, c) => [a[0] - c[0], a[1] - c[1], a[2] - c[2]], dot = (a, c) => a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
+  const faces = [];
+  const add = (q, kind, corner) => { // q: 3D points; keep it when it faces the viewer
+    let nn = [0, 0, 0]; for (let i = 0; i < q.length; i++) { const a = q[i], c = q[(i + 1) % q.length]; nn[0] += (a[1] - c[1]) * (a[2] + c[2]); nn[1] += (a[2] - c[2]) * (a[0] + c[0]); nn[2] += (a[0] - c[0]) * (a[1] + c[1]); }
+    const m = q.reduce((a, p) => [a[0] + p[0] / q.length, a[1] + p[1] / q.length, a[2] + p[2] / q.length], [0, 0, 0]);
+    const L = Math.hypot(...nn); if (L < 1e-6) return; nn = nn.map(z => z / L); if (dot(nn, sub(m, cen)) < 0) nn = nn.map(z => -z);
+    if (dot(nn, d) <= 1e-6) return; faces.push({ q, kind, corner, depth: dot(m, d), nh: nn[2], nu: nn[1] });
+  };
+  for (let j = 0; j + 1 < rings.length; j++) { const [xa, A] = rings[j], [xb, B] = rings[j + 1];
+    for (let i = 0; i + 1 < n; i++) { const cn = fc && j === rings.length - 2 && (i === 0 || i === n - 2) ? (i === 0 ? [[xa, A[0][0]], [xb, B[0][0]]] : [[xa, A[n - 1][0]], [xb, B[n - 1][0]]]) : null; // the angled corner faces of the nose
+      add([[xa, ...A[i]], [xa, ...A[i + 1]], [xb, ...B[i + 1]], [xb, ...B[i]]], 'side', cn); } }
+  for (const [x, R] of [rings[0], rings[rings.length - 1]]) add(R.map(p => [x, ...p]), x === xe ? 'cap' : 'back');
+  faces.sort((p, q) => p.depth - q.depth);
+  const wr = fc ? rings.slice(0, -1) : rings; // the near wall stops where the angled corner face starts
+  if (b.inset) G.hoodWall = [...wr.map(([x, R]) => P(x, ...R[1])), ...wr.slice().reverse().map(([x, R]) => P(x, ...R[0]))]; // its near side wall: the side art is clipped to it
+  const col = f => f.kind !== 'side' ? mixC(b.col, -26) : pf.shade ? mixC(b.col, pf.shade(f)) : f.corner ? mixC(b.col, -4) : mixC(b.col, Math.round(-28 + 50 * solidLit(f, pf.tilt || 1) - 30 * f.nu));
+  let cap = null;
+  for (const f of faces) { if (b.side === undefined && !b.inset && !pf.smooth && f.kind === 'side' && f.nu < -0.999) continue; // the near side wall is the side art
+    const c = col(f); poly(g, f.q.map(p => P(...p)), c, f.kind === 'side' ? c : null, 0.6); if (f.kind === 'cap') cap = f; } // the thin stroke closes hairline seams between facets
+  // the angled corner faces carry the number boards: painted along the face (s ft from the hood side edge, h up)
+  if (outer && b.corner && SOLID_END[b.corner] && G.faceW * b.w >= 0.15) for (const f of faces) if (f.corner && f.corner[0][0] !== xe) {
+    const [p0, p1] = f.corner, Lf = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]), o = P(p0[0], p0[1], 0), e = P(p1[0], p1[1], 0);
+    g.save(); g.beginPath(); f.q.forEach((p, i) => { const s = P(...p); i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]); }); g.closePath(); g.clip();
+    solidXf(g, (e[0] - o[0]) / Lf, (e[1] - o[1]) / Lf, 0, -G.k, o[0], o[1], 'corner'); SOLID_END[b.corner](g, G, b, Lf); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  // painters work from the box's own near edge
+  if (b.roof && SOLID_ROOF[b.roof]) { if (b.roofCurve) SOLID_ROOF[b.roof](g, G, b); else solidPaint(g, G, 'roof', b.roofH || hT, 0, () => { g.translate(0, a0); SOLID_ROOF[b.roof](g, G, b); }); }
+  if (!cap || G.faceW * b.w < 0.15) return;
+  if (b.end && SOLID_END[b.end]) { g.save(); g.beginPath(); cap.q.forEach((p, i) => { const s = P(...p); i ? g.lineTo(s[0], s[1]) : g.moveTo(s[0], s[1]); }); g.closePath(); if (!b.endFull) g.clip();
+    const R = rings.find(r => r[0] === xe)[1].map(([u, h]) => [u - a0, h]); solidPaint(g, G, 'face', xe, 0, () => { g.translate(a0, 0); SOLID_END[b.end](g, G, b, outer, xe, R); }); g.restore(); }
+}
+function solidBox(g, G, b) {
+  if (b.prof && SOLID_PROF[b.prof]) return solidProfBox(g, G, b);
+  const P = G.P, xe = G.endA ? b.x0 : b.x1, w = b.w, h0 = b.h0, h1 = b.h1, rg = b.ridge;
+  const outer = G.endA ? b.x0 <= G.L * 0.1 + 5 : b.x1 >= G.L * 0.9 - 5; // this face is at the very end of the car (not hidden against a neighbour)
+  if (b.side) poly(g, [P(b.x0, 0, h0), P(b.x1, 0, h0), P(b.x1, 0, h1), P(b.x0, 0, h1)], b.side); // seen only through openings in the side art (caboose windows)
+  // roof
+  if (rg) { poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w / 2, rg), P(b.x0, w / 2, rg)], mixC(b.col, 26)); poly(g, [P(b.x0, w / 2, rg), P(b.x1, w / 2, rg), P(b.x1, w, h1), P(b.x0, w, h1)], mixC(b.col, 8)); }
+  else poly(g, [P(b.x0, 0, h1), P(b.x1, 0, h1), P(b.x1, w, h1), P(b.x0, w, h1)], b.top || mixC(b.col, 22));
+  if (b.roof && SOLID_ROOF[b.roof]) solidPaint(g, G, 'roof', rg ? (h1 + rg) / 2 : h1, 0, () => SOLID_ROOF[b.roof](g, G, b));
+  // end face (only when it is turned toward us; on straight track its width is 0)
+  if (G.faceW * w < 0.15) return;
+  if (b.open && SOLID_DEEP[b.open]) return SOLID_DEEP[b.open](g, G, b, xe); // open end (covered hopper): real recessed geometry instead of a flat face
+  const pts = [P(xe, 0, h0), P(xe, w, h0), P(xe, w, h1)]; if (rg) pts.push(P(xe, w / 2, rg)); pts.push(P(xe, 0, h1));
+  poly(g, pts, mixC(b.col, -26));
+  if (b.end && SOLID_END[b.end]) solidPaint(g, G, 'face', xe, 0, () => SOLID_END[b.end](g, G, b, outer, xe));
+}
+// paint in feet: 'face' = (u across, h up) on the plane x = xe; 'roof' = (x along from the A end, u across) at height h
+function solidPaint(g, G, kind, s, _, fn) {
+  g.save();
+  if (kind === 'face') { const o = G.P(s, 0, 0); solidXf(g, G.wv[0], G.wv[1], 0, -G.k, o[0], o[1], 'face'); }
+  else { const o = G.P(0, 0, s); solidXf(g, G.EX[0], G.EX[1], G.wv[0], G.wv[1], o[0], o[1], 'roof'); }
+  fn(); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+const fr = (g, x0, y0, x1, y1, col) => { g.fillStyle = col; g.fillRect(Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)); };
+const fe = (g, cx, cy, rx, ry, col) => { g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, 7); g.fillStyle = col; g.fill(); };
+// ---------------------------------------------------------------- end faces (u 0 = the near side of the car, h above the rail)
+// GP9 refs: IC 9031 short-hood 3/4, the green/white GP long-hood close-up, NH 7534, IC 9080.
+const SOLID_END = {
+  gp9Short(g, G, b, outer, xe, R) { if (!outer) return; const w = b.w, c = w / 2, navy = '#162241', T = b.h1; // the nose's flat centre face (clipped to it)
+    fr(g, 0, b.h0, w, T, navy);
+    if (R) { g.beginPath(); R.forEach(([u, h], i) => i ? g.lineTo(u, h) : g.moveTo(u, h)); g.closePath(); g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 0.12; g.stroke(); } // edge highlight
+    fr(g, 0, 6.0, w, 6.16, '#ea7424');                                                         // hood stripe carried round the nose
+    fr(g, c - 0.55, 11.95, c + 0.55, 13.6, '#121b33');                                         // twin sealed-beam headlights, stacked at the top centre
+    fe(g, c, 12.4, 0.28, 0.28, '#d9d4bf'); fe(g, c, 13.12, 0.28, 0.28, '#d9d4bf'); fe(g, c, 12.4, 0.16, 0.16, '#fff6c8'); fe(g, c, 13.12, 0.16, 0.16, '#fff6c8');
+    for (const u of [1.65, w - 1.65]) fe(g, u, 10.5, 0.2, 0.2, '#b8302a');                     // class lights
+    fr(g, c - 0.05, 6.4, c + 0.05, 11.6, 'rgba(0,0,0,.35)');                                   // nose seam
+    fr(g, c - 0.9, 9.0, c + 0.9, 9.12, '#ea7424');                                             // grab iron
+  },
+  gp9ShortCorner(g, G, b, Lf) { const m = Lf / 2;                                               // an angled corner face of the nose: number board near the top
+    fr(g, 0, b.h0, 0.07, b.h1, 'rgba(255,255,255,.2)'); fr(g, Lf - 0.05, b.h0, Lf, b.h1, 'rgba(0,0,0,.3)'); // its edges: light where it turns from the hood side, dark at the centre face
+    fr(g, 0, 6.0, Lf, 6.16, '#ea7424');
+    fr(g, m - 0.6, 12.2, m + 0.6, 13.3, '#0e1426'); fr(g, m - 0.5, 12.3, m + 0.5, 13.2, '#f3f0e6'); for (let i = 0; i < 4; i++) fr(g, m - 0.36 + i * 0.2, 12.5, m - 0.24 + i * 0.2, 13.0, '#222');
+  },
+  gp9Long(g, G, b, outer) { if (!outer) return; const w = b.w, navy = '#1a2849';
+    // u runs from the side we are looking at (0) to the other side (w). Seen from outside this end, its left corner is the far
+    // side (u = w) when we look at the art's normal side and the near side when we look at the mirrored far side: flip to match
+    const U = u => G.far ? u : w - u, frU = (u0, h0, u1, h1, c) => fr(g, U(u0), h0, U(u1), h1, c), feU = (u, h, rx, ry, c) => fe(g, U(u), h, rx, ry, c);
+    fr(g, 0, b.h0, w, b.h1, navy); fr(g, 0, 6.0, w, 6.16, '#ea7424');
+    frU(0.5, 11.9, 1.6, 13.85, '#121b33'); feU(1.05, 12.42, 0.3, 0.3, '#d9d4bf'); feU(1.05, 13.35, 0.3, 0.3, '#d9d4bf'); feU(1.05, 12.42, 0.17, 0.17, '#fff6c8'); feU(1.05, 13.35, 0.17, 0.17, '#fff6c8'); // stacked headlights, top left
+    frU(2.2, 12.6, 5.0, 13.6, '#0e1426'); frU(2.3, 12.7, 4.9, 13.5, '#f3f0e6'); for (let i = 0; i < 4; i++) frU(2.7 + i * 0.5, 12.85, 3.0 + i * 0.5, 13.35, '#222');    // wide number board
+    for (const u of [0.55, w - 0.55]) fe(g, u, 10.9, 0.2, 0.2, '#b8302a');
+    fr(g, 1.2, 6.5, w - 1.2, 11.2, 'rgba(0,0,0,.12)'); for (let h = 7.0; h < 11; h += 0.5) fr(g, 1.4, h, w - 1.4, h + 0.22, 'rgba(0,0,0,.25)'); // end radiator grille
+  },
+  gp9CabEnd(g, G, b) { const w = b.w; // cab front/rear windows beside the hood (the hood covers the middle)
+    for (const [u0, u1] of [[0.3, 1.6], [w - 1.65, w - 0.25]]) if (u1 > u0) { // one each side of the (centred) short hood, above the walkway, tall like the model's
+      fr(g, u0 - 0.1, 10.2, u1 + 0.1, 13.65, '#121b33'); fr(g, u0, 10.3, u1, 13.55, '#7f98a8'); fr(g, u0, 12.6, u1, 13.55, '#a9bfcc'); }
+    fr(g, 0, 13.75, w, 13.95, '#24365f');                                                      // under the eave of the arched roof
+  },
+  gp9Frame(g, G, b) { fr(g, 0, b.h0, b.w, b.h1, '#1a1d24'); fr(g, 0, 4.5, b.w, 5.0, '#ea7424'); },
+  gp9Pilot(g, G, b) { const w = b.w, c = w / 2;
+    fr(g, 0, b.h0, w, b.h1, '#1d2027');
+    for (const u of [0, w - 1.35]) { fr(g, u, 1.0, u + 1.35, 3.9, '#0b0c0f'); for (const h of [1.0, 2.0, 3.0]) fr(g, u + 0.05, h, u + 1.3, h + 0.16, '#5a5e66'); } // corner step wells
+    fr(g, c - 0.45, 2.45, c + 0.45, 3.3, '#2c2e33'); fr(g, c - 0.3, 2.55, c + 0.3, 3.2, '#3d4047');                          // coupler head
+    for (const u of [2.3, w - 2.3]) { fr(g, u - 0.35, 3.0, u + 0.35, 3.6, '#2a2c31'); fr(g, u - 0.06, 1.9, u + 0.06, 3.0, '#111'); } // MU receptacles + hoses
+    fr(g, c + 1.0, 1.6, c + 1.12, 2.8, '#111'); fr(g, 0, 1.45, w, 1.62, '#2c2f36');
+  },
+  box40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'box40-end-B-brake' : 'box40-end-A', b.col, 0, 0, 10.33, 15.4); },   // hand brake on the x0 end
+  tankEnd(g, G, b, outer, xe) { g.save(); g.beginPath(); g.rect(-5, -5, 20, b.h1 - b.w / 2 + 5); g.moveTo(b.w + 0.05, b.h1 - b.w / 2); g.arc(b.w / 2, b.h1 - b.w / 2, b.w / 2 + 0.05, 0, Math.PI * 2); g.clip(); solidArt(g, xe === b.x0 ? 'tank-end-B-brake' : 'tank-end-A', b.col, -(b.u0 || 0), 0, 9.6, 15.6); g.restore(); }, // clipped at the jacket top: the dome in that view stands at mid-car // frame-wide: round head + sill + dome rails
+  boxEnd(g, G, b, outer, xe) { const w = b.w, col = b.endCol ? mixC(b.endCol, -18) : '#6a2d21';
+    for (let h = 4.3; h < 13.9; h += 1.25) { fr(g, 0.4, h, w - 0.4, h + 0.42, mixC(col, 14)); fr(g, 0.4, h + 0.42, w - 0.4, h + 0.55, mixC(col, -22)); } // Dreadnaught end ribs
+    fr(g, 0, b.h0, 0.3, b.h1, mixC(col, -10)); fr(g, w - 0.3, b.h0, w, b.h1, mixC(col, -10));                                  // corner posts
+    for (let h = 4.6; h < 13.5; h += 1.6) fr(g, w - 1.5, h, w - 0.45, h + 0.1, '#1e1f22');                                     // end grab irons (far corner)
+    fr(g, 0, b.h0, w, b.h0 + 0.35, '#2a2420');
+  },
+  cabooseSill(g, G, b) { fr(g, 0, b.h0, b.w, b.h1, '#24262a'); fr(g, 0, b.h1 - 0.12, b.w, b.h1, '#4a4d52'); for (const u of [0.3, b.w - 1.6]) { fr(g, u, 1.4, u + 1.3, b.h0, '#d9622b'); fr(g, u, 2.3, u + 1.3, 2.45, '#f08a55'); fr(g, u, 3.2, u + 1.3, 3.35, '#f08a55'); } },
+  cabooseEnd(g, G, b) { const w = b.w, c = w / 2;
+    fr(g, c - 1.25, 4.15, c + 1.25, 10.9, '#b8501f'); fr(g, c - 0.85, 8.1, c + 0.85, 10.3, '#20262b'); fr(g, c - 0.75, 8.2, c + 0.75, 10.2, '#6f8a99'); // end door + window
+    fr(g, c + 0.8, 6.6, c + 1.0, 6.85, '#c9cdd1');
+    for (const u of [0.35, w - 0.35]) { fr(g, u - 0.28, 10.4, u + 0.28, 11.2, '#1f2023'); fe(g, u, 10.8, 0.2, 0.2, '#b8302a'); }                      // marker lights
+    fr(g, 0, 11.75, w, 12.05, '#a94a1f');
+  },
+  cupolaEnd(g, G, b) { const w = b.w; for (const [u0, u1] of [[1.0, 3.8], [w - 3.8, w - 1.0]]) { fr(g, u0, 12.9, u1, 14.5, '#c9cdd1'); fr(g, u0 + 0.12, 13.02, u1 - 0.12, 14.38, '#5f7a88'); } },
+};
+// PS-4750 covered hopper open end (Danny's HOPPER-END-DEPTH-SPEC, his deepEnd() prototype): the end sheet sits back inside the
+// posts and slopes; posts, handrail, ladder, grabs, brake wheel (B end, x1), platform, steps and coupler stand out in front.
+// x = xe + dir * d (d = depth inboard of the end plane), in screen space (identity transform), drawn back to front.
+const sh = (hex, f) => { const n = parseInt(hex.slice(1), 16), m = v => Math.max(0, Math.min(255, Math.round(f < 1 ? v * f : v + (255 - v) * (f - 1)))); return `rgb(${m(n >> 16)},${m(n >> 8 & 255)},${m(n & 255)})`; };
+const SOLID_DEEP = {
+  hopperDeep(g, G, b, xe) { const P = G.P, W = b.w, dir = G.endA ? 1 : -1, X = d => xe + dir * d, col = b.col, q = (pts, c) => poly(g, pts, c);
+    const P0 = 5.375, HD = 12.3, EAVE = 13.85, sd = h => 3.2 + (1.0 - 3.2) * (h - 6.2) / (12.3 - 6.2), U1 = W - 0.42;
+    q([P(X(3.2), 0.42, P0), P(X(3.2), U1, P0), P(X(3.2), U1, 6.2), P(X(3.2), 0.42, 6.2)], '#1a1310');                           // 1 void
+    const hm = 9.8; q([P(X(sd(hm)), 0.42, hm), P(X(sd(hm)), U1, hm), P(X(sd(HD)), U1, HD), P(X(sd(HD)), 0.42, HD)], sh(col, 0.42)); // 2 end sheet
+    q([P(X(sd(6.2)), 0.42, 6.2), P(X(sd(6.2)), U1, 6.2), P(X(sd(hm)), U1, hm), P(X(sd(hm)), 0.42, hm)], sh(col, 0.68));
+    for (const [u, f] of [[U1, 0.34], [0.42, 0.5]]) q([P(X(0), u, 6.2), P(X(sd(6.2)), u, 6.2), P(X(sd(HD)), u, HD), P(X(0), u, HD)], sh(col, f)); // 3 returns
+    for (const [u0, u1, f] of [[U1, W - 2.4, 0.4], [0.42, 2.4, 0.58]]) q([P(X(0), u0, 6.2), P(X(sd(6.2)), u0, 6.2), P(X(sd(6.2)), u1, 6.2), P(X(sd(8.6)), u0, 8.6)], sh(col, f));
+    q([P(X(sd(HD)), 0.42, HD), P(X(sd(HD)), U1, HD), P(X(sd(11.3)), U1, 11.3), P(X(sd(10.9)), 0.42, 10.9)], 'rgba(0,0,0,.35)'); // eave shadow
+    const crown = []; for (let i = 12; i >= 0; i--) crown.push(P(X(0), W * i / 12, EAVE + 0.53 * (1 - (2 * i / 12 - 1) ** 2)));
+    q([P(X(0), 0, HD), P(X(0), W, HD), ...crown], sh(col, 1.0)); q([P(X(0), 0, HD - 0.18), P(X(0), W, HD - 0.18), P(X(0), W, HD), P(X(0), 0, HD)], sh(col, 0.5)); // 4 header
+    for (const [u0, u1] of [[0, 0.42], [2.85, 3.25], [4.05, 4.45], [6.9, 7.3], [U1, W]].reverse()) {                            // 5 posts, far side first
+      for (const [u, f] of [[u0, 0.62], [u1, 0.48]]) q([P(X(0), u, P0), P(X(0.4), u, P0), P(X(0.4), u, HD), P(X(0), u, HD)], sh(col, f));
+      q([P(X(-0.02), u0, P0), P(X(-0.02), u1, P0), P(X(-0.02), u1, HD), P(X(-0.02), u0, HD)], sh(col, 1.05)); }
+    q([P(X(-0.05), 0.42, 8.75), P(X(-0.05), U1, 8.75), P(X(-0.05), U1, 8.85), P(X(-0.05), 0.42, 8.85)], sh(col, 1.1));          // handrail
+    const bar = (x, u0, h0, u1, h1, c, w) => { const a = P(x, u0, h0), e = P(x, u1, h1); g.strokeStyle = c; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(e[0], e[1]); g.stroke(); };
+    const ks = G.k;
+    for (const u of [0.15, 1.55]) bar(X(-0.35), u, P0, u, EAVE - 0.3, sh(col, 0.95), 0.1 * ks);                                // 6 ladder
+    for (let h = P0 + 0.55; h < EAVE - 0.4; h += 1.17) { bar(X(-0.35), 0.15, h - 0.06, 1.55, h - 0.06, 'rgba(0,0,0,.4)', 0.06 * ks); bar(X(-0.35), 0.15, h, 1.55, h, sh(col, 1.1), 0.08 * ks); }
+    for (let h = 6.3; h < 11; h += 1.15) bar(X(-0.3), W - 1.45, h, W, h, sh(col, 1.1), 0.08 * ks);                            // grabs
+    if (!G.endA) { const o = P(X(-0.3), 3.65, 8.15); g.save(); solidXf(g, G.wv[0], G.wv[1], 0, -G.k, o[0], o[1], 'brake');       // 7 brake wheel (B end)
+      g.lineWidth = 0.18; g.strokeStyle = sh(col, 1.05); g.beginPath(); g.ellipse(0, 0, 0.95, 0.95, 0, 0, 7); g.stroke();
+      for (const a of [0, 1.05, 2.1]) { g.beginPath(); g.moveTo(-0.9 * Math.cos(a), -0.9 * Math.sin(a)); g.lineTo(0.9 * Math.cos(a), 0.9 * Math.sin(a)); g.lineWidth = 0.1; g.stroke(); }
+      g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+    const p0 = -0.6, p1 = 0, h0 = 4.92, h1 = P0;                                                                             // 8 platform
+    q([P(X(p0), 0, h1), P(X(p0), W, h1), P(X(p1), W, h1), P(X(p1), 0, h1)], '#2c2d30'); q([P(X(p0), 0, h0), P(X(p0), W, h0), P(X(p0), W, h1), P(X(p0), 0, h1)], sh(col, 0.9));
+    for (const u of [W, 0]) q([P(X(p0), u, h0), P(X(p1), u, h0), P(X(p1), u, h1), P(X(p0), u, h1)], sh(col, 0.6));
+    for (const u of [W - 1.4, 0.1]) { q([P(X(p0), u, 3.3), P(X(p0), u + 1.3, 3.3), P(X(p0), u + 1.3, 3.42), P(X(p0), u, 3.42)], sh(col, 1.0)); // steps
+      for (const uu of [u, u + 1.25]) q([P(X(p0), uu, 3.3), P(X(p0), uu + 0.08, 3.3), P(X(p0), uu + 0.08, h0), P(X(p0), uu, h0)], sh(col, 0.95)); }
+    const c0 = -1.9, c1 = 0.3, cu0 = 4.585, cu1 = 5.585, ch0 = 2.2, ch1 = 3.35;                                               // 9 coupler
+    q([P(X(c0), cu0, ch1), P(X(c0), cu1, ch1), P(X(c1), cu1, ch1), P(X(c1), cu0, ch1)], '#3a3b3e');
+    q([P(X(c0), cu1, ch0), P(X(c1), cu1, ch0), P(X(c1), cu1, ch1), P(X(c0), cu1, ch1)], '#1a1b1d');
+    q([P(X(c0), cu0, ch0), P(X(c0), cu1, ch0), P(X(c0), cu1, ch1), P(X(c0), cu0, ch1)], '#121214');
+  },
+};
+// end-of-car extras standing in front of the faces (railings, brake gear), drawn after all the boxes
+const SOLID_OVER = {
+  gp9EndRails(g, G) { const x = G.endA ? 1.72 : 54.45, w = 10.3, d = 5.1, rail = '#ea7424';
+    solidPaint(g, G, 'face', x, 0, () => { for (const u of [0.1, 1.45, w - 1.6, w - 0.25]) fr(g, u, u < 2 && u > 1 || u > w - 2 && u < w - 1 ? 1.1 : d, u + 0.15, d + 3.1, rail);
+      fr(g, 0.1, d + 2.95, 1.6, d + 3.12, rail); fr(g, w - 1.6, d + 2.95, w - 0.1, d + 3.12, rail); fr(g, 1.45, d + 2.95, w - 1.45, d + 3.12, rail); fr(g, 1.45, d + 1.5, w - 1.45, d + 1.62, rail); }); },
+  boxEndGear(g, G) { const brakeA = true, x = G.endA ? 2.08 : 53.88; if (G.endA !== brakeA) return;
+    solidPaint(g, G, 'face', x, 0, () => { fr(g, 2.5, 4.0, 2.65, 8.9, '#222'); g.lineWidth = 0.16; g.strokeStyle = '#1b1b1b'; g.beginPath(); g.ellipse(2.57, 8.95, 0.85, 0.85, 0, 0, 7); g.stroke(); fr(g, 1.75, 8.9, 3.4, 9.0, '#1b1b1b'); fr(g, 1.2, 3.6, 3.9, 3.75, '#2a2420'); }); },
+  cabooseRails(g, G) { const x = G.endA ? 1.95 : 43.72, w = 10.0, d = 4.1, rail = '#d9622b';
+    solidPaint(g, G, 'face', x, 0, () => { for (const u of [0.1, 3.0, w - 3.15, w - 0.25]) fr(g, u, d, u + 0.15, d + 3.35, rail);
+      fr(g, 0.1, d + 3.2, 3.15, d + 3.38, rail); fr(g, w - 3.15, d + 3.2, w - 0.1, d + 3.38, rail); fr(g, 0.1, d + 1.7, 3.15, d + 1.82, rail); fr(g, w - 3.15, d + 1.7, w - 0.1, d + 1.82, rail);
+      for (let h = d + 0.9; h < 12; h += 1.0) fr(g, 0.55, h, 1.75, h + 0.09, '#2a2b2e'); fr(g, 0.5, d, 0.6, 12.0, '#2a2b2e'); fr(g, 1.7, d, 1.8, 12.0, '#2a2b2e'); }); }, // end ladder to the roof
+};
+// ---------------------------------------------------------------- roofs (x along from the A end, u across) - placeholders until roof photos arrive
+// GP9 ref: SP 3838 overhead (radiator fans, dynamic brake fan, stacks, cab roof + horn, hood panels, walkway); its headlight package is ignored.
+const SOLID_TINT = {}; // roof art tinted to the livery once per colour (Danny's tint method: multiply, keep the alpha)
+function solidTint(im, col) { const key = im.src.length + col; if (SOLID_TINT[key]) return SOLID_TINT[key];
+  const o = document.createElement('canvas'); o.width = im.naturalWidth; o.height = im.naturalHeight; const x = o.getContext('2d');
+  x.drawImage(im, 0, 0); x.globalCompositeOperation = 'multiply'; x.fillStyle = col; x.fillRect(0, 0, o.width, o.height); x.globalCompositeOperation = 'destination-in'; x.drawImage(im, 0, 0);
+  return (SOLID_TINT[key] = o); }
+// Danny's two-layer art: body tinted to the livery, untinted detail on top. flip: face art is drawn with h up (image top = h0 + h)
+function solidArt(g, n, col, x, y, w, h, flat) { const rb = IMG[n + '-body'], rd = IMG[n + '-detail'];
+  if (!rb || !rb.complete || !rb.naturalWidth || !rd || !rd.complete) return; g.save();
+  if (!flat) { g.translate(x, y + h); g.scale(1, -1); x = 0; y = 0; }
+  g.drawImage(solidTint(rb, col), x, y, w, h); g.drawImage(rd, x, y, w, h); g.restore(); }
+// 40 ft roofs: 'runningboard' (as built, and the common look in the game's era), 'cutdown' (board removed per the 1966 AAR rule),
+// or 'mix' (Danny's 50/50 by car number, so a car always looks the same)
+const SOLID_BOX40_ROOF = 'runningboard';
+const SOLID_ROOF = {
+  box40Roof(g, G, b) { const m = SOLID_BOX40_ROOF, n = m === 'mix' ? ((parseInt(String(G.v && G.v.num || 0).replace(/\D/g, ''), 10) || 0) % 2 ? 'cutdown' : 'runningboard') : m;
+    solidArt(g, 'box40-roof-' + n, b.col, b.x0, 0, b.x1 - b.x0, b.w, true); },
+  // the jacket top as a curved band: Danny's roof art cut into strips across the width, each strip laid on the cylinder at its own
+  // height (crown highest), and shaded by how much it faces up, so the dome, platform and walkway ride the crown and the outline bulges
+  tankRoof(g, G, b) { const rb = IMG['tank-roof-body'], rd = IMG['tank-roof-detail']; if (!rb || !rb.complete || !rb.naturalWidth || !rd || !rd.complete) return;
+    const r = b.round || b.w / 2, a0 = b.u0 || 0, ch = b.h0 + r, tb = solidTint(rb, b.col), n = 40, L = b.x1 - b.x0, W = rb.naturalWidth, H = rb.naturalHeight;
+    const vis = []; for (let i = 0; i < n; i++) { const u0 = (b.w * i) / n, u1 = (b.w * (i + 1)) / n, um = (u0 + u1) / 2 - r, c = Math.sqrt(Math.max(0, r * r - um * um)) / r; vis.push({ i, u0, u1, h: ch + r * c, c }); }
+    vis.sort((p, q) => q.u1 - p.u1); // far side first, the near half paints over it
+    for (const pass of [0, 1]) for (const v of vis) { if (v.c < 0.2) continue;
+      solidPaint(g, G, 'roof', v.h, 0, () => { g.translate(0, a0); const sy = (H * v.u0) / b.w, sh = Math.max(1, (H * (v.u1 - v.u0)) / b.w), du = (v.u1 - v.u0) * 1.04;
+        if (!pass) { g.drawImage(tb, 0, sy, W, sh, b.x0, v.u0, L, du); g.fillStyle = `rgba(255,255,255,${0.22 * Math.pow(v.c, 8)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); g.fillStyle = `rgba(0,0,0,${0.55 * (1 - v.c)})`; g.fillRect(b.x0, v.u0, L, v.u1 - v.u0); }
+        else g.drawImage(rd, 0, sy, W, sh, b.x0, v.u0, L, du); }); }
+  },
+  hopperRoof(g, G, b) { const rb = IMG['hopper-roof-body'], rd = IMG['hopper-roof-detail']; // PS-4750 roof: Danny's roof art (body tinted, detail on top)
+    if (!rb || !rb.complete || !rb.naturalWidth || !rd.complete) return; g.drawImage(solidTint(rb, b.col), b.x0, 0, b.x1 - b.x0, b.w); g.drawImage(rd, b.x0, 0, b.x1 - b.x0, b.w); },
+  walkway(g, G, b) { fr(g, b.x0, 0, b.x1, b.w, '#3b3e45'); fr(g, b.x0, b.w - 0.12, b.x1, b.w, '#ea7424'); },
+  gp9LongHood(g, G, b) { const w = b.w, c = w / 2;
+    fr(g, b.x0, 0, b.x1, 0.45, '#24365f'); fr(g, b.x0, w - 0.45, b.x1, w, '#15213d');                                       // rounded hood edges
+    for (const x of [7.6, 10.3, 13.0, 15.7, 26.5, 29.2, 31.9, 34.6]) fr(g, x - 0.04, 0.4, x + 0.04, w - 0.4, 'rgba(0,0,0,.3)'); // hood top panel seams
+    for (const fx of [9.0, 12.6]) { fe(g, fx, c, 1.62, 1.62, '#141d33'); fe(g, fx, c, 1.45, 1.45, '#2b3654'); for (let r = 0.35; r < 1.45; r += 0.28) { g.lineWidth = 0.06; g.strokeStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.ellipse(fx, c, r, r, 0, 0, 7); g.stroke(); } fe(g, fx, c, 0.25, 0.25, '#0d1220'); } // radiator fans
+    for (const x of [24.37, 26.57]) { fe(g, x, c, 0.5, 0.42, '#202124'); fe(g, x, c, 0.32, 0.26, '#0a0a0b'); }                  // exhaust stacks
+    for (const x of [30.7, 33.8]) fr(g, x + 0.2, 1.0, x + 2.6, w - 1.0, '#22335a');                                         // filter hatches
+    for (const x of [5.2, 36.4]) for (const u of [0.9, w - 0.9]) fe(g, x, u, 0.14, 0.14, '#0d1220');                       // lift rings
+  },
+  gp9Blister(g, G, b) { const w = b.w, c = (b.x0 + b.x1) / 2; fe(g, c, w / 2, 1.8, 1.8, '#141d33'); fe(g, c, w / 2, 1.6, 1.6, '#2b3654'); for (let r = 0.4; r < 1.6; r += 0.3) { g.lineWidth = 0.06; g.strokeStyle = 'rgba(0,0,0,.55)'; g.beginPath(); g.ellipse(c, w / 2, r, r, 0, 0, 7); g.stroke(); } fr(g, b.x0 + 0.4, 0.4, b.x0 + 1.4, w - 0.4, 'rgba(0,0,0,.25)'); fr(g, b.x1 - 1.4, 0.4, b.x1 - 0.4, w - 0.4, 'rgba(0,0,0,.25)'); },
+  gp9Cab(g, G, b) { fr(g, b.x0 + 3.0, 0.6, b.x0 + 5.2, 1.3, '#5d6066'); fe(g, b.x0 + 4.9, 0.95, 0.25, 0.25, '#7d8086'); }, // horn, on the arched roof (drawn at the roof's height there)
+  gp9ShortHood(g, G, b) { const c = b.w / 2; fr(g, 45.0, c - 0.75, 48.4, c + 0.75, '#22335a'); fe(g, 49.6, c, 0.32, 0.32, '#0d1220'); }, // hatch + sand filler on the narrow flat top
+  boxRoof(g, G, b) { const n = 12, w = b.w; for (let i = 1; i < n; i++) { const x = b.x0 + (b.x1 - b.x0) * i / n; fr(g, x - 0.07, 0.15, x + 0.07, w - 0.15, 'rgba(0,0,0,.28)'); fr(g, x + 0.07, 0.15, x + 0.14, w - 0.15, 'rgba(255,255,255,.12)'); } // panel seams
+    if (G.S.opts && G.S.opts.roofwalk) fr(g, b.x0 + 0.3, w / 2 - 1.0, b.x1 - 0.3, w / 2 + 1.0, '#4a3a2c'); },
+  platforms(g, G, b) { for (const [x0, x1] of [[b.x0, 5.3], [40.4, b.x1]]) { fr(g, x0, 0, x1, b.w, '#57514a'); for (let x = x0 + 0.3; x < x1; x += 0.45) fr(g, x, 0.1, x + 0.06, b.w - 0.1, 'rgba(0,0,0,.25)'); } },
+  cabooseRoof(g, G, b) { const o = G.S.opts || {}, w = b.w; if (o.roofwalk) for (const [a, z] of [[b.x0 + 0.3, 18.9], [25.6, b.x1 - 0.3]]) { fr(g, a, w / 2 - 0.95, z, w / 2 + 0.95, '#3d3f44'); for (let x = a; x < z; x += 0.7) fr(g, x, w / 2 - 0.95, x + 0.08, w / 2 + 0.95, 'rgba(0,0,0,.35)'); }
+    if (o.smokejack) fe(g, o.smokejack, 2.4, 0.3, 0.3, '#1a1b1d'); },
+  cupolaRoof(g, G, b) { fr(g, b.x0 + 0.4, b.w / 2 - 0.9, b.x1 - 0.4, b.w / 2 + 0.9, '#3d3f44'); },
+};
+// side-lamp opacity: 1 on straight track, fading to 0 by the time the end face is ~1.4 ft wide on screen-feet (faceW per ft of depth)
+const SOLID_LAMP_FADE = [0.02, 0.14];
+function solidLampAlpha(G) { const f = G.faceW / G.k, [a, b] = SOLID_LAMP_FADE, t = Math.max(0, Math.min(1, (f - a) / (b - a))); return 1 - t * t * (3 - 2 * t); }
+// ---------------------------------------------------------------- the whole car
+// tank dome: a standing piece on the crown at mid-car, billboarded (upright, facing the screen) like stands. Danny's tank-dome /
+// tank-dome-edge art when present (bottom row on the crown, d.cx = dome centre in px), else a placeholder: short dark cylinder + cap
+function solidDome(g, G, d) { const c = G.P(d.x, d.u, d.h), k = G.k, el = Math.hypot(...G.EX), edge = G.faceW > 0.75 * el;
+  const im = IMG[edge ? 'tank-dome-edge' : 'tank-dome'], xa = XART && XART[edge ? 'tank-dome-edge' : 'tank-dome'];
+  if (im && im.complete && im.naturalWidth && xa) { const s = k / xa.ppf; g.drawImage(im, c[0] - (xa.cx != null ? xa.cx : im.naturalWidth / 2) * s, c[1] - im.naturalHeight * s, im.naturalWidth * s, im.naturalHeight * s); return; }
+  const r = d.r * k, hh = d.tall * k, ry = r * 0.32, x = c[0], y = c[1], gr = g.createLinearGradient(x - r, 0, x + r, 0);
+  gr.addColorStop(0, '#1b1c1e'); gr.addColorStop(0.35, '#55575b'); gr.addColorStop(0.6, '#3a3c40'); gr.addColorStop(1, '#141516');
+  g.fillStyle = gr; g.beginPath(); g.ellipse(x, y, r, ry, 0, 0, Math.PI); g.lineTo(x - r, y - hh); g.ellipse(x, y - hh, r, ry, 0, Math.PI, 0, true); g.closePath(); g.fill();
+  fe(g, x, y - hh, r, ry, '#4a4c50'); fe(g, x, y - hh - 0.12 * k, r * 0.82, ry * 0.82, '#2a2b2e'); fe(g, x - r * 0.2, y - hh - 0.16 * k, r * 0.35, ry * 0.35, '#5c5e62');
+}
+// tank side wrap (Danny's side/ layers): the lettering layer is cut into thin rows by height and each row is laid on the jacket
+// where the round side is at that height (u in from the near edge = r - sqrt(r^2 - (h - axis)^2)), lit like the shell, so the
+// lettering follows the cylinder on curves and diagonals. The car number is painted on the nonum lettering (flat-picture number
+// spot moved onto this canvas). The hardware layer (ladder centred on the dome, grabs, frame bits) is drawn flat in front.
+const TSIDE_NUM = new Map(), TSIDE_MARKS = { x1: 16, dx: 1.6 }; // left-end group: everything left of x1 ft on the lettering canvas
+function tankSideLetter(v, k, G) { const lt = IMG[k + '-side-letter'], nn = IMG[k + '-side-letternn'], xa = XART[k + '-side-letter'], sp = NUMSPEC && NUMSPEC[numKey(k)], num = v.num && String(v.num);
+  if (!lt || !lt.complete || !lt.naturalWidth) return lt;
+  const useN = sp && num && num !== sp.painted && nn && nn.complete && nn.naturalWidth && (NUM_FONTS || sp.glyph), src = useN ? nn : lt;
+  const key = k + '|' + (useN ? num : '='); let c = TSIDE_NUM.get(key); if (c) return c; if (TSIDE_NUM.size > 300) TSIDE_NUM.clear();
+  // Stephen (Oct 30): the left-end marks group (reporting marks + data block) sits TSIDE_MARKS.dx ft further toward the A end
+  const M = TSIDE_MARKS, sx = Math.round(M.x1 * xa.ppf), dx = Math.round(M.dx * xa.ppf);
+  c = document.createElement('canvas'); c.width = src.naturalWidth; c.height = src.naturalHeight; const g = c.getContext('2d');
+  g.drawImage(src, sx, 0, c.width - sx, c.height, sx, 0, c.width - sx, c.height); g.drawImage(src, 0, 0, sx, c.height, -dx, 0, sx, c.height);
+  if (useN) { const a = G.a, f = xa.ppf / a.px, s2 = { ...sp, glyph: null, occ: sp.occ.map(o => ({ ...o, x: (o.x / a.px + a.x0 - M.dx) * xa.ppf, y: (xa.hFt + o.y / a.px + a.y0) * xa.ppf, size: o.size * f, ls: o.ls * f, tl: o.tl && o.tl * f })) }; paintNumber(g, s2, num, false, c.width); }
+  c.complete = true; c.naturalWidth = c.width; c.naturalHeight = c.height; TSIDE_NUM.set(key, c); return c; }
+// tank side handrail (Danny's sideHandrail spec): one rail along the jacket at h, standing off it by off, from head to head
+// (meets the wrap-around rail in the end art), broken at the ladder stiles, with standoff brackets every ~step ft
+function solidTankRail(g, G, R, tb) { const r = tb.round, cu = (tb.u0 || 0) + r, ch = tb.h0 + r, dh = R.h - ch, uj = cu - Math.sqrt(r * r - dh * dh), ur = uj - R.off, k = G.k;
+  const segs = []; let a = tb.x0; if (R.gap) { segs.push([a, R.gap[0] - 0.12]); a = R.gap[1] + 0.12; } segs.push([a, tb.x1]);
+  const line = (x0, x1, c, w, dy) => { g.strokeStyle = c; g.lineWidth = Math.max(0.6, w * k); g.beginPath(); const n = Math.max(2, Math.ceil((x1 - x0) / 2));
+    for (let i = 0; i <= n; i++) { const p = G.P(x0 + (x1 - x0) * i / n, ur, R.h + dy); i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]); } g.stroke(); };
+  g.save(); g.lineCap = 'butt'; g.lineJoin = 'round';
+  // brackets: from the jacket out to the rail
+  const L = tb.x1 - tb.x0, nb = Math.max(2, Math.round(L / R.step)); g.strokeStyle = R.out; g.lineWidth = Math.max(0.6, 0.12 * k);
+  for (let i = 0; i <= nb; i++) { const x = tb.x0 + 0.6 + (L - 1.2) * i / nb; if (R.gap && x > R.gap[0] - 0.3 && x < R.gap[1] + 0.3) continue; const p = G.P(x, uj, R.h - 0.05), q = G.P(x, ur, R.h - 0.05); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke(); }
+  for (const [x0, x1] of segs) { line(x0, x1, R.out, R.outW, 0); line(x0, x1, R.col, R.th, 0); line(x0, x1, R.hi, R.hiW, (R.th - R.hiW) / 2); }
+  g.restore(); }
+function solidTankSide(g, v, G) { const k = artOf(v), xa = XART && XART[k + '-side-letter'], ha = XART && XART['tank-side-hw'], hw = IMG['tank-side-hw'];
+  const ok = (i, x) => i && i.complete && i.naturalWidth && x, lt = xa && tankSideLetter(v, k, G); if (!ok(lt, xa) || !ok(hw, ha)) return false;
+  const tb = G.S.boxes.find(b => b.prof === 'tankRound'), r = xa.r, cu = (tb.u0 || 0) + r, wv = G.wv, ppf = xa.ppf;
+  const at = (u, y0) => solidXf(g, G.ex[0] / ppf, G.ex[1] / ppf, 0, G.k / ppf, G.O[0] + u * wv[0], G.O[1] + u * wv[1] - xa.hFt * G.k, 'tankside');
+  const H = lt.naturalHeight, st = 1;
+  for (let y = 0; y < H; y += st) { const h = xa.hFt - (y + st / 2) / ppf, dh = h - xa.axisH; if (Math.abs(dh) >= r * 0.995) continue; const u = cu - Math.sqrt(r * r - dh * dh), nh = dh / r;
+    g.globalAlpha = 0.6 + 0.4 * Math.max(0, Math.min(1, 0.55 + 0.6 * nh)); at(u); g.drawImage(lt, 0, y, lt.naturalWidth, st, 0, y, lt.naturalWidth, st + 0.6); }
+  g.globalAlpha = 1; g.setTransform(DPR, 0, 0, DPR, 0, 0); if (G.S.rail) solidTankRail(g, G, G.S.rail, tb); at(0); g.drawImage(hw, 0, 0); g.setTransform(DPR, 0, 0, DPR, 0, 0); return true; }
+function drawSolid(g, v, G, alpha) {
+  const a = G.a, im = carPic(v, G.far), P = G.P, L = G.L, px = a.px;
+  g.globalAlpha = alpha;
+  // ground shadow under the car's footprint
+  poly(g, [P(1, -0.6, 0.15), P(L - 1, -0.6, 0.15), P(L - 1, 10.5, 0.15), P(1, 10.5, 0.15)], 'rgba(30,25,20,.26)');
+  drawTrucks(g, v, G);
+  for (const b of solidOrder(G)) { if (SOLID_DBG.on) SOLID_DBG.order.push(v.id + ':' + b.id); solidBox(g, G, b); }
+  // a hood narrower than the cab: its side art is drawn set back from the cab side by its walkway width (u0)
+  const hb = G.S.hoodLayer && G.S.boxes.find(b => b.inset), hu = hb ? hb.u0 : 0, him = hb && IMG[artOf(v) + '-shorthood' + (G.far ? '-far' : '')];
+  if (him && him.complete && him.naturalWidth && G.hoodWall) { g.save(); g.beginPath(); G.hoodWall.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.clip(); solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + hu * G.wv[0], G.O[1] + hu * G.wv[1], 'hood'); g.drawImage(him, a.x0 * px, a.y0 * px, him.naturalWidth, him.naturalHeight); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    // and what stands on the hood top (the bell), above the side's top line
+    const t = [P(hb.x0, hu, hb.h1), P(hb.x1, hu, hb.h1), P(hb.x1, hu, hb.h1 + 3), P(hb.x0, hu, hb.h1 + 3)]; g.save(); g.beginPath(); t.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.clip();
+    solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + hu * G.wv[0], G.O[1] + hu * G.wv[1], 'hood'); g.drawImage(him, a.x0 * px, a.y0 * px, him.naturalWidth, him.naturalHeight); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  for (const o of G.S.overlays || []) if (G.faceW > 0.02 && SOLID_OVER[o]) SOLID_OVER[o](g, G);
+  if (G.S.dome) solidDome(g, G, G.S.dome);
+  if (solidTankSide(g, v, G)) {} else if (im && im.complete && im.naturalWidth) { solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0], G.O[1], 'body'); g.drawImage(im, a.x0 * px, a.y0 * px, im.naturalWidth, im.naturalHeight);
+    // side-view headlights stick out past the hood ends: they are right on straight track, but on a diagonal/curve the end face
+    // above carries the real headlights, so both ends' side lamps fade out as the end face grows in (no sideways lamps)
+    const la = solidLampAlpha(G);
+    if (la > 0.01) for (const end of G.S.lamps || []) { const li = IMG[artOf(v) + '-lamp' + end + (G.far ? '-far' : '')]; if (li && li.complete && li.naturalWidth) { g.globalAlpha = alpha * la; const o = hb && hb.inset === end ? hu : 0; solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + o * G.wv[0], G.O[1] + o * G.wv[1], 'lamp'); g.drawImage(li, a.x0 * px, a.y0 * px, li.naturalWidth, li.naturalHeight); } }
+    g.globalAlpha = alpha; g.setTransform(DPR, 0, 0, DPR, 0, 0); }
+  g.globalAlpha = 1;
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const x of [0, L]) for (const u of [0, 10.5]) for (const h of [0, 15.5]) { const p = P(x, u, h); x0 = Math.min(x0, p[0]); x1 = Math.max(x1, p[0]); y0 = Math.min(y0, p[1]); y1 = Math.max(y1, p[1]); }
+  // tap outline: the body boxes as drawn (full length, widest box, tallest roof), down to the rail
+  const bs = G.S.boxes || [], W = Math.max(9, ...bs.map(b => (b.u0 || 0) + b.w)), H = Math.max(13, ...bs.map(b => Math.max(b.h1, b.ridge || 0, b.roofH || 0))), hp = [];
+  for (const x of [0, L]) for (const u of [0, W]) for (const h of [-1.5, H]) hp.push(P(x, u, h));
+  HIT.vehs.push({ v, x0, x1, y0, y1: y1 + 1.5 * G.k, depth: G.q.depth, ghost: alpha < 1, hull: hull(hp), z: ++HZ });
+}
+
+return { draw(g, v, alpha) { const G = solidGeom(v); if (!G) return false; drawSolid(g, v, G, alpha == null ? 1 : alpha); return true; }, setDPR(d) { DPR = d; }, HIT, IMG,
+  ready(v) { const a = ART[artOf(v)]; return !!(a && a.solid && IMG[artOf(v)] && IMG[artOf(v)].complete); } };
+};
