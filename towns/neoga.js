@@ -343,7 +343,20 @@ function towerTick() { const tw = S.tower, c = liveCut(); if (!tw) return;
   if (tw.st === 'hold' && !NWT.run) { S.tower = { st: 'clear', dir: tw.dir }; toast('Neoga tower (N&W): "N&W is by. NI&I, you\'re lined over the diamond."', 'good'); save(); }
   else if (tw.st === 'clear' && c) { const occ = interlockOcc(c); if (occ) tw.entered = true; else if (tw.entered) { S.tower = null; save(); } } }
 // ================================================================= MOVEMENT
-const ctl = { dir: 0, mph: 10, v: 0, ap: null };
+const ctl = { dir: 0, mph: 10, v: 0, ap: null, sv: 0, rev: 0, notch: 0, brake: 1, sand: false, sandT: 0, slip: false, slide: false }; // Nov 3: Mattoon cab (reverser, throttle, independent brake, sand)
+const PHY = { TE: 60000, PW: 1750 * 550 * 0.82, MU: 0.20, MU_SAND: 0.33, BRK: 0.30 }, FUEL_CAP = 800, TRUCK_COST = 60; // same numbers as game.js
+const locoV = c => c && c.veh.find(isLoco);
+function fwdSign(c) { const i = c.veh.findIndex(isLoco); return c.aT[i] ? 1 : -1; } // F runs short hood first (GP9 B end); +1 = toward the cut head
+function drivePhys(c, dt, lim) { // Mattoon's stepConsist, in Neoga's cut terms (sv: ft/s, + toward the head)
+  const l = locoV(c); if (l.fuel == null) l.fuel = 320; if (l.sand == null) l.sand = 60;
+  const W = c.veh.reduce((a, v) => a + (v.wt || 30), 0) * 2000, Wl = (l.wt || 124) * 2000, m = W / 32.174, v = ctl.sv, sp = Math.abs(v);
+  const mu = ctl.sand && l.sand > 0 ? PHY.MU_SAND : PHY.MU, n = l.fuel > 0 && ctl.rev ? ctl.notch : 0;
+  let Ft = n ? Math.min(PHY.TE * n / 8, PHY.PW * n / 8 / Math.max(sp, 1)) : 0; ctl.slip = Ft > mu * Wl; if (ctl.slip) Ft = mu * Wl * 0.7;
+  Ft *= ctl.rev * fwdSign(c); let Fb = ctl.brake * PHY.BRK * Wl; ctl.slide = Fb > mu * Wl * 1.05 && sp > 0.5; if (ctl.slide) Fb = mu * Wl * 0.8;
+  const Rr = 0.004 * W + 0.0003 * W * sp / FTS; let a = Ft / m; const stopF = (Fb + Rr) / m;
+  if (sp < 0.05 && Math.abs(a) <= stopF) { ctl.sv = 0; } else { let nv = v + a * dt; const s0 = Math.sign(nv) || Math.sign(v); const dec = stopF * dt; if (Math.abs(nv) <= dec && Math.sign(a) !== s0) nv = 0; else nv -= s0 * dec; if (v && Math.sign(nv) !== Math.sign(v) && !Ft) nv = 0; ctl.sv = nv; }
+  if (n) l.fuel = Math.max(0, l.fuel - (0.4 + n * n * 0.06) * dt / 60 * 60 / 60); if (ctl.sand && l.sand > 0) { l.sand = Math.max(0, l.sand - 1.2 * dt); if (l.sand <= 0) ctl.sand = false; }
+  ctl.v = Math.abs(ctl.sv); return Math.sign(ctl.sv); }
 function sideOfHead(c) { const h = pathPt(c, cutLen(c)), t = pathPt(c, 0), a = ptAt(h.t, h.d), b = ptAt(t.t, t.d); return Math.abs(a[0] - b[0]) > 5 ? (a[0] > b[0] ? 1 : -1) : (a[1] < b[1] ? 1 : -1); } // +1: head is screen-right (or up)
 function leadingEnd(c, sgn) { return sgn > 0 ? pathPt(c, cutLen(c)) : pathPt(c, 0); }
 function couple(c, o, sgn) { // c moved toward its head (sgn>0) or tail and touched cut o
@@ -362,15 +375,17 @@ function signalAhead(c, sgn) { // distance to a red home signal ahead on the mai
   if (dx > 0 && p[0] < SIGS && A.SH.upper === 'red') return SIGS - p[0]; if (dx < 0 && p[0] > SIGN && A.NH.upper === 'red') return p[0] - SIGN; return Infinity; }
 function step(dt) {
   const c = liveCut(); if (!c) return; const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
+  if (!ctl.ap && (S.mode || 'drive') === 'drive') { const sgn = drivePhys(c, dt, lim); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); }
   let want = ctl.dir ? Math.min(ctl.mph * FTS, lim) : 0, sgn = ctl.dir;
   if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; crossDone(); return; } }
   if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
   ctl.v += Math.max(-2.5 * dt, Math.min(1.2 * dt, want - ctl.v)); if (!sgn || ctl.v <= 0.01) { ctl.v = Math.max(0, ctl.v); if (!sgn) return; }
-  let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left);
+  let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left); ctl.sv = ctl.v * sgn; moveStep(c, sgn, s); }
+function moveStep(c, sgn, s) {
   while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
     crossSignal(c, sgn, before, after);
-    const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
-    if (r.stop) { ctl.v = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
+    const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
+    if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
 }
 function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the lined route to the tapped point (either way), stopping at red home signals
   for (const sgn of [1, -1]) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
@@ -649,14 +664,27 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   for (const cc of S.cuts) for (const q of vehPos(cc)) items.push({ y: (ptAt(q.pm.t, q.pm.d)[1]), f: () => drawVeh(q) });
   items.push({ y: 0.5, f: drawNWTrain });
   items.sort((a, b) => a.y - b.y).forEach(o => o.f());
+  if (S.tags) { g.font = '700 11px Arial'; g.textAlign = 'center'; for (const cc of S.cuts) for (const q of vehPos(cc)) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const t = DEST[v.dest] ? DEST[v.dest].name : v.dest || ''; if (!t) continue; const [x, y] = ptAt(q.pm.t, q.pm.d), X = sx(x), Y = sy(y) - 26, w = g.measureText(t).width + 8; g.fillStyle = '#1c2b50'; g.fillRect(X - w / 2, Y - 11, w, 15); g.fillStyle = '#fff'; g.fillText(t, X, Y); } }
   // labels
   g.font = '700 12px Arial'; g.fillStyle = '#222'; g.textAlign = 'left'; g.fillText('◀ N to Mattoon', Math.max(6, sx(XN) + 6), sy(0) + 26); g.textAlign = 'right'; g.fillText('S to Effingham ▶', Math.min(W - 6, sx(XS) - 6), sy(0) + 26);
   g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('N&W', sx(NWX) + 18, Math.min(H - 8, sy(600))); g.fillText('N&W Interchange', sx(1330), sy(-170)); g.fillText('Run-around', sx(2500), sy(-40));
   if (cam.z < 1.3) { g.fillText('House track', sx(HX0 + 200), sy(HOUSE_OFF) + 20); g.fillText('Miller & Sons Fuel', sx(FX0 + 110), sy(FUEL_OFF) + 22); g.fillText('Neoga tower (N&W)', sx(TWX + 18), sy(-60)); }
-  const tw = S.tower; $('rtBtn').textContent = !tw ? 'Request route' : tw.st === 'hold' ? 'Holding for N&W' : 'Route lined';
+  hud(); const tw = S.tower; $('rtBtn').textContent = !tw ? 'Request route' : tw.st === 'hold' ? 'Holding for N&W' : 'Route lined';
   $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; ngCheckUnlock(); $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Neoga';
-  $('ngSpd').textContent = (ctl.v / FTS).toFixed(0) + ' mph'; $('ngX').textContent = (S.speedX || 1) + 'x';
 }
+function hud() { const c = liveCut(), l = locoV(c) || {}, mph = ctl.v / FTS, mode = S.mode || 'drive'; $('speedBtn').textContent = (S.speedX || 1) + 'x';
+  $('mph').textContent = mph.toFixed(1); const lim = c ? (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) : 10; $('speedo').classList.toggle('fast', mph > lim - 0.5);
+  $('dirArrow').textContent = mph < 0.05 || !c ? '' : (Math.sign(ctl.sv) * fwdSign(c) > 0 ? 'fwd' : 'rev');
+  const fu = l.fuel == null ? 320 : l.fuel, sa = l.sand == null ? 60 : l.sand, fp = fu / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = fu <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(fu) + ' gal';
+  $('sandBar').style.width = sa.toFixed(1) + '%'; $('sandBar').className = sa <= 0 ? 'empty' : sa < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(sa) + '%';
+  document.body.classList.toggle('tapmode', mode === 'tap'); $('modeDrive').classList.toggle('on', mode === 'drive'); $('modeTap').classList.toggle('on', mode === 'tap');
+  ['R', 'N', 'F'].forEach((k, i) => $('rev' + k).classList.toggle('on', ctl.rev === i - 1)); $('notch').textContent = ctl.notch ? 'Notch ' + ctl.notch : 'Idle';
+  document.querySelectorAll('[data-brk]').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.brk - ctl.brake) < 0.01)); $('sandBtn').classList.toggle('on', ctl.sand); $('sandBtn').textContent = ctl.sand ? 'Sanding…' : 'Sand';
+  $('truckBtn').classList.toggle('hide', !(c && fu <= 0)); $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`; $('tagsBtn').classList.toggle('on', !!S.tags);
+  let w = ''; if (c && fu <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (ctl.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (ctl.slide) w = 'WHEELS SLIDING! Sand helps you stop.'; else if (mph > lim + 0.5) w = `Over the ${lim} mph track speed.`;
+  else if (mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.'; else if (S.crossWait) w = 'Request the route from the tower to continue.'; $('warn').textContent = w;
+  const L = jobs(), nd = L.filter(j => j.done).length, nx = L.find(j => !j.done); $('jobText').innerHTML = (nx ? '📋 ' + esc(nx.text) : L.length ? '✅ All Neoga cars worked' : ngOpen() ? '📋 No cars to work. End the day for new cars.' : '📋 Neoga customers open at 100 reputation');
+  $('jobStatus').className = ''; $('jobStatus').textContent = `Neoga · Day ${dayNo()} · ${nd} of ${L.length} jobs done · tap for the list`; }
 const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 60) % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 // ================================================================= UI
 let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; let d = b.children.length === 1 ? b.firstChild : null; // perf (Nov 1): the same message still showing is kept (timer restarted), not rebuilt every sim step
@@ -711,13 +739,28 @@ function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideO
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
 function build() {
-  for (const id of ['jobbar', 'panel', 'sceneBtns', 'speedBtn', 'restartBtn', 'mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
+  for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
   { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(); } // Menu (Nov 1): Full screen, Industries, other towns
-  const bar = document.createElement('div'); bar.id = 'neogaBar'; bar.className = 'ng';
-  bar.innerHTML = `<div class="ngrow" data-v="no"><button data-a="dirL">◀</button><button data-a="stop" class="red">■</button><button data-a="dirR">▶</button><button data-a="mph" id="ngMph">10 mph</button><span id="ngSpd">0 mph</span></div>
-  <div class="ngrow" data-v="no"><button data-a="route" id="rtBtn">Request route</button><button data-a="jobs">Jobs</button><button data-a="endday" class="alt">End day</button></div>
-  <div class="ngrow"><button data-a="zout" class="alt">−</button><button data-a="zin" class="alt">+</button><button data-a="follow" class="alt" data-v="no">Follow</button><button data-a="x" class="alt" id="ngX" data-v="no">1x</button><button data-a="map" class="alt">Map</button><button data-a="towns" class="alt" data-v="no">Towns</button><button data-a="north" class="alt" data-v="no">◀ N to Mattoon</button></div>`;
-  wrap.appendChild(bar);
+  // Nov 3 (Stephen: "the screen should look the same as mattoon"): Mattoon's top bar, job bar, scene buttons and cab panel drive Neoga too
+  const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="route" id="rtBtn">Request route</button><button class="act" data-a="north">To Mattoon</button><button class="act" data-a="endday">End day</button>');
+  { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
+  $('restartBtn').onclick = () => toast('Restart from Mattoon: run north first.');
+  $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; };
+  $('tagsBtn').onclick = () => { S.tags = !S.tags; save(); }; $('uncBtn').onclick = () => toast('Tap a car to uncouple it.');
+  $('speedBtn').onclick = () => { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; };
+  $('drawerBtn').onclick = () => document.body.classList.toggle('drawer');
+  const live = () => !VISIT && liveCut(); const stopping = () => ctl.v / FTS > 0.3;
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { const m = b.dataset.mode; if ((S.mode || 'drive') === m) return; S.mode = m; ctl.ap = null; ctl.notch = 0; ctl.dir = 0; if (m === 'drive') ctl.brake = ctl.v < 0.1 ? 1 : 0.5; else { ctl.v = 0; ctl.sv = 0; } save(); });
+  document.querySelectorAll('[data-rev]').forEach(b => b.onclick = () => { if (!live()) return; const r = +b.dataset.rev; if (r !== ctl.rev && stopping()) { toast('Stop before you move the reverser.', 'bad'); return; } ctl.rev = r; S.crossT = null; S.crossWait = false; crossAsk = null; });
+  $('thrUp').onclick = () => { if (live()) { ctl.notch = Math.min(8, ctl.notch + 1); ctl.ap = null; cam.follow = true; } }; $('thrDn').onclick = () => { ctl.notch = Math.max(0, ctl.notch - 1); }; $('thrIdle').onclick = () => { ctl.notch = 0; };
+  document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { ctl.brake = +b.dataset.brk; });
+  $('sandBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; if (!ctl.sand && (l.sand ?? 60) <= 0) { toast('Sand boxes are empty.', 'bad'); return; } ctl.sand = !ctl.sand; };
+  $('stopBtn').onclick = () => { ctl.ap = null; ctl.dir = 0; toast('Stopping.'); };
+  $('truckBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; book('fuel', TRUCK_COST); l.fuel = FUEL_CAP * 0.25; toast('Fuel truck came out: 200 gal.'); save(); };
+  // pinch zoom on phones (Neoga's +/- buttons are gone with its old bar)
+  { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
+    cv.addEventListener('pointermove', e => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, e); if (pts.size === 2 && d0) { const [a, b] = [...pts.values()]; cam.z = Math.max(0.25, Math.min(4, z0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / d0)); } });
+    for (const t of ['pointerup', 'pointercancel']) cv.addEventListener(t, e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; }); }
   document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
