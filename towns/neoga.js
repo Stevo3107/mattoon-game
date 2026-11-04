@@ -300,6 +300,11 @@ function advance(dt) { // game time passes in Neoga: car hire, work at the spots
       v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = E.time; delete v.work; delete v.ngFee;
       toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
   if (hire) book('hire', hire * dt / 3600);
+  { // Nov 4 parity: storage, as in Mattoon. A car for a customer that is full (every one of its spots holds another car) pays storage
+    // from the customer, by the hour at the larger of STORAGE_DAY/24 and that car's hire; lease cars never pay
+    const cars = standingCars(), full = k => { const sps = SPOTS.filter(sp => sp.dest === k); return sps.length && sps.every(sp => cars.some(o => o.v.dest === k && Math.abs(o.pm.d - sp.d) <= sp.tol && o.pm.t === sp.t)); };
+    for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose' || !DEST[v.dest] || isLease(v) || carAtSpot(v, q.pm) || !full(v.dest)) continue;
+      const amt = Math.max(SH.STORAGE_DAY / 24, roadOf(v) !== 'NII' ? SH.hireRate(v, winterNow()) : 0) * dt / 3600; book('dem', amt); IND(v.dest, 'inc', amt); M.stor = (M.stor || 0) + amt; } }
   for (const q of standingCars()) { const v = q.v; if (v.doneAt && v.from && !v.ngOut && (q.live || !SPOTS.some(sp => sp.dest === v.from && sp.t === q.pm.t && Math.abs(sp.d - q.pm.d) <= sp.tol + 30))) { v.ngOut = 1; IND(v.from, 'out'); } if (!v.doneAt || isLease(v) || q.live) continue; if (!v.from || !SPOTS.some(sp => sp.dest === v.from && sp.t === q.pm.t && Math.abs(sp.d - q.pm.d) <= sp.tol + 30)) continue;
     const due = demurrage(v.doneAt, E.time, v.from) - (v.demPaid || 0); if (due > 0) { book('dem', due); IND(v.from, 'inc', due); v.demPaid = (v.demPaid || 0) + due; } }
 }
@@ -362,7 +367,6 @@ function drivePhys(c, dt, lim) { // the shared engine physics (Mattoon's stepCon
   const r = SH.driveStep({ v: ctl.sv || 0, W: c.veh.reduce((a, v) => a + (v.wt || 30), 0), Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: false, lim }, dt);
   ctl.sv = r.v; ctl.slip = r.slip; ctl.slide = r.slide;
   const u = SH.consume(l, ctl, r.eq, dt); if (u.sandCost) book('sand', u.sandCost); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); if (u.sandEmpty) toast('Sand boxes are empty.', 'bad');
-  if (running) { const cf = SH.crewFuel(dt, ctl.notch, true); book('crew', cf.crew); book('fuel', cf.fuel); } // crew and fuel by the hour, as in Mattoon
   ctl.v = Math.abs(ctl.sv); return Math.sign(ctl.sv); }
 function sideOfHead(c) { const h = pathPt(c, cutLen(c)), t = pathPt(c, 0), a = ptAt(h.t, h.d), b = ptAt(t.t, t.d); return Math.abs(a[0] - b[0]) > 5 ? (a[0] > b[0] ? 1 : -1) : (a[1] < b[1] ? 1 : -1); } // +1: head is screen-right (or up)
 function leadingEnd(c, sgn) { return sgn > 0 ? pathPt(c, cutLen(c)) : pathPt(c, 0); }
@@ -381,10 +385,11 @@ function signalAhead(c, sgn) { // distance to a red home signal ahead on the mai
   const e = leadingEnd(c, sgn), p = ptAt(e.t, e.d); if (Math.abs(p[1]) > 1 || !/^M/.test(e.t)) return Infinity; const A = aspects(), dx = sgn * sideOfHead(c);
   if (dx > 0 && p[0] < SIGS && A.SH.upper === 'red') return SIGS - p[0]; if (dx < 0 && p[0] > SIGN && A.NH.upper === 'red') return p[0] - SIGN; return Infinity; }
 function step(dt) {
-  const c = liveCut(); if (!c) return; const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
+  const c = liveCut(); if (!c) return; { const l0 = locoV(c), cf = SH.crewFuel(dt, ctl.notch, !!(l0 && l0.fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); } // Nov 4: crew + fuel every step in every mode (Drive or Tap), as in Mattoon
+  const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
   if (!ctl.ap && (S.mode || 'drive') === 'drive') { const sgn = drivePhys(c, dt, lim); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); }
   let want = ctl.dir ? Math.min(ctl.mph * FTS, lim) : 0, sgn = ctl.dir;
-  if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; crossDone(); return; } }
+  if (ctl.ap) { sgn = ctl.ap.sgn; const left = ctl.ap.left; want = Math.min(lim, Math.max(1.5 * FTS, Math.sqrt(2 * 1.2 * Math.max(0, left)))); if (left <= 0.5) { ctl.ap = null; ctl.v = 0; if (!S.crossT) toast('Arrived.'); crossDone(); return; } }
   if (sgn && (ctl.ap || true)) { const sig = signalAhead(c, sgn); if (ctl.ap && sig < Infinity) want = Math.min(want, Math.sqrt(2 * 1.2 * Math.max(0, sig - 25))); if (ctl.ap && sig - 25 < 1) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } }
   ctl.v += Math.max(-2.5 * dt, Math.min(1.2 * dt, want - ctl.v)); if (!sgn || ctl.v <= 0.01) { ctl.v = Math.max(0, ctl.v); if (!sgn) return; }
   let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left); ctl.sv = ctl.v * sgn; moveStep(c, sgn, s); }
@@ -394,12 +399,30 @@ function moveStep(c, sgn, s) {
     const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
     if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'clear') toast('Clearance point: cars past here would foul the N&W main.', 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
 }
-function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the lined route to the tapped point (either way), stopping at red home signals
-  for (const sgn of [1, -1]) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
-    for (let i = 0; i < 6000; i += 2) { const e0 = leadingEnd(probe, sgn); const r = moveCut(probe, sgn * 2); dist += r.moved; const e = leadingEnd(probe, sgn);
-      if (e.t === t && (Math.abs(e.d - d) <= 2.5 || (e0.t === t && (e0.d - d) * (e.d - d) <= 0))) { ctl.ap = { sgn, left: dist }; ctl.dir = 0; toast('Autopilot: running to the spot.'); return true; }
-      if (r.stop || r.moved < 1.9) break; } }
-  toast('Can\'t get there on the route as lined. Check the switches.', 'bad'); return false; }
+// Nov 4 parity: Tap lines the switches itself, like Mattoon's tapTarget. Tries every lining of the switches that are free to throw
+// (no car on their points), probes both ways, and takes the shortest run (fewest throws on a tie). The locked N&W switch is never thrown.
+function swBusy(k) { const s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
+  return S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e)))); }
+function probeTo(c, t, d, sgn) { const probe = { path: c.path.map(g => ({ ...g })), veh: c.veh, aT: c.aT }; let dist = 0;
+  for (let i = 0; i < 6000; i += 2) { const e0 = leadingEnd(probe, sgn); const r = moveCut(probe, sgn * 2); dist += r.moved; const e = leadingEnd(probe, sgn);
+    if (e.t === t && (Math.abs(e.d - d) <= 2.5 || (e0.t === t && (e0.d - d) * (e.d - d) <= 0))) return dist;
+    if (r.stop || r.moved < 1.9) break; } return null; }
+function carTag(v) { const code = v.dest || (v.type === 'caboose' ? 'HOLD' : 'NII'), sub = DEST[code] ? 'NEO' : 'MAT', sd = SH.SUBDIVS[sub]; return { code, load: SH.tagLoad(v), sub, subName: sd.name, color: sd.color, ink: sd.ink, name: DEST[code] ? DEST[code].name : code }; }
+function apTo(t, d) { const c = liveCut(); if (!c) return; // run to the tapped point (either way), lining the switches, stopping at red home signals
+  const keys = Object.keys(SWITCHES), free = keys.filter(k => !swBusy(k)), save0 = { ...S.sw }; let best = null;
+  for (let m = 0; m < (1 << free.length); m++) { free.forEach((k, i) => { S.sw[k] = (m >> i) & 1 ? (save0[k] === 'N' ? 'R' : 'N') : save0[k]; });
+    const throws = free.filter(k => S.sw[k] !== save0[k]);
+    for (const sgn of [1, -1]) { const dist = probeTo(c, t, d, sgn); if (dist != null && (!best || dist < best.dist - 0.5 || (Math.abs(dist - best.dist) <= 0.5 && throws.length < best.throws.length))) best = { dist, sgn, throws, sw: { ...S.sw } }; } }
+  Object.assign(S.sw, save0);
+  if (!best) { toast(keys.some(swBusy) ? "Can't line a route there: a car is on the switch points." : "Can't get there from here.", 'bad'); return false; }
+  Object.assign(S.sw, best.sw); ctl.ap = { sgn: best.sgn, left: best.dist }; ctl.dir = 0; ctl.brake = 0;
+  if (best.throws.length) toast(`Auto-route: lining switch${best.throws.length > 1 ? 'es' : ''} ${best.throws.map(k => SWITCHES[k].name).join(', ')}.`);
+  SH.sfx('tick'); save(); return true; }
+// one switch throw, every way in (scene stand or the Map): Mattoon's rules and words
+function throwSw(k, X, Y) { const s = SWITCHES[k];
+  if (swBusy(k)) { TAP_FLASH = { x: X, y: Y, t: performance.now(), bad: true }; toast(`Can't throw switch ${s.name}: there's equipment on it.`, 'bad'); return false; }
+  S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; TAP_FLASH = { x: X, y: Y, t: performance.now(), bad: false }; SH.sfx('sw'); save(); return true; }
+let TAP_FLASH = null, TAGS_DRAWN = [];
 // ================================================================= TRAVEL
 // Nov 3 fix: an inbound loaded car for a Neoga customer that the player never coupled to himself is a stray from the old 'IC cars ride down on your train'
 // rule (it then rode back to Mattoon and down again every trip). Take strays off the ends of a cut and set them out on the interchange track.
@@ -618,7 +641,7 @@ const HIT = { stands: [], cars: [] };
 function drawStand(k) { const s = SWITCHES[k], st = S.sw[k], [x, y] = [s.at[0] + 12, s.at[1] + s.side * 7], key = `switch-stand-${s.high ? 'high' : 'low'}-${st === 'N' ? 'normal' : 'reverse'}@2x`, i = img(BA(key)), h = s.high ? 7.1 : 3.4;
   if (ok(i)) { const w = i.naturalWidth / i.naturalHeight * h; g.drawImage(i, sx(x) - w / 2 * cam.z, sy(y) - hz(h), w * cam.z, hz(h)); }
   else { g.fillStyle = st === 'N' ? '#2fa34f' : '#c8281e'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y) - hz(h), 3 * cam.z, hz(1.5)); }
-  const r = Math.max(14, 3 * cam.z); HIT.stands.push({ k, x: sx(x), y: sy(y) - hz(h / 2), r });
+  const r = Math.max(14, 3 * cam.z); HIT.stands.push({ k, x: sx(x), y: sy(y) - hz(h / 2), r, rd: Math.max(8, hz(h) / 2, 3 * cam.z) });
   if (cam.z < 0.9) { g.beginPath(); g.arc(sx(x), sy(y) - hz(h) - 6, 5, 0, 7); g.fillStyle = st === 'N' ? '#2fa34f' : '#c8281e'; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#fff'; g.stroke(); } }
 // ---- rolling stock: approved side pictures (Danny's art, same as Mattoon). Cars with no art yet = dark stand-in block
 // Nov 3 (Stephen): Mattoon's solid rolling stock (src/solid.js via NII_SOLID_KIT), fed Neoga's track. Kit world: x, y' = -y (+y' away from the viewer, like Mattoon).
@@ -705,7 +728,8 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   for (const cc of S.cuts) for (const q of vehPos(cc)) items.push({ y: (ptAt(q.pm.t, q.pm.d)[1]), f: () => drawVeh(q, cc) });
   items.push({ y: 0.5, f: drawNWTrain });
   items.sort((a, b) => a.y - b.y).forEach(o => o.f());
-  if (S.tags) { g.font = '700 11px Arial'; g.textAlign = 'center'; for (const cc of S.cuts) for (const q of vehPos(cc)) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const t = DEST[v.dest] ? DEST[v.dest].name : v.dest || ''; if (!t) continue; const [x, y] = ptAt(q.pm.t, q.pm.d), X = sx(x), Y = sy(y) - 26, w = g.measureText(t).width + 8; g.fillStyle = '#1c2b50'; g.fillRect(X - w / 2, Y - 11, w, 15); g.fillStyle = '#fff'; g.fillText(t, X, Y); } }
+  if (S.tags) TAGS_DRAWN = SH.drawTags(g, HIT.cars.filter(h => !isLoco(h.q.v)).map(h => ({ id: h.q.v.id, x0: h.x0, x1: h.x1, y0: h.y0, depth: -h.y1, t: carTag(h.q.v) })), W, H); else TAGS_DRAWN = []; // Nov 4: Mattoon's tags, one painter (shared.js)
+  if (TAP_FLASH) { const a = 1 - (performance.now() - TAP_FLASH.t) / 350; if (a <= 0) TAP_FLASH = null; else { g.globalAlpha = a; g.beginPath(); g.arc(TAP_FLASH.x, TAP_FLASH.y, 16 + (1 - a) * 10, 0, 7); g.lineWidth = 3; g.strokeStyle = TAP_FLASH.bad ? '#c8281e' : '#ffd23f'; g.stroke(); g.globalAlpha = 1; } }
   // labels
   g.font = '700 12px Arial'; g.fillStyle = '#222'; g.textAlign = 'left'; g.fillText('◀ N to Mattoon', Math.max(6, sx(XN) + 6), sy(0) + 26); g.textAlign = 'right'; g.fillText('S to Effingham ▶', Math.min(W - 6, sx(XS) - 6), sy(0) + 26);
   g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('N&W', sx(NWX) + 18, Math.min(H - 8, sy(600))); g.fillText('N&W Interchange', sx(1330), sy(-170)); g.fillText('Run-around', sx(2500), sy(-40));
@@ -745,11 +769,10 @@ function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined 
 function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(NII.visitNote(), 'bad'); return; } }
     let bt = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!bt || e < bt.e)) bt = { t, d, e, p }; }
     if (bt) NII.crossFromVisit({ to: 'neoga', x: bt.p[0], y: bt.p[1], label: T[bt.t].name, name: 'Neoga' }); return; } // own tab: tap a switch to throw it, tap a track to run the engine there
-  { const [a, b] = m.w2s(NWL.at[0], NWL.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(LOCK_MSG, 'bad'); return; } }
+  { const [a, b] = m.w2s(NWL.at[0], NWL.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(LOCK_MSG, 'bad'); SH.sfx('tick'); return; } }
   let bs = null; for (const [k, sw] of Object.entries(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]), e = Math.hypot(a - X, b - Y); if (e < 22 && (!bs || e < bs.e)) bs = { k, e }; }
   if (bs) { const k = bs.k, s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
-    const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e))));
-    if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); NII.mapTabs.repaint(); return; }
+    throwSw(k, X, Y); NII.mapTabs.repaint(); return; }
   let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!best || e < best.e)) best = { t, d, e }; }
   if (best && liveCut()) { S.crossT = null; S.crossWait = false; apTo(best.t, best.d); NII.mapTabs.hide(); } }
 function openMap() { NII.mapTabs.show('neoga', { liveSnap: mapSnap, liveTap: mapLiveTap, crossTap: VISIT ? null : crossStart }); }
@@ -793,7 +816,7 @@ function build() {
   { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
   $('restartBtn').onclick = () => { if (VISIT) { toast(NII.visitNote(), 'bad'); return; } showModal(SH.RESTART_HTML + '<div class="btns"><button data-a="close" class="alt">Cancel</button><button data-a="ngReset" class="red">Yes, restart</button></div>'); }; // same Restart as Mattoon: whole game back to day 1 in Mattoon
   $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; cam.z = zBase(); };
-  $('tagsBtn').onclick = () => { S.tags = !S.tags; save(); }; $('uncBtn').onclick = () => setUncouple(!UNC_ON);
+  $('tagsBtn').onclick = () => { S.tags = !S.tags; try { localStorage.setItem('nii-mattoon-tags', S.tags ? '1' : '0'); } catch (e) { } save(); }; $('uncBtn').onclick = () => setUncouple(!UNC_ON);
   $('speedBtn').onclick = () => { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; };
   $('drawerBtn').onclick = () => document.body.classList.toggle('drawer');
   const live = () => !VISIT && liveCut(); const stopping = () => ctl.v / FTS > 0.3;
@@ -825,15 +848,15 @@ function build() {
   cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = (e.clientX - r.left) * (r.width ? W / r.width : 1), Y = (e.clientY - r.top) * (r.height ? H / r.height : 1); MOUSE = e.pointerType === 'mouse'; tap(X, Y); }); // Nov 1: scaled to the canvas's logical size
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = zLim(cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }, { passive: false });
 }
-let MOUSE = false; const hitR = s => MOUSE ? Math.min(s.r, Math.max(9, s.r * 0.55)) : s.r; // mouse: a tight ring on the stand; touch keeps the generous one
+let MOUSE = false; const hitR = s => SH.standHitR(s.rd != null ? s.rd : s.r, MOUSE); // Nov 4: Mattoon's stand hit area (drawn disc + margin; 22 px round by touch)
 function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s))) toast(NII.visitNote(), 'bad'); return; } S.crossT = null; S.crossWait = false;
-  const st = HIT.stands.find(s => Math.hypot(s.x - X, s.y - Y) < hitR(s)); if (st && st.lock) { toast(LOCK_MSG, 'bad'); return; } if (st) { const k = st.k, s = SWITCHES[k]; const ends = [s.stem, s.N, s.R];
-    const busy = S.cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(Math.abs((e === 'a' ? 0 : T[t].len) - g2.d0), Math.abs((e === 'a' ? 0 : T[t].len) - g2.d1), (Math.min(g2.d0, g2.d1) <= (e === 'a' ? 0 : T[t].len) && Math.max(g2.d0, g2.d1) >= (e === 'a' ? 0 : T[t].len)) ? 0 : 99) < 12)));
-    if (busy) { toast('A car is on the switch points.', 'bad'); return; } S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; toast(`Switch ${s.name}: ${S.sw[k] === 'N' ? 'normal' : 'reversed'}.`); save(); return; }
+  SH.audioOn(); const st = HIT.stands.map(s => ({ s, e: Math.hypot(s.x - X, s.y - Y) })).filter(o => o.e < hitR(o.s)).sort((a, b) => a.e - b.e).map(o => o.s)[0];
+  if (st && st.lock) { TAP_FLASH = { x: st.x, y: st.y, t: performance.now(), bad: true }; toast(LOCK_MSG, 'bad'); SH.sfx('tick'); return; } if (st) { throwSw(st.k, st.x, st.y); return; }
+  { const tg = S.tags && TAGS_DRAWN.slice().reverse().find(r => X >= r.x - 4 && X <= r.x + r.w + 4 && Y >= r.y - 4 && Y <= r.y + r.h + 9); if (tg) { const cc = S.cuts.find(c => c.veh.some(v => v.id === tg.id)), q = cc && vehPos(cc).find(o => o.v.id === tg.id); if (q) { if (UNC_ON) { if (uncTap({ ...q, c: cc })) setUncouple(false); return; } carModal({ ...q, c: cc }); return; } } }
   const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { const q = { ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }; if (UNC_ON) { if (uncTap(q)) setUncouple(false); return; } carModal(q); return; }
   // track: nearest point within 12 px -> autopilot there
   let best = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const [x, y] = ptAt(t, d), e = Math.hypot(sx(x) - X, sy(y) - Y); if (e < (MOUSE ? 7 : 14) && (!best || e < best.e)) best = { t, d, e }; }
-  if (best && liveCut()) apTo(best.t, best.d); }
+  if (best && liveCut()) { if ((S.mode || 'drive') !== 'tap') { toast('Switch to Tap mode to send the engine by tapping. Tap a switch stand to throw it.'); return; } apTo(best.t, best.d); } }
 // ================================================================= LOOP
 let last = performance.now(), saveT = 0, mapT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
@@ -842,5 +865,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

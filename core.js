@@ -48,7 +48,58 @@ window.NII_SHARED = (() => {
       if (l.sand <= 0 || ctl.sandT > 12) { ctl.sand = false; ctl.sandT = 0; r.sandEmpty = l.sand <= 0; } }
     return r; }
   const RESTART_HTML = `<h2>Restart from the beginning?</h2><p>Puts every car, the engine, the switches, cash, reputation and the first job back exactly how the game starts, so you can replay the same situation. Your progress in this run is erased.</p>`;
-  return { ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+
+  // ---- PICKING (Nov 4 parity): one finger/mouse tolerance for every town. Touch: 24 px off a track, cars +10, buttons/stands +4;
+  // a mouse is exact (4 px off a track). A switch stand counts its drawn disc plus the button margin, at least 22 px round by touch.
+  const PICK = { touch: { tol: 24, car: 10, btn: 4 }, mouse: { tol: 4, car: 0, btn: 0 } };
+  const standHitR = (rd, mouse) => mouse ? rd + PICK.mouse.btn + 4 : Math.max(22, rd + PICK.touch.btn);
+  // ---- SOUND: one tiny synth for every town, off until the first touch (audioOn)
+  let AC = null;
+  function audioOn() { if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (er) { } } return AC; }
+  function sfx(kind) {
+    try {
+      if (!AC) return; const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.connect(g); g.connect(AC.destination);
+      const S = { clank: [180, 0.18, 'square', 0.12], crash: [90, 0.4, 'sawtooth', 0.2], pin: [600, 0.08, 'triangle', 0.1], tick: [900, 0.04, 'square', 0.05], cash: [880, 0.25, 'triangle', 0.1], sw: [320, 0.1, 'square', 0.08] }[kind] || [440, .1, 'sine', .05];
+      o.type = S[2]; o.frequency.setValueAtTime(S[0], t); if (kind === 'cash') o.frequency.setValueAtTime(1320, t + 0.1);
+      g.gain.setValueAtTime(S[3], t); g.gain.exponentialRampToValueAtTime(0.001, t + S[1]); o.start(t); o.stop(t + S[1] + 0.02);
+    } catch (e) { }
+  }
+  // ---- DESTINATION TAGS: Mattoon's flag over every car, coloured by subdivision, code + load line, stacked so none overlap,
+  // with the subdivision key at the bottom. hs: [{ id, x0, x1, y0, depth, t: { code, load, sub, color, ink } }]. Returns the tags drawn (tappable).
+  const SUBDIVS = { MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' }, NEO: { name: 'Neoga', color: '#1f5fa8', ink: '#ffffff' } };
+  const TAG_FONT = '800 12.5px -apple-system,Segoe UI,Roboto,Arial', TAG_FONT2 = '700 11.5px -apple-system,Segoe UI,Roboto,Arial', TAG_H1 = 19, TAG_H2 = 32;
+  function drawTags(g, hs, VW, VH, keyX) {
+    const placed = []; hs = hs.slice().sort((a, b) => a.depth - b.depth);
+    g.font = TAG_FONT; g.textAlign = 'center'; g.textBaseline = 'middle';
+    for (const h of hs) {
+      const t = h.t, TAG_H = t.load ? TAG_H2 : TAG_H1, mid = (h.x0 + h.x1) / 2;
+      g.font = TAG_FONT2; const w2 = t.load ? g.measureText(t.load).width : 0; g.font = TAG_FONT; const w = Math.ceil(Math.max(g.measureText(t.code).width, w2)) + 12;
+      if (h.x1 < 0 || h.x0 > VW) continue;
+      const cx = Math.max(w / 2 + 4, Math.min(VW - 54 - w / 2, mid));
+      let y = h.y0 - 6 - TAG_H;
+      for (let pass = 0; pass < 6; pass++) { const hit = placed.find(r => cx - w / 2 < r.x + r.w + 3 && cx + w / 2 > r.x - 3 && y < r.y + r.h + 3 && y + TAG_H > r.y - 3); if (!hit) break; y = hit.y - TAG_H - 4; }
+      const x = cx - w / 2, px = Math.max(x + 6, Math.min(x + w - 6, mid));
+      g.globalAlpha = 1;
+      g.beginPath(); g.moveTo(px - 5, y + TAG_H - 0.5); g.lineTo(px + 5, y + TAG_H - 0.5); g.lineTo(px, y + TAG_H + 5); g.closePath(); g.fillStyle = t.color; g.fill(); g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.stroke();
+      g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, TAG_H, 5); else g.rect(x, y, w, TAG_H);
+      g.fillStyle = t.color; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#ffffff'; g.stroke();
+      g.fillStyle = t.color; g.fillRect(px - 3.5, y + TAG_H - 2, 7, 2.5);
+      g.fillStyle = t.ink;
+      if (t.load) { g.fillText(t.code, cx, y + 9.5); g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(x + 5, y + 17.5, w - 10, 1); g.fillStyle = t.ink; g.font = TAG_FONT2; g.fillText(t.load, cx, y + 24.5); g.font = TAG_FONT; }
+      else g.fillText(t.code, cx, y + TAG_H / 2 + 0.5);
+      placed.push({ id: h.id, code: t.code, load: t.load, color: t.color, sub: t.sub, x, y, w, h: TAG_H, cx });
+    }
+    g.textBaseline = 'alphabetic';
+    const subs = [...new Set(placed.map(r => r.sub))].filter(s => SUBDIVS[s]);
+    if (subs.length) { g.font = '700 11.5px -apple-system,Segoe UI,Roboto,Arial'; g.textAlign = 'left'; let x = keyX != null ? keyX : 104; const y = VH - 24;
+      const txt = subs.map(s => [s, SUBDIVS[s].name + ' Sub']), w = txt.reduce((a, [, n]) => a + g.measureText(n).width + 22, 8);
+      g.fillStyle = 'rgba(255,253,247,.92)'; g.fillRect(x, y, w, 18); g.strokeStyle = 'rgba(28,43,80,.35)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, 17);
+      x += 6; for (const [s, n] of txt) { g.fillStyle = SUBDIVS[s].color; g.fillRect(x, y + 4, 10, 10); g.fillStyle = '#1d222b'; g.fillText(n, x + 14, y + 13); x += g.measureText(n).width + 22; } }
+    return placed;
+  }
+  // a tag's load line, the same words in every town
+  const tagLoad = v => v.type === 'caboose' ? null : (v.loaded || v.load) ? `${v.load && v.load.c ? v.load.c : 'LOADED'}${v.load && v.load.t ? ' ' + v.load.t + 'T' : ''}` : 'EMPTY';
+  return { PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -1052,9 +1103,7 @@ function repWatch() { storTick();
 // ---------------------------------------------------------------- destination tags (Railroader-style)
 // A tag's COLOUR is the subdivision the car is headed for; its CODE says where in that subdivision.
 // Mattoon is the starting subdivision and is red. A new subdivision only needs a row in SUBDIVS and its codes in DEST.
-const SUBDIVS = {
-  MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' },
-};
+const SUBDIVS = NII_SHARED.SUBDIVS; // Nov 4: one subdivision list for every town (shared.js)
 const DEST = {
   HOUSE: { sub: 'MAT', name: 'Freight house door (house track)' },
   'YARD 1': { sub: 'MAT', name: 'Yard 1' }, 'YARD 2': { sub: 'MAT', name: 'Yard 2' }, 'YARD 3': { sub: 'MAT', name: 'Yard 3' }, 'YARD 4': { sub: 'MAT', name: 'Yard 4' }, 'YARD 5': { sub: 'MAT', name: 'Yard 5' }, 'YARD 6': { sub: 'MAT', name: 'Yard 6' },
@@ -1273,15 +1322,7 @@ function load() {
 }
 
 // ---------------------------------------------------------------- sound (tiny synth, off until first touch)
-let AC = null;
-function sfx(kind) {
-  try {
-    if (!AC) return; const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(); o.connect(g); g.connect(AC.destination);
-    const S = { clank: [180, 0.18, 'square', 0.12], crash: [90, 0.4, 'sawtooth', 0.2], pin: [600, 0.08, 'triangle', 0.1], tick: [900, 0.04, 'square', 0.05], cash: [880, 0.25, 'triangle', 0.1], sw: [320, 0.1, 'square', 0.08] }[kind] || [440, .1, 'sine', .05];
-    o.type = S[2]; o.frequency.setValueAtTime(S[0], t); if (kind === 'cash') o.frequency.setValueAtTime(1320, t + 0.1);
-    g.gain.setValueAtTime(S[3], t); g.gain.exponentialRampToValueAtTime(0.001, t + S[1]); o.start(t); o.stop(t + S[1] + 0.02);
-  } catch (e) { }
-}
+const sfx = NII_SHARED.sfx; // Nov 4: one synth for every town (shared.js)
 
 // ---------------------------------------------------------------- UI
 const $ = id => document.getElementById(id);
@@ -1411,7 +1452,7 @@ const ptrs = new Map(); let gest = null;
 // Nov 1 (click accuracy): pointer -> canvas logical px, scaled by the element's layout size over its on-screen rect (CSS transforms / page zoom / host frames)
 const rel = (el, e) => { const r = el.getBoundingClientRect(), fx = r.width ? (el.clientWidth || r.width) / r.width : 1, fy = r.height ? (el.clientHeight || r.height) / r.height : 1; return [(e.clientX - r.left) * fx, (e.clientY - r.top) * fy]; };
 mapC.addEventListener('pointerdown', e => {
-  if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (er) { } }
+  NII_SHARED.audioOn();
   try { mapC.setPointerCapture(e.pointerId); } catch (er) { } const [ox, oy] = rel(mapC, e); ptrs.set(e.pointerId, { x: ox, y: oy, x0: ox, y0: oy });
   if (ptrs.size === 1) gest = { kind: 'tap', moved: false }; else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gest = { kind: 'pinch', d: Math.hypot(a.x - b.x, a.y - b.y) }; }
 });
@@ -2465,38 +2506,9 @@ function drawScene(dt) {
 // destination tags: a small flag over every car, coloured by subdivision, with the destination code written on it
 const TAG_FONT = '800 12.5px -apple-system,Segoe UI,Roboto,Arial', TAG_FONT2 = '700 11.5px -apple-system,Segoe UI,Roboto,Arial', TAG_H1 = 19, TAG_H2 = 32; // one line (code) / two lines (code + load)
 let TAGS_DRAWN = [];
-function drawTags(g) {
-  const out = {}, placed = []; TAGS_DRAWN = [];
-  const hs = HIT.vehs.filter(h => carTag(h.v)).sort((a, b) => a.depth - b.depth);  // nearest track first keeps its spot
-  g.font = TAG_FONT; g.textAlign = 'center'; g.textBaseline = 'middle';
-  for (const h of hs) {
-    const t = carTag(h.v), TAG_H = t.load ? TAG_H2 : TAG_H1, mid = (h.x0 + h.x1) / 2;
-    g.font = TAG_FONT2; const w2 = t.load ? g.measureText(t.load).width : 0; g.font = TAG_FONT; const w = Math.ceil(Math.max(g.measureText(t.code).width, w2)) + 12;
-    if (h.x1 < 0 || h.x0 > VW) continue;
-    const cx = Math.max(w / 2 + 4, Math.min(VW - 54 - w / 2, mid));
-    let y = h.y0 - 6 - TAG_H;                                                          // just above the roof, with a little pointer down
-    for (let pass = 0; pass < 6; pass++) { const hit = placed.find(r => cx - w / 2 < r.x + r.w + 3 && cx + w / 2 > r.x - 3 && y < r.y + r.h + 3 && y + TAG_H > r.y - 3); if (!hit) break; y = hit.y - TAG_H - 4; }
-    const x = cx - w / 2, a = 1;                                                      // full strength even over a see-through car: the tag is the point
-    g.globalAlpha = a;
-    const px = Math.max(x + 6, Math.min(x + w - 6, mid));
-    poly(g, [[px - 5, y + TAG_H - 0.5], [px + 5, y + TAG_H - 0.5], [px, y + TAG_H + 5]], t.color, '#ffffff', 1.5);
-    g.beginPath(); if (g.roundRect) g.roundRect(x, y, w, TAG_H, 5); else g.rect(x, y, w, TAG_H);
-    g.fillStyle = t.color; g.fill(); g.lineWidth = 1.5; g.strokeStyle = '#ffffff'; g.stroke();
-    g.fillStyle = t.color; g.fillRect(px - 3.5, y + TAG_H - 2, 7, 2.5);
-    g.fillStyle = t.ink;
-    if (t.load) { g.fillText(t.code, cx, y + 9.5); g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(x + 5, y + 17.5, w - 10, 1); g.fillStyle = t.ink; g.font = TAG_FONT2; g.fillText(t.load, cx, y + 24.5); g.font = TAG_FONT; }
-    else g.fillText(t.code, cx, y + TAG_H / 2 + 0.5);
-    g.globalAlpha = 1;
-    const r = { id: h.v.id, code: t.code, load: t.load, color: t.color, sub: t.sub, x, y, w, h: TAG_H, cx }; placed.push(r); out[h.v.id] = r; TAGS_DRAWN.push(r);
-  }
-  g.textBaseline = 'alphabetic';
-  // key: what the colour means (the code text on each tag says the rest)
-  const subs = [...new Set(TAGS_DRAWN.map(r => r.sub))];
-  if (subs.length) { g.font = '700 11.5px -apple-system,Segoe UI,Roboto,Arial'; g.textAlign = 'left'; let x = 104; const y = VH - 24;
-    const txt = subs.map(s => [s, SUBDIVS[s].name + ' Sub']), w = txt.reduce((a, [, n]) => a + g.measureText(n).width + 22, 8);
-    g.fillStyle = 'rgba(255,253,247,.92)'; g.fillRect(x, y, w, 18); g.strokeStyle = 'rgba(28,43,80,.35)'; g.lineWidth = 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, 17);
-    x += 6; for (const [s, n] of txt) { g.fillStyle = SUBDIVS[s].color; g.fillRect(x, y + 4, 10, 10); g.fillStyle = '#1d222b'; g.fillText(n, x + 14, y + 13); x += g.measureText(n).width + 22; } }
-  return out;
+function drawTags(g) { // Nov 4: the tag painter lives in shared.js so every town draws the very same tags
+  const out = {}; TAGS_DRAWN = NII_SHARED.drawTags(g, HIT.vehs.map(h => ({ id: h.v.id, x0: h.x0, x1: h.x1, y0: h.y0, depth: h.depth, t: carTag(h.v) })).filter(h => h.t), VW, VH);
+  for (const r of TAGS_DRAWN) out[r.id] = r; return out;
 }
 // ---------------------------------------------------------------- scene input
 // Tap picking: everything is tested against what is actually drawn under the finger, in screen (CSS) pixels:
@@ -2588,7 +2600,7 @@ function drawPickHi(g, f, a) {
 (function sceneGestures() {
   const ptrs = new Map(); let gest = null;
   sceneC.addEventListener('pointerdown', e => {
-    if (!AC) { try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (er) { } }
+    NII_SHARED.audioOn();
     PTR_MOUSE = e.pointerType === 'mouse'; if (!PTR_MOUSE) HOVER = null;
     try { sceneC.setPointerCapture(e.pointerId); } catch (er) { } const [x, y] = rel(sceneC, e); ptrs.set(e.pointerId, { x, y, x0: x, y0: y });
     if (ptrs.size === 1) gest = { kind: 'tap', moved: false }; else if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; gest = { kind: 'pinch', d: Math.hypot(a.x - b.x, a.y - b.y) }; }
