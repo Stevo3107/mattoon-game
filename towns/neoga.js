@@ -350,7 +350,7 @@ function couple(c, o, sgn) { // c moved toward its head (sgn>0) or tail and touc
   const e = leadingEnd(c, sgn), oh = pathPt(o, cutLen(o)), ot = pathPt(o, 0), dh = oh.t === e.t ? Math.abs(oh.d - e.d) : 1e9, dt2 = ot.t === e.t ? Math.abs(ot.d - e.d) : 1e9;
   if (sgn > 0) { if (dh < dt2) reverseCut(o); c.path = c.path.concat(o.path); c.veh = c.veh.concat(o.veh); c.aT = c.aT.concat(o.aT); }
   else { if (dt2 < dh) reverseCut(o); c.path = o.path.concat(c.path); c.veh = o.veh.concat(c.veh); c.aT = o.aT.concat(c.aT); }
-  S.cuts.splice(S.cuts.indexOf(o), 1); }
+  for (const v of o.veh) v.ngPicked = true; S.cuts.splice(S.cuts.indexOf(o), 1); } // ngPicked: the player coupled to it here (a car he chose to take)
 function crossSignal(c, sgn, before, after) { // fine for running a red home signal toward the diamond
   const A = aspects(); const check = (x, sig, wantDir) => { if (!/^M[234]$/.test(before.t) || !/^M[234]$/.test(after.t)) return;
     const x0 = ptAt(before.t, before.d)[0], x1 = ptAt(after.t, after.d)[0]; 
@@ -379,10 +379,19 @@ function apTo(t, d) { const c = liveCut(); if (!c) return; // run along the line
       if (r.stop || r.moved < 1.9) break; } }
   toast('Can\'t get there on the route as lined. Check the switches.', 'bad'); return false; }
 // ================================================================= TRAVEL
+// Nov 3 fix: an inbound loaded car for a Neoga customer that the player never coupled to himself is a stray from the old 'IC cars ride down on your train'
+// rule (it then rode back to Mattoon and down again every trip). Take strays off the ends of a cut and set them out on the interchange track.
+const strayCar = v => !isLoco(v) && v.type !== 'caboose' && v.ngIn && v.loaded && DEST[v.dest] && !v.ngPicked && !v.spotT && !v.work;
+function stripStrays(c) { const out = [];
+  for (let k = 0; k < 40 && c.veh.length > 1; k++) {
+    if (strayCar(c.veh[c.veh.length - 1])) { const L = vL(c.veh[c.veh.length - 1]), [a] = splitPath(c, cutLen(c) - L); out.push(c.veh.pop()); c.aT.pop(); c.path = a; continue; }
+    if (strayCar(c.veh[0])) { const L = vL(c.veh[0]), [, b] = splitPath(c, L); out.push(c.veh.shift()); c.aT.shift(); c.path = b; continue; }
+    break; }
+  if (out.length) { for (const v of out) delete v.ngDest; S.pendIC = (S.pendIC || []).concat(out); dropIC(); } return out.length; }
 function arrive() { const tr = E.trainIn; if (!tr) return; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
-  dropIC(); save(); }
+  stripStrays(c); dropIC(); save(); }
 function askNorth() { showModal(`<h2>Head north to Mattoon?</h2><p>11.5 miles at 25 mph, about 28 minutes. Cars you leave in Neoga stay here.</p><div class="btns"><button data-a="goN">Go to Mattoon</button><button data-a="close" class="alt">Stay in Neoga</button></div>`); }
 function go() { const c = liveCut(); let train = [];
   if (c) { const q = vehPos(c).map(q => { const xa = ptAt((q.aT ? q.p0 : q.p1).t, (q.aT ? q.p0 : q.p1).d)[0], xb = ptAt((q.aT ? q.p1 : q.p0).t, (q.aT ? q.p1 : q.p0).d)[0]; return { v: q.v, x: (xa + xb) / 2, aN: xa < xb }; }).sort((a, b) => a.x - b.x);
@@ -739,8 +748,8 @@ let last = performance.now(), saveT = 0, mapT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
+build(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); if (!S.fix1103) { S.fix1103 = 1; const c = liveCut(); if (c && stripStrays(c)) toast('Stray IC cars taken off your train and set out on the interchange track.'); save(); } NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen };
+window.__neoga = { HIT, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays };
 };
