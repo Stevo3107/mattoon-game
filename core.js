@@ -173,7 +173,26 @@ window.NII_SHARED = (() => {
   const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: true, warnFt: 100 };
   const cabOK = (vs, isCab, isLoco) => !CABOOSE_RULE.on || vs.some(isCab) || (CABOOSE_RULE.lightEngineExempt && vs.every(isLoco));
   const CABOOSE_TOAST = 'Rule violation: your train needs a caboose outside yard limits.';
-  return { CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+  // ---- NEOGA OVER TIME (Nov 4, Stephen: "cars aren't releasing for neoga when im in mattoon"). Data-only, so Mattoon can run it on Neoga's
+  // stored record while the crew is away: work finishes on the clock and the car becomes pull-ready (dest IC-INT / NW-INT), and each day's
+  // new cars are rolled and queued for the interchange tracks (Neoga lays them on its tracks the moment you arrive). Neoga uses the same code.
+  const NG = { ROUTE_ODDS: 0.20, INBOUND_ODDS: { HOUSE: 0.21, COAL: 0.32, OIL: 0.10 }, NW_SHARE: 0.35 };
+  const ngRng = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  function ngRelease(v, time) { // true if v's work is done by `time`: unload / load, pick the outbound interchange, start the demurrage clock
+    if (!v || !v.work || typeof v.work !== 'object' || !/^NG /.test(v.dest || '') || time < v.work.until) return false;
+    v.from = v.dest; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
+    v.wt = 30 + (v.load ? v.load.t : 0); const r = ngRng(((+v.num || 7) * 2654435761 ^ Math.round(v.work.until)) >>> 0); r(); const back = v.via || 'IC';
+    let via = back; if (r() < NG.ROUTE_ODDS) { v.reassigned = true; via = back === 'IC' ? 'NW' : 'IC'; } else v.reassigned = false;
+    v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = v.work.until; delete v.work; delete v.ngFee; return true; }
+  function ngRoll(dd, gs) { const R = ngRng(((dd * 7919 + 17) ^ gs) >>> 0), out = []; // one day's new cars for Neoga customers: [{ dest, via }]
+    for (const [k, odds] of Object.entries(NG.INBOUND_ODDS)) if (R() < odds) out.push({ dest: 'NG ' + k, via: R() < NG.NW_SHARE ? 'NW' : 'IC', day: dd }); return out; }
+  function ngAway(ng, time, open, gameSeed) { // run on Neoga's stored record from another town; returns { done: [cars], came: n }
+    const out = { done: [], came: 0 }; if (!ng || !ng.cuts) return out;
+    for (const c of ng.cuts) for (const v of c.veh || []) if (ngRelease(v, time)) out.done.push(v);
+    const d = Math.floor(time / 86400) + 1, from = Math.max(ng.day == null ? d : ng.day, ng.rollDay || 0, d - 14);
+    if (open && ng.day >= 0) { for (let dd = from + 1; dd <= d; dd++) { const L = ngRoll(dd, gameSeed(dd)); out.came += L.length; ng.awayIn = (ng.awayIn || []).concat(L); } ng.rollDay = Math.max(from, d); }
+    return out; }
+  return { NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -1050,6 +1069,17 @@ function taskThere(t) { const v = state.veh[t.car]; if (!v) return false; const 
 // ---- End day: IC picks up IC Outbound (pays per car, loaded more than empty), sets out the next day's cut on
 // IC Inbound, and the clock moves to 6:00 AM the next day. Cars anywhere else stay put.
 const dayNo = () => Math.floor(state.time / 86400) + 1;
+// Nov 4 (Stephen: Neoga cars weren't releasing while he was in Mattoon): Neoga's clock runs while you're here. Its finished cars become
+// pull-ready and its new cars are queued for its interchange tracks (shared.js ngAway on Neoga's stored record); a toast says what changed.
+function neogaAway(quiet) { const E = NII.env(), ng = E.towns && E.towns.neoga; if (VISIT || !ng || !ng.cuts) return null;
+  const r = NII_SHARED.ngAway(ng, state.time, !!(state.unlocks && state.unlocks.neoga), NII.gameSeed); if (!r.done.length && !r.came) return r;
+  if (!quiet) { const ic = r.done.filter(v => v.dest === 'IC-INT').length, nw = r.done.length - ic, parts = [];
+    if (r.done.length) parts.push(`${r.done.length} car${r.done.length > 1 ? 's' : ''} finished and ready to pull (${[ic && ic + ' for the IC', nw && nw + ' for the N&W'].filter(Boolean).join(', ')})`);
+    if (r.came) parts.push(`${r.came} new car${r.came > 1 ? 's' : ''} for Neoga customers at the interchanges`); toast(`Neoga: ${parts.join('; ')}.`, 'good'); }
+  try { NII.saveTown('mattoon', state); } catch (e) { } return r; }
+function neogaStatus() { const ng = (NII.env().towns || {}).neoga; if (!ng || !ng.cuts) return null; let ready = 0, work = 0;
+  for (const c of ng.cuts) for (const v of c.veh || []) { if (v.dest === 'IC-INT' || v.dest === 'NW-INT') ready++; else if (v.work) work++; }
+  const waiting = (ng.awayIn || []).length + (ng.pendIC || []).length + (ng.nwPend || []).length; return { ready, work, waiting }; }
 function endDay() {
   const c0 = locoCons(); for (const c of Object.values(state.cons)) c.v = 0; state.ap = null; state.stopping = false; state.ctl.notch = 0; state.ctl.brake = 1;
   const day = dayNo(), picked = [], left = [], worked = finishWork(true);
@@ -1075,7 +1105,7 @@ function endDay() {
     if (roadOf(v) === 'NII') { const [a, b] = v.rent ? ECON.RENT_DAYS : ECON.NII_BACK_DAYS; state.away.push({ vtype: v.type, num: v.num, art: v.art, back: day + a + r0() * (b - a + 1) /* hidden: random day and hour, never shown */, rentFrom: v.rent ? state.time : null }); }
     const c = C(v.cid); if (c) { c.veh = c.veh.filter(id => id !== v.id); if (!c.veh.length) delete state.cons[c.id]; } delete state.veh[v.id]; }
   if (pay) { book('earn', pay); IND('ICG', 'inc', pay); } if (picked.length) IND('ICG', 'out', picked.length);
-  { const t1 = day * 86400 + 6 * 3600; accrueHire(t1 - state.time); state.time = t1; } reindex(); const bfLines = bfNewDay(day + 1); if (bfLines.length) setTimeout(() => toast(bfLines.join('. ') + '.', 'bad'), 2500);
+  { const t1 = day * 86400 + 6 * 3600; accrueHire(t1 - state.time); state.time = t1; } reindex(); setTimeout(() => neogaAway(), 900); const bfLines = bfNewDay(day + 1); if (bfLines.length) setTimeout(() => toast(bfLines.join('. ') + '.', 'bad'), 2500);
   // NI&I cars due back from IC come on this set-out, empty (rent paid on return)
   let rentPay = 0; const back = state.away.filter(a => a.back <= day + 1.25); state.away = state.away.filter(a => a.back > day + 1.25); // returns on the first IC cut after its hidden time
   for (const a of back) { if (a.rentFrom != null) rentPay += ECON.RENT_HR * (state.time - a.rentFrom) / 3600; (state.icHold = state.icHold || []).unshift({ vtype: a.vtype, num: a.num, art: a.art, road: 'NII', dest: null, load: null, niiBack: true }); }
@@ -1102,6 +1132,7 @@ function showTasks() {
   const row = t => `<li class="task${t.done ? ' done' : ''}${t.id === state.sel ? ' sel' : ''}"${t.done ? '' : ` data-act="selTask" data-id="${t.id}"`}><span class="ck">${t.done ? '✅' : '⬜'}</span><span class="tt">${t.text}</span><span class="tr">${t.done ? (t.rep ? `+${t.rep}` : '') : taskRepLabel(t)}</span></li>`;
   showModal(`<h2>Today's jobs · ${weekday(dayNo())} · Day ${dayNo()}</h2>
     <p class="repline"><b>Reputation ${state.rep}</b> · ${u.done ? 'All areas open' : `${u.name} unlock at ${u.rep}`}</p><div class="repbar"><div style="width:${Math.round(u.pct * 100)}%"></div></div>
+    ${(() => { const n = state.unlocks && state.unlocks.neoga && neogaStatus(); return n && (n.ready || n.work || n.waiting) ? `<p style="font-size:13px"><b>Neoga:</b> ${[n.ready && `${n.ready} car${n.ready > 1 ? 's' : ''} ready to pull`, n.work && `${n.work} being worked`, n.waiting && `${n.waiting} new at the interchanges`].filter(Boolean).join(' · ')}</p>` : ''; })()}
     ${T.length ? `<ul class="tasks">${T.map(row).join('')}</ul><p style="font-size:12.5px;color:#666">Do them in any order. Tap a job to point the waybill marker at its car.</p>` : `<p>${noTaskText()}</p>`}
     <details><summary>How rep is earned</summary><ul style="font-size:13px"><li>+${REP.SPOT} spot a car at the right spot on the day it's asked for; +${REP.HOT} more for a hot car</li><li>+${REP.CUT} per cut on IC Outbound when IC picks up</li><li>+${REP.PULL} pull a finished car before demurrage starts</li><li>+${REP.CLEAN} clean day (no derailments or hard hits)</li><li>${REP.WRONG} car left on the wrong spot or blocking a door (30 min)</li><li>${REP.DEM_US} finished car left so long the customer gets demurrage (we pay it)</li><li>${REP.LATE} late interchange</li><li>${REP.DERAIL} derailment (running through a switch)</li></ul></details>
     <div class="btns"><button data-act="close">Close</button></div>`);
@@ -3145,7 +3176,7 @@ function simStep(dt) {
   if (state.stopping) { if (Math.abs(c.v) < 0.05) { c.v = 0; state.stopping = false; } else { const sp = Math.max(0, Math.abs(c.v) - NII_SHARED.STOP_DEC * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; } }
   stepConsist(c, dt);
   if (Math.abs(c.v) < 0.05 && !state.ap) checkJob(); else repWatch();
-  if ((workT += dt) >= 5) { workT = 0; workTick(); bfTick(); }
+  if ((workT += dt) >= 5) { workT = 0; workTick(); bfTick(); neogaAway(); }
 }
 // smooth (Nov 1): the old version rounded each frame's time to whole 1/60 s steps, so on 120/144/165 Hz screens the train moved
 // in uneven jumps (or not at all at 1x on 144 Hz) and 4x ran fast or slow; now whole steps plus one short step for the rest, so every frame advances exactly its own time
@@ -3178,7 +3209,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },

@@ -126,6 +126,11 @@ const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
 const EDGE_PAD = 100, NG_YT = -2900, NG_YB = 1500; // vertical scroll limits (farm side top / town side bottom, N&W is drawn 100+ ft beyond both, so its ends never show)
 const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
+// ---- YARD LIMIT BOARDS (Nov 4, Stephen fine-tunes these). x = feet along the ICG main from the north end (0, toward Mattoon) to the south end (3,300);
+// y = feet off the main centre line (- farm side, + town side). Between the boards a train needs no caboose; once the REAR of a move goes out past
+// a board, the train needs a caboose anywhere in it (shared.js cabOK, the same rule as Mattoon). Light engines are exempt. warnFt etc. in shared.js.
+const YL_ON = false; // Nov 4: OFF until Stephen approves the Neoga boards (true = boards drawn + rule enforced)
+const YARD_LIMIT = { n: { x: 300, y: -10 }, s: { x: 2800, y: -10 } }; // north: before the house track switch (500); south: past run-around south (~2,660)
 function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a parallel track `off` ft away, then `tail` ft straight
   const h = Math.abs(off) / 2, th = Math.acos(1 - h / R), sg = Math.sign(off), pts = [], n = 16;
   for (let i = 0; i <= n; i++) { const a = th * i / n; pts.push([x0 + sx * R * Math.sin(a), y0 + sg * R * (1 - Math.cos(a))]); }
@@ -299,8 +304,7 @@ function startWorkN(v, sp) { if (typeof v.work === 'number') v.work = { until: E
   if (v.work) return; if (!v.ngFee) { v.ngFee = 1; const fee = SH.switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
   let until = E.time + workH(v) * 3600; if (MILLER(v.dest)) until = monAM(until); v.work = { from: E.time, until }; }
 function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.work || !DEST[v.dest]) continue; if (typeof v.work === 'number') { const sp = carAtSpot(v, q.pm); if (sp) startWorkN(v, sp); else continue; }
-    if (E.time < v.work.until) continue; const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
-    v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = Math.min(E.time, v.work.until); delete v.work; delete v.ngFee;
+    if (!SH.ngRelease(v, E.time)) continue; const via = v.outVia;
     toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
 function advance(dt) { // game time passes in Neoga: car hire, work at the spots, demurrage
   if (dt <= 0) return; const t0 = E.time; E.time += dt; let hire = 0;
@@ -330,10 +334,12 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
   if (n) { book('earn', Math.round(pay * 100) / 100); IND('NW', 'inc', Math.round(pay * 100) / 100); IND('NW', 'out', n); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
   if (ngOpen()) { const bl = BFNX.newDay(d); if (bl.length) note(bl.join('. ') + '.'); }
   ngCheckUnlock(); const nw = (S.nwPend || []).splice(0); delete S.nwPend; // Nov 4: N&W cars for Mattoon customers (from Mattoon's set-out plan)
-  if (ngOpen()) for (let dd = Math.max(d0 + 1, d - 13); dd <= d; dd++) { R = seeded((dd * 7919 + 17) ^ NII.gameSeed(dd)); // Nov 4 (flow fix): every day since the last one rolled, not only today
-    for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); } }
+  { const specs = (S.awayIn || []).splice(0); delete S.awayIn; // Nov 4: days rolled by Mattoon while the crew was away (shared.js ngAway), then any left
+    if (ngOpen()) for (let dd = Math.max(d0 + 1, (S.rollDay || 0) + 1, d - 13); dd <= d; dd++) specs.push(...SH.ngRoll(dd, NII.gameSeed(dd)));
+    S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; (o.via === 'NW' ? nw : S.pendIC).push(v); } }
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
-  if (nw.length) { if (setOutNWI(nw)) { IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } else { S.nwPend = nw; note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); } }
+  if (nw.length) { let k = nw.length; while (k > 0 && !setOutNWI(nw.slice(0, k))) k--; // Nov 4: as many as fit; the rest wait (was all-or-nothing, so a big batch never came)
+    if (k) { IND('NW', 'in', k); note(`N&W left ${k} car${k > 1 ? 's' : ''} on the N&W Interchange.`); } if (k < nw.length) { S.nwPend = nw.slice(k); note(`The N&W Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } }
   dropIC();
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
@@ -398,6 +404,21 @@ function crossSignal(c, sgn, before, after) { // fine for running a red home sig
 function signalAhead(c, sgn) { // distance to a red home signal ahead on the main (autopilot stops 25 ft short)
   const e = leadingEnd(c, sgn), p = ptAt(e.t, e.d); if (Math.abs(p[1]) > 1 || !/^M/.test(e.t)) return Infinity; const A = aspects(), dx = sgn * sideOfHead(c);
   if (dx > 0 && p[0] < SIGS && A.SH.upper === 'red') return SIGS - p[0]; if (dx < 0 && p[0] > SIGN && A.NH.upper === 'red') return p[0] - SIGN; return Infinity; }
+// ---- Nov 4: Mattoon's yard limit rule (game.js cabooseRule / ylRoom), in Neoga's cut terms. Only the rear end of the move counts.
+const ylX = p => ptAt(p.t, p.d)[0], ylMain = p => /^M\d$/.test(p.t);
+const ylExempt = c => SH.cabOK(c.veh, v => v.type === 'caboose', isLoco);
+function ylRoomN(c, sgn) { if (!YL_ON || ylExempt(c)) return Infinity; const hd = leadingEnd(c, sgn), tl = leadingEnd(c, -sgn); if (!ylMain(tl)) return Infinity;
+  const hx = ylX(hd), tx = ylX(tl), N = YARD_LIMIT.n.x, Sx = YARD_LIMIT.s.x;
+  if (hx < tx && tx >= N) return tx - N; if (hx > tx && tx <= Sx) return Sx - tx; return Infinity; }
+function ylCheckN(c, sgn, tb, ta) { if (!YL_ON || ylExempt(c) || !ylMain(tb) || !ylMain(ta)) return false; const x0 = ylX(tb), x1 = ylX(ta), N = YARD_LIMIT.n.x, Sx = YARD_LIMIT.s.x;
+  if ((x0 >= N && x1 < N) || (x0 <= Sx && x1 > Sx)) { const R = SH.CABOOSE_RULE; M.money = (M.money || 0) - R.fine; M.rep = (M.rep || 0) - R.rep; M.dayBad = true;
+    ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; S.ylw = false; toast(`${SH.CABOOSE_TOAST} -$${R.fine} -${R.rep} rep.`, 'bad'); SH.sfx('clank'); return true; }
+  const room = ylRoomN(c, sgn); if (room < SH.CABOOSE_RULE.warnFt) { if (!S.ylw) { S.ylw = true; toast('Yard limit: the rear of your train is near the board. Your train needs a caboose to go past.', 'bad'); } } else if (room > SH.CABOOSE_RULE.warnFt + 100) S.ylw = false;
+  return false; }
+function drawYL(x, y) { const i = img(BA('yard-limit-sign')); if (ok(i)) { const w = i.naturalWidth / 10.1, h = i.naturalHeight / 10.1; g.drawImage(i, sx(x - 2.5), sy(y) - hz(h), w * cam.z, hz(h)); return; }
+  g.fillStyle = '#5b4a3a'; g.fillRect(sx(x) - 0.25 * cam.z, sy(y) - hz(9.6), 0.5 * cam.z, hz(9.6)); g.fillStyle = '#111'; g.fillRect(sx(x - 3.1), sy(y) - hz(10.1), 6.2 * cam.z, hz(3.2));
+  g.fillStyle = '#f4f2ea'; g.fillRect(sx(x - 3), sy(y) - hz(10), 6 * cam.z, hz(3)); g.fillStyle = '#111'; g.textAlign = 'center'; g.font = `700 ${Math.max(4, 1.1 * cam.z)}px Arial`;
+  g.fillText('YARD', sx(x), sy(y) - hz(8.9)); g.fillText('LIMIT', sx(x), sy(y) - hz(7.6)); }
 function step(dt) {
   const c = liveCut(); if (!c) return; { const l0 = locoV(c), cf = SH.crewFuel(dt, ctl.notch, !!(l0 && l0.fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); } // Nov 4: crew + fuel every step in every mode (Drive or Tap), as in Mattoon
   const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
@@ -409,8 +430,8 @@ function step(dt) {
   ctl.v += Math.max(-2.5 * dt, Math.min(1.2 * dt, want - ctl.v)); if (!sgn || ctl.v <= 0.01) { ctl.v = Math.max(0, ctl.v); if (!sgn) return; }
   let s = ctl.v * dt; if (ctl.ap) s = Math.min(s, ctl.ap.left); ctl.sv = ctl.v * sgn; moveStep(c, sgn, s); }
 function moveStep(c, sgn, s) {
-  while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
-    crossSignal(c, sgn, before, after); if (bfMoveN(c, sgn)) break;
+  while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), tb = leadingEnd(c, -sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn), ta = leadingEnd(c, -sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
+    crossSignal(c, sgn, before, after); if (c.veh.some(isLoco) && ylCheckN(c, sgn, tb, ta)) break; if (bfMoveN(c, sgn)) break;
     const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
     if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'clear') toast('Clearance point: cars past here would foul the N&W main.', 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
 }
@@ -511,6 +532,7 @@ function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l
   const L = ap.legs[ap.k], approach = !!L.couple && ap.k === ap.legs.length - 1; let limit = ap.left;
   { const sig = signalAhead(c, ap.sgn); if (sig < Infinity) { if (sig - 25 < 1 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; if (S.crossT) { S.crossWait = true; toast('Request route from the tower to continue.', 'bad'); } else toast('Stopped at the red home signal. Request the route from the tower.', 'bad'); return; } if (sig - 25 < limit) limit = Math.max(0, sig - 25); } }
   { const a = bfAheadN(c, ap.sgn); if (a.K) { const room = a.t - 12; if (room <= 0.3 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; ctl.sv = 0; toast(BFNX.stopMsg(a.K), 'bad'); return; } if (room < limit) limit = Math.max(0, room); } } // Mattoon's stop short of an up blue flag
+  { const room = ylRoomN(c, ap.sgn) - 5; if (room < limit) { if (room <= 0.3 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; ctl.sv = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } limit = Math.max(0, room); } } // Nov 4: Mattoon's stop at the yard limit
   if (!approach && limit <= 0.05) return apArriveN();
   if (approach && ap.left < -15) return apArriveN();
   let vdes = SH.apVdes(limit, approach, lim);
@@ -830,6 +852,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   const A = aspects(); items.push({ y: 9, f: () => drawSignal('double', SIGS, 9, A.SH, 'left') }); items.push({ y: -9, f: () => drawSignal('double', SIGN, -9, A.NH, 'right') }); // home signals face the trains they govern: SH (southbound, from the left) looks left, NH looks right
   items.push({ y: 180, f: () => drawSignal('single', NWX + 15, 180, A.WB, 'front') }); items.push({ y: -130, f: () => drawSignal('single', NWX - 15, -130, A.WT, 'rear') }); // Nov 4 (Stephen): both set out off the ballast (15 ft from the N&W centre line, was 9); the rear one 50 ft nearer the diamond (was -180) // N&W: WB faces down-screen (toward the camera), WT faces away
   for (const k of Object.keys(SWITCHES)) items.push({ y: SWITCHES[k].at[1] + SWITCHES[k].side * 7, f: () => drawStand(k) });
+  if (YL_ON) for (const b of Object.values(YARD_LIMIT)) items.push({ y: b.y, f: () => drawYL(b.x, b.y) }); // Nov 4: yard limit boards
   for (const cc of S.cuts) for (const q of vehPos(cc)) items.push({ y: (ptAt(q.pm.t, q.pm.d)[1]), f: () => drawVeh(q, cc) });
   items.push({ y: 0.5, f: drawNWTrain });
   items.sort((a, b) => a.y - b.y).forEach(o => o.f());
@@ -971,5 +994,5 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
 build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
