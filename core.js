@@ -186,9 +186,24 @@ window.NII_SHARED = (() => {
     v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = v.work.until; delete v.work; delete v.ngFee; return true; }
   function ngRoll(dd, gs) { const R = ngRng(((dd * 7919 + 17) ^ gs) >>> 0), out = []; // one day's new cars for Neoga customers: [{ dest, via }]
     for (const [k, odds] of Object.entries(NG.INBOUND_ODDS)) if (R() < odds) out.push({ dest: 'NG ' + k, via: R() < NG.NW_SHARE ? 'NW' : 'IC', day: dd }); return out; }
+  // Nov 5 (Stephen): the N&W's pickup, one rule for Neoga's End Day and for days rolled while the crew is in Mattoon. A cut standing wholly on the
+  // N&W Interchange, no engine, with at least one car for the N&W (dest NW-INT) goes, WHOLE. N&W cars pay like Mattoon's freightPay, +NW_REP_CUT per cut.
+  // Any other car in it (Stephen, 11:06 AM) costs a switching fee of NW_WRONG_FEE and comes back 1-2 days later, set out on the N&W Interchange with its
+  // tags, destination and load unchanged (ng.nwBack; not on our tracks meanwhile, so no hire, storage or demurrage). Takes the cuts out of ng.cuts.
+  const NW_REP_CUT = 2, NW_WRONG_FEE = 50, nwPay = (v, ECON) => { const l = v.load; return Math.round((ECON.CAR + (l ? ECON.PER_TON * l.t : 0) + (v.hot ? ECON.HOT || 0 : 0) + (v.type === 'tank' && l && /NH3|nhydrous/i.test(l.c) ? ECON.NH3 || 0 : 0)) * 100) / 100; };
+  function nwPickup(ng, ECON, day) { const r = { cars: [], wrong: [], pay: 0, fee: 0, cuts: 0, rep: 0 }; if (!ng || !ng.cuts) return r;
+    for (const c of ng.cuts.slice()) { const vs = c.veh || []; if (!vs.length || !(c.path || []).length || !c.path.every(g => g.t === 'NWI') || vs.some(v => v.type === 'gp9')) continue;
+      if (!vs.some(v => v.dest === 'NW-INT')) continue;
+      for (const v of vs) if (v.dest === 'NW-INT') { r.pay += nwPay(v, ECON); r.cars.push(v); }
+        else { const rr = ngRng(((+String(v.num).replace(/\D/g, '') || 7) * 2654435761 ^ day * 977) >>> 0); rr(); r.wrong.push(v); r.fee += NW_WRONG_FEE; (ng.nwBack || (ng.nwBack = [])).push({ v, back: day + 1 + (rr() < 0.5 ? 0 : 1), out: day }); }
+      r.cuts++; ng.cuts.splice(ng.cuts.indexOf(c), 1); }
+    r.pay = Math.round(r.pay * 100) / 100; r.rep = NW_REP_CUT * r.cuts; return r; }
+  const nwMsg = (r, name) => [r.cars.length ? `the N&W picked up ${r.cars.length} car${r.cars.length > 1 ? 's' : ''} off the N&W Interchange: +$${r.pay.toFixed(2)}, +${r.rep} rep` : '',
+    r.wrong.length ? `it also took ${r.wrong.length} car${r.wrong.length > 1 ? 's' : ''} that weren't for the N&W (${r.wrong.map(name).join(', ')}): switching fee $${r.fee.toFixed(2)}, plus car hire $${(24 * ECON.DEM[0][1]).toFixed(2)} a day per car until they come back on the N&W Interchange in 1-2 days` : ''].filter(Boolean).join('; ');
   function ngAway(ng, time, open, gameSeed) { // run on Neoga's stored record from another town; returns { done: [cars], came: n }
     const out = { done: [], came: 0 }; if (!ng || !ng.cuts) return out;
     for (const c of ng.cuts) for (const v of c.veh || []) if (ngRelease(v, time)) out.done.push(v);
+    { const d = Math.floor(time / 86400) + 1; if (ng.day >= 0 && d > Math.max(ng.day, ng.nwPick || 0)) { ng.nwPick = d; out.nw = nwPickup(ng, ECON, d); } } // the N&W works its interchange each new day, crew here or not
     const d = Math.floor(time / 86400) + 1, from = Math.max(ng.day == null ? d : ng.day, ng.rollDay || 0, d - 14);
     if (open && ng.day >= 0) { for (let dd = from + 1; dd <= d; dd++) { const L = ngRoll(dd, gameSeed(dd)); out.came += L.length; ng.awayIn = (ng.awayIn || []).concat(L); } ng.rollDay = Math.max(from, d); }
     return out; }
@@ -220,11 +235,11 @@ window.NII_SHARED = (() => {
   const carRoad = v => v.road || ({ boxcarIC: 'IC', boxcar40: 'NII' })[v.type] || 'NII';
   function usedNums(E, live, extra) { const s = new Set(), add = v => { if (v && v.num != null) s.add(carRoad(v) + ' ' + v.num); }, T = (E && E.towns) || {}, m = T.mattoon || {}, n = T.neoga || {};
     for (const v of live || []) add(v); for (const v of Object.values(m.veh || {})) add(v); for (const c of n.cuts || []) for (const v of c.veh || []) add(v);
-    for (const v of (n.pendIC || []).concat(n.nwPend || [], (E && E.trainIn) || [], extra || [])) add(v); return s; }
+    for (const v of (n.pendIC || []).concat(n.nwPend || [], (n.nwBack || []).map(b => b.v), (E && E.trainIn) || [], extra || [])) add(v); return s; }
   function freeNum(range, road, painted, used, r) { if (painted && !used.has(road + ' ' + painted)) return painted;
     const [a, b] = range, n = b - a + 1; let i = Math.floor(r() * n);
     for (let k = 0; k < n; k++, i = (i + 1) % n) { const num = String(a + i); if (!used.has(road + ' ' + num)) return num; } return null; }
-  return { numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+  return { nwPickup, nwMsg, NW_REP_CUT, NW_WRONG_FEE, numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -1089,7 +1104,10 @@ const dayNo = () => Math.floor(state.time / 86400) + 1;
 // Nov 4 (Stephen: Neoga cars weren't releasing while he was in Mattoon): Neoga's clock runs while you're here. Its finished cars become
 // pull-ready and its new cars are queued for its interchange tracks (shared.js ngAway on Neoga's stored record); a toast says what changed.
 function neogaAway(quiet) { const E = NII.env(), ng = E.towns && E.towns.neoga; if (VISIT || !ng || !ng.cuts) return null;
-  const r = NII_SHARED.ngAway(ng, state.time, !!(state.unlocks && state.unlocks.neoga), NII.gameSeed); if (!r.done.length && !r.came) return r;
+  const r = NII_SHARED.ngAway(ng, state.time, !!(state.unlocks && state.unlocks.neoga), NII.gameSeed);
+  if (r.nw && r.nw.cuts) { book('earn', r.nw.pay); IND('NW', 'inc', r.nw.pay); IND('NW', 'out', r.nw.cars.length); state.rep += r.nw.rep; if (r.nw.fee) { book('crew', r.nw.fee); IND('NW', 'cost', r.nw.fee); } // Nov 5: the N&W works Neoga's interchange while you're here
+    if (!quiet) toast(`Neoga: ${NII_SHARED.nwMsg(r.nw, v => (v.road || 'NII') + ' ' + v.num)}.`, r.nw.fee ? 'bad' : 'good'); }
+  if (!r.done.length && !r.came) { if (r.nw && r.nw.cuts) try { NII.saveTown('mattoon', state); } catch (e) { } return r; }
   if (!quiet) { const ic = r.done.filter(v => v.dest === 'IC-INT').length, nw = r.done.length - ic, parts = [];
     if (r.done.length) parts.push(`${r.done.length} car${r.done.length > 1 ? 's' : ''} finished and ready to pull (${[ic && ic + ' for the IC', nw && nw + ' for the N&W'].filter(Boolean).join(', ')})`);
     if (r.came) parts.push(`${r.came} new car${r.came > 1 ? 's' : ''} for Neoga customers at the interchanges`); toast(`Neoga: ${parts.join('; ')}.`, 'good'); }
