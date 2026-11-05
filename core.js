@@ -2774,7 +2774,8 @@ function solidBox(g, G, b) {
   if (G.faceW * w < 0.15) return;
   if (b.open && SOLID_DEEP[b.open]) return SOLID_DEEP[b.open](g, G, b, xe); // open end (covered hopper): real recessed geometry instead of a flat face
   const pts = [P(xe, 0, h0), P(xe, w, h0), P(xe, w, h1)]; if (rg) pts.push(P(xe, w / 2, rg)); pts.push(P(xe, 0, h1));
-  poly(g, pts, mixC(b.col, -26));
+  const endArt = b.end === 'hopper40End' && IMG['hopper40-end-A-body'] && IMG['hopper40-end-A-body'].naturalWidth; // Nov 4: the twin hopper end is Danny's art alone (its own outline), no dark face behind it
+  if (!endArt) poly(g, pts, mixC(b.col, -26));
   if (b.end && SOLID_END[b.end]) solidPaint(g, G, 'face', xe, 0, () => SOLID_END[b.end](g, G, b, outer, xe));
 }
 // paint in feet: 'face' = (u across, h up) on the plane x = xe; 'roof' = (x along from the A end, u across) at height h
@@ -2827,7 +2828,7 @@ const SOLID_END = {
     for (const u of [2.3, w - 2.3]) { fr(g, u - 0.35, 3.0, u + 0.35, 3.6, '#2a2c31'); fr(g, u - 0.06, 1.9, u + 0.06, 3.0, '#111'); } // MU receptacles + hoses
     fr(g, c + 1.0, 1.6, c + 1.12, 2.8, '#111'); fr(g, 0, 1.45, w, 1.62, '#2c2f36');
   },
-  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', b.col, (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
+  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', mixC(b.col, 70), (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
   box40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'box40-end-B-brake' : 'box40-end-A', b.col, 0, 0, 10.33, 15.4); },   // hand brake on the x0 end
   tankEnd(g, G, b, outer, xe) { g.save(); g.beginPath(); g.rect(-5, -5, 20, b.h1 - b.w / 2 + 5); g.moveTo(b.w + 0.05, b.h1 - b.w / 2); g.arc(b.w / 2, b.h1 - b.w / 2, b.w / 2 + 0.05, 0, Math.PI * 2); g.clip(); solidArt(g, xe === b.x0 ? 'tank-end-B-brake' : 'tank-end-A', b.col, -(b.u0 || 0), 0, 9.6, 15.6); g.restore(); }, // clipped at the jacket top: the dome in that view stands at mid-car // frame-wide: round head + sill + dome rails
   boxEnd(g, G, b, outer, xe) { const w = b.w, col = b.endCol ? mixC(b.endCol, -18) : '#6a2d21';
@@ -2955,7 +2956,7 @@ const SOLID_LAMP_FADE = [0.02, 0.14];
 // Nov 4: twin hopper load variant (A = '', '-b', '-d'), stable per car: stored on the car (v.lv), else seeded from its number
 function hopLV(v) { if (!v) return ''; if (v.lv === '' || v.lv === '-b' || v.lv === '-d') return v.lv; let h = 0; for (const ch of String(v.num || v.id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return ['', '-b', '-d'][h % 3]; }
 function hopSidePic(v, G) { const n = G.S.sidePic; if (!n || !v || !v.loaded) return null; const im = IMG[n + '-body-loaded' + (G.far ? '-far' : '') + hopLV(v)] || IMG[n + '-body-loaded' + (G.far ? '-far' : '')]; return im && im.complete && im.naturalWidth ? im : null; }
-function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 0, (b.w - w) / 2, im.naturalWidth / 10.1, w); }
+function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 1.58, (b.w - w) / 2, im.naturalWidth / 10.1, w); } // Nov 4 (Danny): body-only crop, x 1.58..35.42 ft from the A knuckle
 // Nov 3: coal load mound. Hook for Danny: if IMG['coal-mound-<liv>-side'] (side elevation of the heap above the top chord, 10.1 px/ft,
 // x 0 = A knuckle, bottom row = top chord) is in the pack it is drawn in the side-wall plane; otherwise a shaded placeholder heap
 // (one peak per bay, from a heightfield) is built here. G.S.mound = { x0, x1, h, peak, bays, u } in feet.
@@ -3024,6 +3025,7 @@ function drawSolid(g, v, G, alpha) {
   poly(g, [P(1, -0.6, 0.15), P(L - 1, -0.6, 0.15), P(L - 1, 10.5, 0.15), P(1, 10.5, 0.15)], 'rgba(30,25,20,.26)');
   drawTrucks(g, v, G);
   for (const b of solidOrder(G)) { if (SOLID_DBG.on) SOLID_DBG.order.push(v.id + ':' + b.id); solidBox(g, G, b); }
+  if (G.S.boxes.some(b => b.end === 'hopper40End')) drawTrucks(g, v, G); // Nov 4: twin hopper trucks in front of the near end art
   // a hood narrower than the cab: its side art is drawn set back from the cab side by its walkway width (u0)
   const hb = G.S.hoodLayer && G.S.boxes.find(b => b.inset), hu = hb ? hb.u0 : 0, him = hb && IMG[artOf(v) + '-shorthood' + (G.far ? '-far' : '')];
   if (him && him.complete && him.naturalWidth && G.hoodWall) { g.save(); g.beginPath(); G.hoodWall.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.clip(); solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + hu * G.wv[0], G.O[1] + hu * G.wv[1], 'hood'); g.drawImage(him, a.x0 * px, a.y0 * px, him.naturalWidth, him.naturalHeight); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -3342,7 +3344,8 @@ function solidBox(g, G, b) {
   if (G.faceW * w < 0.15) return;
   if (b.open && SOLID_DEEP[b.open]) return SOLID_DEEP[b.open](g, G, b, xe); // open end (covered hopper): real recessed geometry instead of a flat face
   const pts = [P(xe, 0, h0), P(xe, w, h0), P(xe, w, h1)]; if (rg) pts.push(P(xe, w / 2, rg)); pts.push(P(xe, 0, h1));
-  poly(g, pts, mixC(b.col, -26));
+  const endArt = b.end === 'hopper40End' && IMG['hopper40-end-A-body'] && IMG['hopper40-end-A-body'].naturalWidth; // Nov 4: the twin hopper end is Danny's art alone (its own outline), no dark face behind it
+  if (!endArt) poly(g, pts, mixC(b.col, -26));
   if (b.end && SOLID_END[b.end]) solidPaint(g, G, 'face', xe, 0, () => SOLID_END[b.end](g, G, b, outer, xe));
 }
 // paint in feet: 'face' = (u across, h up) on the plane x = xe; 'roof' = (x along from the A end, u across) at height h
@@ -3395,7 +3398,7 @@ const SOLID_END = {
     for (const u of [2.3, w - 2.3]) { fr(g, u - 0.35, 3.0, u + 0.35, 3.6, '#2a2c31'); fr(g, u - 0.06, 1.9, u + 0.06, 3.0, '#111'); } // MU receptacles + hoses
     fr(g, c + 1.0, 1.6, c + 1.12, 2.8, '#111'); fr(g, 0, 1.45, w, 1.62, '#2c2f36');
   },
-  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', b.col, (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
+  hopper40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'hopper40-end-B-brake' : 'hopper40-end-A', mixC(b.col, 70), (b.w - 106 / 10.1) / 2, 0, 106 / 10.1, 124 / 10.1); }, // Nov 3: twin hopper ends (Danny), brake end as box40End
   box40End(g, G, b, outer, xe) { solidArt(g, xe === b.x0 ? 'box40-end-B-brake' : 'box40-end-A', b.col, 0, 0, 10.33, 15.4); },   // hand brake on the x0 end
   tankEnd(g, G, b, outer, xe) { g.save(); g.beginPath(); g.rect(-5, -5, 20, b.h1 - b.w / 2 + 5); g.moveTo(b.w + 0.05, b.h1 - b.w / 2); g.arc(b.w / 2, b.h1 - b.w / 2, b.w / 2 + 0.05, 0, Math.PI * 2); g.clip(); solidArt(g, xe === b.x0 ? 'tank-end-B-brake' : 'tank-end-A', b.col, -(b.u0 || 0), 0, 9.6, 15.6); g.restore(); }, // clipped at the jacket top: the dome in that view stands at mid-car // frame-wide: round head + sill + dome rails
   boxEnd(g, G, b, outer, xe) { const w = b.w, col = b.endCol ? mixC(b.endCol, -18) : '#6a2d21';
@@ -3523,7 +3526,7 @@ const SOLID_LAMP_FADE = [0.02, 0.14];
 // Nov 4: twin hopper load variant (A = '', '-b', '-d'), stable per car: stored on the car (v.lv), else seeded from its number
 function hopLV(v) { if (!v) return ''; if (v.lv === '' || v.lv === '-b' || v.lv === '-d') return v.lv; let h = 0; for (const ch of String(v.num || v.id || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return ['', '-b', '-d'][h % 3]; }
 function hopSidePic(v, G) { const n = G.S.sidePic; if (!n || !v || !v.loaded) return null; const im = IMG[n + '-body-loaded' + (G.far ? '-far' : '') + hopLV(v)] || IMG[n + '-body-loaded' + (G.far ? '-far' : '')]; return im && im.complete && im.naturalWidth ? im : null; }
-function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 0, (b.w - w) / 2, im.naturalWidth / 10.1, w); }
+function hopperRoofDraw(g, b, im) { const w = im.naturalHeight / 10.1; g.drawImage(im, 1.58, (b.w - w) / 2, im.naturalWidth / 10.1, w); } // Nov 4 (Danny): body-only crop, x 1.58..35.42 ft from the A knuckle
 // Nov 3: coal load mound. Hook for Danny: if IMG['coal-mound-<liv>-side'] (side elevation of the heap above the top chord, 10.1 px/ft,
 // x 0 = A knuckle, bottom row = top chord) is in the pack it is drawn in the side-wall plane; otherwise a shaded placeholder heap
 // (one peak per bay, from a heightfield) is built here. G.S.mound = { x0, x1, h, peak, bays, u } in feet.
@@ -3592,6 +3595,7 @@ function drawSolid(g, v, G, alpha) {
   poly(g, [P(1, -0.6, 0.15), P(L - 1, -0.6, 0.15), P(L - 1, 10.5, 0.15), P(1, 10.5, 0.15)], 'rgba(30,25,20,.26)');
   drawTrucks(g, v, G);
   for (const b of solidOrder(G)) { if (SOLID_DBG.on) SOLID_DBG.order.push(v.id + ':' + b.id); solidBox(g, G, b); }
+  if (G.S.boxes.some(b => b.end === 'hopper40End')) drawTrucks(g, v, G); // Nov 4: twin hopper trucks in front of the near end art
   // a hood narrower than the cab: its side art is drawn set back from the cab side by its walkway width (u0)
   const hb = G.S.hoodLayer && G.S.boxes.find(b => b.inset), hu = hb ? hb.u0 : 0, him = hb && IMG[artOf(v) + '-shorthood' + (G.far ? '-far' : '')];
   if (him && him.complete && him.naturalWidth && G.hoodWall) { g.save(); g.beginPath(); G.hoodWall.forEach((q, i) => i ? g.lineTo(q[0], q[1]) : g.moveTo(q[0], q[1])); g.closePath(); g.clip(); solidXf(g, G.ex[0] / px, G.ex[1] / px, 0, G.k / px, G.O[0] + hu * G.wv[0], G.O[1] + hu * G.wv[1], 'hood'); g.drawImage(him, a.x0 * px, a.y0 * px, him.naturalWidth, him.naturalHeight); g.restore(); g.setTransform(DPR, 0, 0, DPR, 0, 0);
