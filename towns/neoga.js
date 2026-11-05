@@ -892,7 +892,7 @@ const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 
 // ================================================================= UI
 let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; let d = b.children.length === 1 ? b.firstChild : null; // perf (Nov 1): the same message still showing is kept (timer restarted), not rebuilt every sim step
   if (!d || d.textContent !== t || d.className !== (kind || '') || d.style.opacity === '0') { b.innerHTML = ''; d = document.createElement('div'); d.textContent = t; if (kind) d.className = kind; b.appendChild(d); } clearTimeout(toastT); toastT = setTimeout(() => { d.style.opacity = 0; }, 4500); }
-const notes = []; function note(t) { notes.push(t); toast(t); }
+let VQ = 0; const notes = []; function note(t) { notes.push(t); if (!VQ) toast(t); }
 function showModal(h) { $('modal').innerHTML = h; $('modalBg').classList.add('show'); } function hideModal() { $('modalBg').classList.remove('show'); }
 // big map town tabs (Oct 30): Neoga's big map is the shared tab map; this light copy also goes in the save for Mattoon's Neoga tab
 const NCOL = { gp9: '#1c2b50', boxcar: '#7a3426', boxcarIC: '#c8642a', boxcar50: '#287038', boxcar40: '#7a3426', hopper: '#3a3a3a', tank: '#1d1d1d', caboose: '#b8322a' };
@@ -982,7 +982,10 @@ function build() {
     else if (a === 'uncL' || a === 'uncR') { hideModal(); uncouple(carModal.q, a === 'uncL' ? 'L' : 'R'); }
     else if (a === 'apCar') { hideModal(); const q = carModal.q, e = (q.p0.d < q.p1.d) ? q.p0 : q.p1; apTo(q.pm.t, q.pm.d); } });
   // canvas: drag to pan, tap a stand to throw it, tap a car for its waybill, tap the track to run the engine there
-  let drag = null; cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
+  cv.addEventListener('contextmenu', e => { e.preventDefault(); const r = cv.getBoundingClientRect(), X = (e.clientX - r.left) * (r.width ? W / r.width : 1), Y = (e.clientY - r.top) * (r.height ? H / r.height : 1); // Nov 5: PC right-click on a car = its waybill card (same as Mattoon)
+    let q = null; { const tg = S.tags && TAGS_DRAWN.slice().reverse().find(t => X >= t.x - 4 && X <= t.x + t.w + 4 && Y >= t.y - 4 && Y <= t.y + t.h + 9); if (tg) { const cc = S.cuts.find(c => c.veh.some(v => v.id === tg.id)), o = cc && vehPos(cc).find(o => o.v.id === tg.id); if (o) q = { ...o, c: cc }; } }
+    if (!q) { const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) q = { ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }; } if (q) carModal(q); });
+  let drag = null; cv.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button !== 0) return; drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y, moved: false }; });
   cv.addEventListener('pointermove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 8) { drag.moved = true; cam.follow = false; } if (drag.moved) { cam.x = drag.cx - dx / cam.z; cam.y = drag.cy - dy / (cam.z * K); } });
   cv.addEventListener('pointerup', e => { const d = drag; drag = null; if (!d || d.moved) return; const r = cv.getBoundingClientRect(), X = (e.clientX - r.left) * (r.width ? W / r.width : 1), Y = (e.clientY - r.top) * (r.height ? H / r.height : 1); MOUSE = e.pointerType === 'mouse'; tap(X, Y); }); // Nov 1: scaled to the canvas's logical size
   cv.addEventListener('wheel', e => { e.preventDefault(); cam.z = zLim(cam.z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)); }, { passive: false });
@@ -1002,7 +1005,8 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
 build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
-else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
+else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
+  cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
 window.__neoga = { notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

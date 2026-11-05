@@ -2735,7 +2735,10 @@ function drawPickHi(g, f, a) {
 }
 (function sceneGestures() {
   const ptrs = new Map(); let gest = null;
-  sceneC.addEventListener('pointerdown', e => {
+  // Nov 5 (Stephen): PC right-click on a car = its waybill (an idle NI&I empty: the Rent-to-IC offer, as a tap does). Left click / taps unchanged.
+  sceneC.addEventListener('contextmenu', e => { e.preventDefault(); const [x, y] = rel(sceneC, e), pk = scenePick(x, y, true); if (!pk || pk.kind !== 'car') return;
+    const v = V(pk.car); if (!v) return; if (!VISIT && !UNC_ON && v.idle && !v.rent && !locoCons().veh.includes(v.id)) { TAP_ASKED = false; sceneTap(x, y); return; } TAP_PEND = { sx: x, sy: y, car: pk.car }; showWaybill(pk.car, false); });
+  sceneC.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button !== 0) return; // right / middle button: not a tap or a drag
     NII_SHARED.audioOn();
     PTR_MOUSE = e.pointerType === 'mouse'; if (!PTR_MOUSE) HOVER = null;
     try { sceneC.setPointerCapture(e.pointerId); } catch (er) { } const [x, y] = rel(sceneC, e); ptrs.set(e.pointerId, { x, y, x0: x, y0: y });
