@@ -559,19 +559,28 @@ function icCut(day) { // [{ num, load, dest, kind, out? }] for the cars IC sets 
   return out;
 }
 const onTrack = (v, s) => v.f.s === s && v.r.s === s;
+// Nov 4 (flow fix): cars for Mattoon customers can come in off the N&W too. NW_SHARE_M of the day's cars (deterministic per car) are handed to the
+// N&W instead: the N&W sets them out on Neoga's N&W Interchange (marked mattoonN), and the crew brings them to Mattoon. Only once Neoga is open.
+const NW_SHARE_M = 0.15;
+function nwRoute(day, id) { const E = NII.env(), ng = E.towns && (E.towns.neoga = E.towns.neoga || { pendIC: [] }); if (VISIT || !E.towns || !(state.unlocks && state.unlocks.neoga)) return false;
+  const r = seeded((Math.imul(day + 1, 0x9e3779b1) ^ Math.imul((parseInt(id.slice(2)) || 0) + 7, 0x85ebca6b) ^ NII.gameSeed(day)) >>> 0); r(); if (r() >= NW_SHARE_M) return false;
+  const v = state.veh[id], w = JSON.parse(JSON.stringify(v)); delete state.veh[id]; delete w.f; delete w.r; delete w.cid; delete w.aFront; w.mattoonN = 1;
+  (ng.nwPend = ng.nwPend || []).push(w); return true; }
 function icSetOut(day) { // set out the day's IC cut (plus any cars held from before) on IC Inbound: as many as fit behind whatever is
   // still on it; the rest are held for the next set-out. Every car gets its own reporting mark + number. Returns { ids, why, held }
   const len = SEG[SI.ICI].len, low = len - ICI_N - ICI_ROOM, busy = Object.values(state.veh).filter(v => v.f.s === SI.ICI || v.r.s === SI.ICI);
   const top = busy.length ? Math.min(...busy.flatMap(v => [v.f.s === SI.ICI ? v.f.d : len, v.r.s === SI.ICI ? v.r.d : len - ICI_N])) - 1.5 : len - ICI_N;
   let room = Math.max(0, top - low);
-  const plan = (state.icHold || []).concat(icCut(day)), used = new Set(Object.values(state.veh).map(v => roadOf(v) + ' ' + v.num)), cut = [], held = [];
+  const plan = (state.icHold || []).concat(icCut(day)), used = new Set(Object.values(state.veh).concat(((NII.env().towns || {}).neoga || {}).nwPend || []).map(v => (v.road || roadOf(v)) + ' ' + v.num)), cut = [], held = [];
   for (const c of plan) { const L = (TYPES[c.vtype || KIND_TYPE[c.kind]] || TYPES.boxcarIC).L + 0.5; if (held.length || room < L) { held.push(c); continue; } room -= L; cut.push(c); }
   state.icHold = held; NII.shuffle(cut, seeded(day * 37 ^ NII.gameSeed(day)));
-  const ids = [];
+  const ids = []; let nwN = 0;
   for (const c of cut) { const id = 'ic' + (state.icSeq++), o = { loaded: !!c.load, load: c.load ? { ...c.load } : null, dest: c.dest, day }; if (c.out) o.out = { ...c.out };
     const num = c.num || freeNum(c.kind, c.road, c.painted, used, seeded(c.seed || state.icSeq)); if (!num) { held.push(c); continue; } used.add(c.road + ' ' + num);
     if (c.load && !c.vtype && seeded((c.seed || 1) * 7 + day)() < ECON.HOT_ODDS) o.hot = true;
-    if (c.vtype) { o.road = 'NII'; if (c.art) o.art = c.art; addVeh(id, c.vtype, Object.assign(o, { num })); } else addVeh(id, KIND_TYPE[c.kind], Object.assign(o, { num, art: c.art, road: c.road })); ids.push(id); }
+    if (c.vtype) { o.road = 'NII'; if (c.art) o.art = c.art; addVeh(id, c.vtype, Object.assign(o, { num })); } else addVeh(id, KIND_TYPE[c.kind], Object.assign(o, { num, art: c.art, road: c.road }));
+    if (!c.vtype && nwRoute(day, id)) { nwN++; continue; } ids.push(id); }
+  if (nwN) IND('NW', 'in', nwN);
   if (ids.length) { place(ids, { s: SI.ICI, d: top, dir: 1 }, ids.map(() => true)); IND('ICG', 'in', ids.length); }
   const why = held.length ? `IC held ${held.length} car${held.length > 1 ? 's' : ''}: IC Inbound full` : ids.length ? null : 'no cars for us today';
   return { ids, why, held: held.length };
@@ -1328,7 +1337,7 @@ function stripStraysM() { const c = locoCons(); if (!c || VISIT) return 0; const
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (!state.awayTrain || env.town !== 'mattoon') return;
   const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - state.awayTrain.left); state.time = Math.max(state.time, env.time || 0);
-  const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; state.veh[v.id] = v; }
+  const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; delete v.mattoonN; state.veh[v.id] = v; }
   if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;
     place(ids, { s, d: Math.max(5, SEG[s].len - 15 - len), dir: -1 }, backA); ids.forEach((id, i) => { V(id).aFront = backA[i]; }); }
   delete state.awayTrain; accrueHire(away); if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
@@ -3164,7 +3173,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },

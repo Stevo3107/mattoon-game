@@ -119,7 +119,9 @@ const ROUTE_CLEAR_ODDS = 0.80;                     // tower clears us right away
 const NW_ROUTE_ODDS = 0.20;                        // outbound car reassigned to the other interchange (IC <-> N&W)
 const INBOUND_ODDS = { HOUSE: 0.21, COAL: 0.32, OIL: 0.10 }; // Nov 1: ~1.5 / 2.2 / 0.7 cars a 7-day week // chance per customer per day of an interchange car
 const NW_SHARE = 0.35;                             // share of inbound cars that the N&W sets on the N&W Interchange (rest come down from IC at Mattoon)
-const WORK_H = 10;                                 // hours at the spot to unload / load
+const WORK_H = { 'NG HOUSE': [2, 3], 'NG COAL': [3, 4], 'NG OIL': [2, 3] }; // Nov 4 (flow fix): hours at the spot, Mattoon-style (house track as Mattoon's; Miller like IFS)
+const workH = v => { const [a, b] = WORK_H[v.dest] || [2, 3]; return a + (b - a) * seeded((+v.num || 7) * 131 + Math.round(E.time))(); };
+const monAM = t => { let d = Math.floor(t / 86400); while (d % 7 >= 5) d++; return Math.max(t, d * 86400 + 8 * 3600); }; // Miller works Mon-Fri: work that lands on a weekend finishes Monday 8 AM
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
 const EDGE_PAD = 100, NG_YT = -2900, NG_YB = 1500; // vertical scroll limits (farm side top / town side bottom, N&W is drawn 100+ ft beyond both, so its ends never show)
@@ -186,7 +188,8 @@ const FH = { doorX: HX0 + 90 }; // freight house: car door at x, house 40 x 20 f
   const f0 = T.FL.len - FD.railEnd; sp['COAL-1'].d = f0 + FD.spots.hopper1; sp['COAL-2'].d = f0 + FD.spots.hopper2; sp.OIL.d = f0 + FD.spots.tank; }
 let S = E.towns.neoga;
 if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, ra: 2, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
-  if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train; }
+  if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train;
+  if (old && old.nwPend) S.nwPend = old.nwPend; if (old && old.pendIC) S.pendIC = old.pendIC; } // Nov 4: cars Mattoon handed to Neoga before its first visit
 E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -290,15 +293,21 @@ const weekend = t => Math.floor(t / 86400) % 7 >= 5;
 const demurrage = (from, to, k) => SH.demurrage(from, to, MILLER(k)); // Miller (Mon-Fri) skips weekends, like CIC in Mattoon
 const winterNow = () => [8, 9, 10, 11, 0, 1].includes(new Date(Date.UTC(1975, 8, 29) + (dayNo() - 1) * 864e5).getUTCMonth()); // same calendar as Mattoon
 const pickVia = v => { const back = v.via || 'IC'; if (R() < NW_ROUTE_ODDS) { v.reassigned = true; return back === 'IC' ? 'NW' : 'IC'; } v.reassigned = false; return back; };
+// Nov 4 (flow fix, Mattoon parity): a spotted, uncoupled car starts work (switching fee) and is done at a set clock time, like Mattoon's
+// startWork / doneWork. The clock time counts even while the crew is in Mattoon (releaseDue runs on arrival and every advance).
+function startWorkN(v, sp) { if (typeof v.work === 'number') v.work = { until: E.time + Math.max(0, workH(v) - v.work) * 3600 }; // old saves: hours already worked
+  if (v.work) return; if (!v.ngFee) { v.ngFee = 1; const fee = SH.switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
+  let until = E.time + workH(v) * 3600; if (MILLER(v.dest)) until = monAM(until); v.work = { from: E.time, until }; }
+function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.work || !DEST[v.dest]) continue; if (typeof v.work === 'number') { const sp = carAtSpot(v, q.pm); if (sp) startWorkN(v, sp); else continue; }
+    if (E.time < v.work.until) continue; const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
+    v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = Math.min(E.time, v.work.until); delete v.work; delete v.ngFee;
+    toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
 function advance(dt) { // game time passes in Neoga: car hire, work at the spots, demurrage
   if (dt <= 0) return; const t0 = E.time; E.time += dt; let hire = 0;
   for (const q of standingCars()) { const v = q.v; if (!isLoco(v) && v.type !== 'caboose' && roadOf(v) !== 'NII') { const hr = SH.hireRate(v, winterNow()); hire += hr; IND(DEST[v.dest] ? v.dest : v.from || 'NW', 'cost', hr * dt / 3600); }
-    if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue; if (MILLER(v.dest) && weekend(E.time)) continue; // Miller: no switching fee or unloading Sat/Sun
-    if (!v.ngFee) { v.ngFee = 1; const fee = SH.switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
-    v.work = (v.work || 0) + dt / 3600;
-    if (v.work >= WORK_H) { const from = v.dest; v.from = from; if (v.forLoad) { v.load = v.forLoad; delete v.forLoad; v.loaded = true; } else { v.load = null; v.loaded = false; }
-      v.wt = 30 + (v.load ? v.load.t : 0); const via = pickVia(v); v.dest = via === 'NW' ? 'NW-INT' : 'IC-INT'; v.outVia = via; v.doneAt = E.time; delete v.work; delete v.ngFee;
-      toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
+    if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue; if (MILLER(v.dest) && weekend(E.time) && !v.work) continue; // Miller: no switching fee or unloading Sat/Sun
+    startWorkN(v, sp); }
+  releaseDue();
   if (hire) book('hire', hire * dt / 3600);
   { // Nov 4 parity: storage, as in Mattoon. A car for a customer that is full (every one of its spots holds another car) pays storage
     // from the customer, by the hour at the larger of STORAGE_DAY/24 and that car's hire; lease cars never pay
@@ -314,15 +323,17 @@ const NG_MSG = '<h2>Neoga is open for business!</h2><p>Your reputation reached 1
 function ngOpen() { return !!(M.unlocks && M.unlocks.neoga); }
 function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 100) return; (M.unlocks || (M.unlocks = {})).neoga = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
 function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
-  const d = dayNo(); if (S.day === d) return; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
+  const d = dayNo(); if (S.day === d) return; const d0 = S.day < 0 ? d - 1 : S.day; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
   let pay = 0, n = 0; for (const c of S.cuts.slice()) if (onWyeInterchange(c)) { const keep = [], kA = [];
     c.veh.forEach((v, i) => { if (v.dest === 'NW-INT') { pay += ECON.CAR + (v.load ? ECON.PER_TON * v.load.t : 0); n++; } else { keep.push(v); kA.push(c.aT[i]); } });
     if (!keep.length) S.cuts.splice(S.cuts.indexOf(c), 1); else if (keep.length < c.veh.length) { const nc = placeCut(keep, kA, 'NWI', nwiClear() - 2, 1); S.cuts.splice(S.cuts.indexOf(c), 1, nc); } }
   if (n) { book('earn', Math.round(pay * 100) / 100); IND('NW', 'inc', Math.round(pay * 100) / 100); IND('NW', 'out', n); note(`N&W picked up ${n} car${n > 1 ? 's' : ''} off the N&W Interchange: +$${pay.toFixed(2)}.`); }
   if (ngOpen()) { const bl = BFNX.newDay(d); if (bl.length) note(bl.join('. ') + '.'); }
-  ngCheckUnlock(); const nw = []; if (ngOpen()) for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); }
+  ngCheckUnlock(); const nw = (S.nwPend || []).splice(0); delete S.nwPend; // Nov 4: N&W cars for Mattoon customers (from Mattoon's set-out plan)
+  if (ngOpen()) for (let dd = Math.max(d0 + 1, d - 13); dd <= d; dd++) { R = seeded((dd * 7919 + 17) ^ NII.gameSeed(dd)); // Nov 4 (flow fix): every day since the last one rolled, not only today
+    for (const [k, odds] of Object.entries(INBOUND_ODDS)) if (R() < odds) { const dest = 'NG ' + k, via = R() < NW_SHARE ? 'NW' : 'IC'; (via === 'NW' ? nw : S.pendIC).push(newCar(dest, via)); } }
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
-  if (nw.length) { if (setOutNWI(nw)) { IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } else note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); }
+  if (nw.length) { if (setOutNWI(nw)) { IND('NW', 'in', nw.length); note(`N&W left ${nw.length} car${nw.length > 1 ? 's' : ''} for Neoga on the N&W Interchange.`); } else { S.nwPend = nw; note('The N&W has cars for us but the N&W Interchange is full: they wait a day.'); } }
   dropIC();
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
@@ -341,9 +352,10 @@ function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendI
 function jobs() { const L = [], cars = standingCars(); for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest] && ngHeld(v, cars)) continue; // HOLD: no job until a spot opens (Mattoon's CIC rule)
     if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), what = v.dest === 'NG HOUSE' ? 'the freight house door or team spot' : v.dest === 'NG COAL' ? 'coal pit 1 or 2' : 'the fuel oil rack';
-      L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && !q.live ? ` - spotted, ${Math.floor(v.work || 0)}/${WORK_H} h` : ''}` }); }
+      L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && v.work && v.work.until ? ` - spotted, done about ${clock(v.work.until)}` : ''}` }); }
     else if (v.dest === 'NW-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the N&W - leave it on the N&W Interchange${v.reassigned ? ' (rerouted)' : ''}` });
-    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}` }); }
+    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}` });
+    else if (v.mattoonN) L.push({ car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): for ${v.dest} in Mattoon - came off the N&W, take it to Mattoon` }); }
   return L; }
 // ================================================================= TOWER & SIGNALS (aspect logic only; drawing below)
 // S.tower: null (all home signals stop) | { st: 'hold', until, dir } (N&W train crossing) | { st: 'clear', dir, entered }
@@ -956,8 +968,8 @@ let last = performance.now(), saveT = 0, mapT = 0, bfT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
+build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
