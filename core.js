@@ -3217,6 +3217,41 @@ function frame(t) {
   saveT += dtR; if (saveT > 3) { saveT = 0; save(); }
   requestAnimationFrame(frame);
 }
+
+// Nov 5 emergency (Stephen): ?fix=engine — one-time: uncouple the engine (+ any caboose right next to it) from cars at Prairie Grain, park it clear nearby, clear bad GRAIN work. Leaves money/rep/time/jobs alone.
+function fixEnginePG() {
+  if (VISIT || !/[?&]fix=engine(&|$)/.test(location.search)) return false;
+  const dropUrl = () => { try { const u = new URL(location.href); u.searchParams.delete('fix'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } catch (e) { } };
+  const PG = new Set([SI.GLD, SI.GRA, SI.GL, SI.GT]), onPG = v => PG.has(v.f.s) || PG.has(v.r.s);
+  for (const v of Object.values(state.veh)) { // undo wrongly started Prairie loading even if the engine wasn't coupled
+    if (v.dest !== 'GRAIN' || !v.work) continue; if (carWhere(v).spot('GRAIN')) continue; delete v.work; delete v.spotT; delete v.wb; try { waybillOf(v); } catch (e) { } }
+  const c = locoCons(); if (!c) { dropUrl(); return false; }
+  const vs = c.veh.map(V), isFr = v => TYPES[v.type].kind === 'car' && v.type !== 'caboose';
+  const needMove = vs.some(onPG) || vs.some(v => isFr(v) && v.dest === 'GRAIN');
+  if (!needMove) { dropUrl(); showModal('<h2>Engine fix</h2><p>Nothing to move: the engine isn\'t coupled to cars at Prairie Grain. Any wrongly started Prairie Grain loading was cleared.</p><div class="btns"><button data-act="close">OK</button></div>'); return false; }
+  // keep the engine and any caboose contiguous with it; leave every freight car exactly where it is
+  const kind = id => { const v = V(id); return TYPES[v.type].kind === 'loco' ? 'L' : v.type === 'caboose' ? 'C' : 'F'; };
+  const K = c.veh.map(kind), li = K.indexOf('L'); let a = li, b = li; while (a > 0 && K[a - 1] === 'C') a--; while (b < K.length - 1 && K[b + 1] === 'C') b++;
+  if (a > 0 || b < c.veh.length - 1) {
+    const keep = c.veh.slice(a, b + 1), left = c.veh.slice(0, a).concat(c.veh.slice(b + 1));
+    if (left.length) { const cid = 'c' + state.nextCid++; state.cons[cid] = { id: cid, veh: left, v: 0 }; left.forEach(id => { V(id).cid = cid; }); }
+    c.veh = keep; keep.forEach(id => { V(id).cid = c.id; });
+  }
+  c.v = 0; state.ap = null; state.ctl.notch = 0; state.ctl.brake = 1; state.ctl.dir = 0;
+  // park on the Prairie Grain run-around if clear, else on the main north of switch G, clear of other cars and the switch
+  const lenOf = ids => ids.reduce((n, id) => n + V(id).L, 0), need = lenOf(c.veh) + 4;
+  const clearOn = (s, d0, d1) => { for (const v of Object.values(state.veh)) { if (c.veh.includes(v.id)) continue; if (v.f.s !== s && v.r.s !== s) continue; const lo = Math.min(v.f.d, v.r.d), hi = Math.max(v.f.d, v.r.d); if (hi >= d0 - 2 && lo <= d1 + 2) return false; } return true; };
+  const putAt = (s, dFront, dir) => { let p = { s, d: dFront, dir }; for (const id of c.veh) { const v = V(id); v.f = { ...p }; v.r = retreat(p, v.L); p = { ...v.r }; } };
+  let parked = false;
+  if (SEG[SI.GRA] && clearOn(SI.GRA, 40, SEG[SI.GRA].len - 40) && SEG[SI.GRA].len > need + 80) { putAt(SI.GRA, Math.min(SEG[SI.GRA].len - 20, 80 + need), -1); parked = true; }
+  if (!parked) { const s = SI.MN4, L = SEG[s].len; // main north of G toward Champaign; stay ≥80 ft from switch G (end b)
+    for (const dFront of [L - 100, L - 200, L - 300, 200, 400]) { if (dFront < need + 10 || dFront > L - 10) continue; const dR = dFront - need; if (dR < 10) continue; if (!clearOn(s, dR, dFront)) continue; putAt(s, dFront, -1); parked = true; break; } }
+  if (!parked) { const s = SI.MN3, L = SEG[s].len; for (const dFront of [100 + need, 200 + need, L / 2]) { if (dFront > L - 10) continue; if (!clearOn(s, dFront - need, dFront)) continue; putAt(s, dFront, 1); parked = true; break; } }
+  reindex(); save(); dropUrl();
+  showModal('<h2>Engine moved</h2><p>Engine moved clear of the cars at Prairie Grain. Your cars, money, reputation, time and jobs are unchanged. Spot empties under the elevator spout yourself (the game no longer pulls them).</p><div class="btns"><button data-act="close">OK</button></div>');
+  return true;
+}
+
 function boot() {
   startState(); load(); reindex();
   // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
@@ -3233,6 +3268,7 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   if (state.help && !VISIT) showModal(HELP);
+  setTimeout(() => { try { fixEnginePG(); } catch (e) { try { const u = new URL(location.href); u.searchParams.delete('fix'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } catch (er) { } } }, 0);
   if (NII.TEST === 'rep100' && !VISIT && !state.testInit) { state.testInit = 1; state.rep = Math.max(state.rep || 0, 100); save(); } // Nov 5: test game starts at 100 rep (checkUnlocks opens Neoga with its message)
   try { NII.setOnLeave(save); } catch (e) { }
   { const sb = $('sceneBtns'), tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); if (sb) sb.insertBefore(tb, $('tagsBtn')); }
@@ -3241,7 +3277,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { fixEnginePG, showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
