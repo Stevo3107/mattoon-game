@@ -66,7 +66,7 @@ window.NII_SHARED = (() => {
   }
   // ---- DESTINATION TAGS: Mattoon's flag over every car, coloured by subdivision, code + load line, stacked so none overlap,
   // with the subdivision key at the bottom. hs: [{ id, x0, x1, y0, depth, t: { code, load, sub, color, ink } }]. Returns the tags drawn (tappable).
-  const SUBDIVS = { MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' }, NEO: { name: 'Neoga', color: '#1f5fa8', ink: '#ffffff' } };
+  const SUBDIVS = { MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' }, NEO: { name: 'Neoga', color: '#b3261e' /* Nov 4 (Stephen): Mattoon's red; was #1f5fa8 */, ink: '#ffffff' } };
   const TAG_FONT = '800 12.5px -apple-system,Segoe UI,Roboto,Arial', TAG_FONT2 = '700 11.5px -apple-system,Segoe UI,Roboto,Arial', TAG_H1 = 19, TAG_H2 = 32;
   function drawTags(g, hs, VW, VH, keyX) {
     const placed = []; hs = hs.slice().sort((a, b) => a.depth - b.depth);
@@ -110,7 +110,17 @@ window.NII_SHARED = (() => {
   // NOTE (Nov 4, parity 3): Mattoon's stepConsist moves the consist once in apStep and again by v*dt afterwards, so a Tap run covers
   // twice the ground the speedometer shows (AP_MOVES = 2). That is how Mattoon feels; every town copies it until Stephen decides.
   const AP_MOVES = 1; // Nov 4 3:53 PM trial: true speed. Classic double move = 2 (backup checks/*.tapclassic1104)
-  return { STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+  // Nov 4 (hold parity): the waybill card, one painter for every town (moved from game.js, same markup). art(name) -> image URL or null
+  const WB_FIELDS = { carInit: [11, 44.5, 114], carKind: [135, 44.5, 118], waybillNo: [11, 70.5, 114], date: [135, 70.5, 118], fromStation: [11, 96.5, 244], fromRoad: [265, 96.5, 84],
+    toStation: [11, 122.5, 244], toRoad: [265, 122.5, 84], routing: [11, 148.5, 338], consignee: [11, 174.5, 218], weight: [239, 174.5, 110], contents: [11, 200.5, 338] };
+  const wbEsc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const wbStamp = (v, w, held) => v.hot ? 'hot' : held ? 'hold' : !w.loaded ? 'empty' : null;
+  function wbCard(vals, stamp, art) { const sc = Math.min(1, (Math.min(window.innerWidth, 460) - 44) / 360), card = art('waybill-card');
+    if (card) return `<div style="width:${360 * sc}px;height:${220 * sc}px;margin:6px auto"><div class="wbcard" style="transform:scale(${sc})"><img src="${card}" width="360" height="220" alt="">`
+      + Object.entries(WB_FIELDS).map(([k, [x, y, mw]]) => `<span style="left:${x}px;top:${y}px;width:${mw}px">${wbEsc(vals[k])}</span>`).join('')
+      + (stamp && art('waybill-stamp-' + stamp) ? `<img class="stamp" src="${art('waybill-stamp-' + stamp)}" width="90" height="50" alt="${stamp}">` : '') + '</div></div>';
+    return `<div class="wbcss">${Object.entries(vals).map(([k, t]) => `<div><small>${k}</small> ${wbEsc(t)}</div>`).join('')}${stamp ? `<b>${stamp.toUpperCase()}</b>` : ''}</div>`; }
+  return { wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -1243,11 +1253,7 @@ const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 function wbCard(v) {
   const w = waybillOf(v); if (!w) return `<p>${roadOf(v)} ${v.num} (caboose) runs without a waybill.</p>`;
   const vals = { carInit: `${roadOf(v)} ${v.num}`, carKind: w.kname, waybillNo: w.no, date: w.date, fromStation: w.from, fromRoad: w.fromRoad, toStation: w.to, toRoad: w.toRoad, routing: w.route, consignee: w.cons, weight: w.lbs, contents: w.what };
-  const stamp = v.hot ? 'hot' : carDest(v) === 'CIC HOLD' ? 'hold' : !w.loaded ? 'empty' : null, sc = Math.min(1, (Math.min(window.innerWidth, 460) - 44) / 360);
-  if (BART && BART['waybill-card']) return `<div style="width:${360 * sc}px;height:${220 * sc}px;margin:6px auto"><div class="wbcard" style="transform:scale(${sc})"><img src="${BART['waybill-card']}" width="360" height="220" alt="">`
-    + Object.entries(WB_FIELDS).map(([k, [x, y, mw]]) => `<span style="left:${x}px;top:${y}px;width:${mw}px">${esc(vals[k])}</span>`).join('')
-    + (stamp && BART['waybill-stamp-' + stamp] ? `<img class="stamp" src="${BART['waybill-stamp-' + stamp]}" width="90" height="50" alt="${stamp}">` : '') + '</div></div>';
-  return `<div class="wbcss">${Object.entries(vals).map(([k, t]) => `<div><small>${k}</small> ${esc(t)}</div>`).join('')}${stamp ? `<b>${stamp.toUpperCase()}</b>` : ''}</div>`;
+  return NII_SHARED.wbCard(vals, NII_SHARED.wbStamp(v, w, carDest(v) === 'CIC HOLD'), k => (BART && BART[k]) || null); // Nov 4: shared painter, same markup
 }
 function showWaybill(id, go) { const v = V(id); showModal(`<h2>Waybill: ${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.wb && v.wb.loaded ? 'Load' : 'Empty'} · ${carDest(v) === 'IC-INT' ? '<b>Ready for IC</b>: put it on IC Outbound.' : 'Tag: ' + (carDest(v) || '-')}${v.work ? ' · ' + workLine(v) : ''}</p>
   <div class="btns">${go ? '<button data-act="tapGo">Move engine here</button>' : ''}<button data-act="waybills" class="alt">All waybills</button><button data-act="close" class="alt">Back to game</button></div>`); }
