@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw2lh0a9";</script>
+<script>window.NII_BUILD = "mw2tv6ew";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -333,8 +333,8 @@ function industries() { const m = document.getElementById('modal'), bg = documen
   m.classList.add('ind'); bg.classList.add('show'); m.scrollTop = 0; }
 document.addEventListener('click', e => { if (e.target.closest('[data-nm="close"],[data-act="close"],[data-a="close"]')) { const m = document.getElementById('modal'); if (m) m.classList.remove('ind'); } }, true);
 // shared Menu (Neoga + visit mode); Mattoon's own Menu carries the same entries
-function sharedMenu() { const m = document.getElementById('modal'), bg = document.getElementById('modalBg'); if (!m || !bg) return;
-  m.innerHTML = `<h2>Menu</h2><div class="btns"><button data-nm="fs" data-fs>${FS.label()}</button><button data-nm="ind" class="alt">Industries</button></div><div class="btns">${VISIT ? '' : '<button data-nm="towns" class="alt">Look at another town</button>'}<button data-nm="close">Back to game</button></div>`; bg.classList.add('show'); }
+function sharedMenu(extra) { const m = document.getElementById('modal'), bg = document.getElementById('modalBg'); if (!m || !bg) return;
+  m.innerHTML = `<h2>Menu</h2>${extra || ''}<div class="btns"><button data-nm="fs" data-fs>${FS.label()}</button><button data-nm="ind" class="alt">Industries</button></div><div class="btns">${VISIT ? '' : '<button data-nm="towns" class="alt">Look at another town</button>'}<button data-nm="close">Back to game</button></div>`; bg.classList.add('show'); }
 document.addEventListener('click', e => { const b = e.target.closest('[data-nm]'); if (!b) return; const a = b.dataset.nm, bg = document.getElementById('modalBg');
   if (a === 'fs') FS.toggle(); else if (a === 'ind') industries(); else if (a === 'towns') { bg.classList.remove('show'); pickTown(); } else if (a === 'close') bg.classList.remove('show'); });
 // perf (Nov 1): the HUD is rewritten every frame; inside NII.quiet() a write of the same text/markup/class/title is skipped,
