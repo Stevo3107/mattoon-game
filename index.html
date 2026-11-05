@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw3qqqgj";</script>
+<script>window.NII_BUILD = "mw3rbkkf";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -269,7 +269,9 @@ const TOWNS = { // the one place for town names, packs and rail miles between th
   neoga: { name: 'Neoga', pack: 'towns/neoga.js', north: 'mattoon', northMi: 11.5 },
 };
 const RUN_MPH = 25;                      // road speed between towns
-const KEY = 'nii-towns-v10', OLD_KEY = 'nii-mattoon-test-v9';
+// Nov 5 (Stephen): ?test=rep100 plays a separate TEST game (own save slot, never touches the real save): fresh game at 100 rep, Neoga unlocked.
+const TEST = /[?&]test=rep100(&|$)/.test(location.search) ? 'rep100' : null;
+const KEY = TEST ? 'nii-towns-v10-test' : 'nii-towns-v10', OLD_KEY = TEST ? 'nii-no-v9-for-test' : 'nii-mattoon-test-v9';
 const $ = id => document.getElementById(id);
 let ENV = null;
 // ---- per-game random seed (Nov 1): every new game / restart gets its own; old saves get one from the next day on (cars already out are untouched)
@@ -344,7 +346,7 @@ let QUIET = 0;
   Object.defineProperty(proto, prop, { ...d, set(v) { if (QUIET && ok(this) && d.get.call(this) === String(v)) return; d.set.call(this, v); } }); };
   try { g(Node.prototype, 'textContent', el => el.childNodes.length <= 1); g(Element.prototype, 'innerHTML', () => true); g(Element.prototype, 'className', () => true); g(HTMLElement.prototype, 'title', () => true); } catch (e) { } })();
 function quiet(fn) { QUIET++; try { return fn(); } finally { QUIET--; } }
-window.NII = { quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading,
+window.NII = { TEST, quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading,
   fullscreen: FS, sharedMenu, shuffle: shuffleIn, industries, ind: indAdd, indKey,
   loadTown(id) { return env().towns[id] || null; },
   saveTown(id, st) { if (VISIT) return; const e = env(); e.towns[id] = st; if (id === 'mattoon') e.time = st.time; write(); },
@@ -445,6 +447,9 @@ const visitNote = () => `View only. Your train is in ${TOWNS[VISIT.home].name}.`
     setTimeout(() => { try { if (TID === 'mattoon') window.NII_ENGINE(); else (window.NII_TOWNS && window.NII_TOWNS[TID] || window.NII_TOWN_STUB)(window.NII); visitBanner(); hideLoading(); } catch (err) { fail('The game hit an error while starting: ' + String(err && err.message || err).replace(/</g, '&lt;')); throw err; } }, Math.max(0, minMs - (Date.now() - t0)));
   }).catch(err => fail(`Couldn't load <b>${err.message}</b>.` + (location.protocol === 'file:' ? '<br>Opened as a file: keep core.js and the towns folder next to index.html, or play at <a href="https://stevo3107.github.io/mattoon-game/">stevo3107.github.io/mattoon-game</a>.' : '<br>Check the connection and reload the page.')));
 })();
+if (TEST) { const mark = () => { const t = document.getElementById('top'); if (!t) return setTimeout(mark, 200); if (document.getElementById('testMark')) return;
+  const m = document.createElement('div'); m.id = 'testMark'; m.textContent = 'TEST GAME'; m.title = 'Separate test save. Open the site without ?test=rep100 for your real game.';
+  m.style.cssText = 'background:#c0392b;color:#fff;font:700 11px/1 sans-serif;padding:4px 6px;border-radius:4px;align-self:center;margin:0 6px;letter-spacing:.5px;flex:none'; t.insertBefore(m, t.firstChild); }; mark(); }
 })();
 </script>
 </body>

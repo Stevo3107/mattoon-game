@@ -3237,6 +3237,7 @@ function boot() {
   document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   if (state.help && !VISIT) showModal(HELP);
+  if (NII.TEST === 'rep100' && !VISIT && !state.testInit) { state.testInit = 1; state.rep = Math.max(state.rep || 0, 100); save(); } // Nov 5: test game starts at 100 rep (checkUnlocks opens Neoga with its message)
   try { NII.setOnLeave(save); } catch (e) { }
   { const sb = $('sceneBtns'), tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); if (sb) sb.insertBefore(tb, $('tagsBtn')); }
   if (!VISIT) setTimeout(() => { try { crossArrive(); const x = NII.takeCross(); if (x && x.to !== 'mattoon') crossStart(x); } catch (e) { } }, 300);
