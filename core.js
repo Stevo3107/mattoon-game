@@ -120,7 +120,42 @@ window.NII_SHARED = (() => {
       + Object.entries(WB_FIELDS).map(([k, [x, y, mw]]) => `<span style="left:${x}px;top:${y}px;width:${mw}px">${wbEsc(vals[k])}</span>`).join('')
       + (stamp && art('waybill-stamp-' + stamp) ? `<img class="stamp" src="${art('waybill-stamp-' + stamp)}" width="90" height="50" alt="${stamp}">` : '') + '</div></div>';
     return `<div class="wbcss">${Object.entries(vals).map(([k, t]) => `<div><small>${k}</small> ${wbEsc(t)}</div>`).join('')}${stamp ? `<b>${stamp.toUpperCase()}</b>` : ''}</div>`; }
-  return { wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+
+  // ---- BLUE FLAGS (Nov 4: shared by every town). The town supplies the geometry through hooks; the rules, toasts and penalties live here.
+  // Raised when the crew has spotted cars at a customer and left the area; down at the next switch window (downOdds) or on request (5-10 min).
+  const BLUE_FLAG = { rep: 20, fine: 250, downOdds: 0.85, rmMin: [5, 10], warnFt: 150, flagIn: 110, near: 300 };
+  const bfFresh = () => ({ up: false, rm: null, visit: 0, raised: 0, stuck: false });
+  // H: { defs: { K: { name, day(d) } }, S(): state object, onTrack(K): train on the customer track, near(K): train on its tracks or within BLUE_FLAG.near ft of
+  //      either end, carsOn(K): cars standing on its track (array), day(), time(), toast(msg, kind), save(), seeded(n) -> rng, sfx(name), penalize(fine, rep) }
+  function blueFlags(H) {
+    const S = () => { const s = H.S(); for (const K in H.defs) if (!s[K]) s[K] = bfFresh(); return s; };
+    const nm = K => H.defs[K].name;
+    function tick() { const st = S(), day = H.day();
+      for (const K in H.defs) { const f = st[K]; const on = H.onTrack(K);
+        if (on) f.visit = day;
+        if (f.rm != null && H.time() >= f.rm) { f.up = false; f.rm = null; f.stuck = false; H.toast(`${nm(K)} took down its blue flag. You can switch them now.`, 'good'); H.save(); }
+        if (!f.up && f.visit === day && f.raised !== day && !on && !H.near(K) && H.carsOn(K).length) {
+          f.up = true; f.raised = day; f.stuck = false; H.toast(`${nm(K)} put up its blue flag: they're working the cars. Stay off their track.`); H.save(); } } }
+    function newDay(day) { const st = S(), r = H.seeded(day * 613 + 41), out = [];
+      for (const K in H.defs) { const f = st[K], x = r(); if (!f.up || f.rm != null || !(H.defs[K].day ? H.defs[K].day(day) : true)) continue;
+        if (x < BLUE_FLAG.downOdds) { f.up = false; f.stuck = false; } else { f.stuck = true; out.push(`Blue flag still up at ${nm(K)}: tap the building to ask them to take it down`); } }
+      return out; }
+    function request(K) { const f = S()[K]; if (!f.up || f.rm != null) return; const [a, b] = BLUE_FLAG.rmMin, m = a + Math.floor(H.seeded(Math.round(H.time()) + K.length)() * (b - a + 1));
+      f.rm = H.time() + m * 60; H.toast(`Asked ${nm(K)} to take the blue flag down (about ${m} min).`); H.save(); }
+    // after each move: now = the train is on K's track; returns true when it just ran an UP flag (the town stops the train)
+    function incursion(K, now, was) { const f = S()[K]; if (!(now && !was && f.up && was !== undefined)) return false;
+      H.penalize(BLUE_FLAG.fine, BLUE_FLAG.rep); H.toast(`You ran a blue flag at ${nm(K)}! -${BLUE_FLAG.rep} rep, -$${BLUE_FLAG.fine}.`, 'bad'); H.sfx('crash'); H.save(); return true; }
+    const warnMsg = K => `Blue flag up at ${nm(K)} ahead! Stop, and have it taken down first (tap the building).`;
+    const stopMsg = K => `Stopped at the blue flag at ${nm(K)}. Tap the building to have it taken down.`;
+    const blockMsg = K => `Blue flag up at ${nm(K)}. Tap the building to have it taken down first.`;
+    function panelHtml(K, clock) { const f = S()[K], cars = H.carsOn(K), wk = cars.filter(v => v.work);
+      const st = !f.up ? '<p>&#9873; No blue flag. You can switch them.</p>' : f.rm != null ? `<p><b style="color:#1d4fd8">&#9873; Blue flag is up.</b> Removal requested: down in about <b>${Math.max(1, Math.ceil((f.rm - H.time()) / 60))} min</b> (${clock(f.rm)}).</p>`
+        : `<p><b style="color:#1d4fd8">&#9873; Blue flag is up.</b> ${f.stuck ? 'They left it up from the last switch.' : 'They\'re working the cars behind it.'} Don't go past it.</p>`;
+      return `<h2>${nm(K)}</h2>${st}<p>${cars.length} car${cars.length === 1 ? '' : 's'} on their track${wk.length ? `, ${wk.length} being worked` : ''}.</p>
+  <div class="btns">${f.up && f.rm == null ? `<button data-act="bfReq" data-k="${K}">Request removal</button>` : ''}<button data-act="close" class="alt">Back to game</button></div>`; }
+    return { S, tick, newDay, request, incursion, warnMsg, stopMsg, blockMsg, panelHtml, up: K => !!S()[K].up };
+  }
+  return { BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -735,53 +770,43 @@ function cabooseRule(c, x0) { if (!c.v) return; const sg = Math.sign(c.v); if (c
 }
 // ---- BLUE FLAGS at the customers. Raised when the crew has spotted cars and left the customer's track; the customer works behind it.
 // At the next switch window it's down (BLUE_FLAG.downOdds), or still up until the player taps the building and asks (5-10 game min).
-const BLUE_FLAG = { rep: 20, fine: 250, downOdds: 0.85, rmMin: [5, 10], warnFt: 150, flagIn: 110 };
-// per customer: its track, where the flag stands (ft from the switch end, inside the fouling point), which way is "in", the building to tap
+const BLUE_FLAG = NII_SHARED.BLUE_FLAG; // Nov 4: rules, toasts and penalties shared by every town (shared.js blueFlags)
+// per customer: its track, where the flag stands (ft from the switch end, inside the fouling point), which way is "in", the building to tap,
+// and (Nov 4) its other tracks: a train anywhere on them is "still working the area" (Prairie Grain's run-around and lead), so no flag yet
 const BF = {
-  CIC: { name: 'Central Illinois Corrugated', short: 'CIC', seg: SI.CIC, inDir: 1, dests: ['CIC'], bx: [CIC_X - 10, CIC_X + 490], bh: 45, by: 20, day: d => cicDay(d) },
-  IFS: { name: 'Illini Farm Supply', short: 'Farm Supply', seg: SI.IFS, inDir: 1, dests: ['IFS NH3', 'IFS UAN', 'IFS DOCK'], bx: [IFS_X - 10, IFS_X + 570], bh: 45, by: 20, day: () => true },
-  GRAIN: { name: 'Prairie Grain Co.', short: 'Prairie Grain', seg: SI.GLD, inDir: -1, dests: ['GRAIN'], bx: [PG_X - 120, PG_X + 150], bh: 120, by: 34, day: () => true },
+  CIC: { name: 'Central Illinois Corrugated', short: 'CIC', seg: SI.CIC, inDir: 1, dests: ['CIC'], bx: [CIC_X - 10, CIC_X + 490], bh: 45, by: 20, day: d => cicDay(d), near: [] },
+  IFS: { name: 'Illini Farm Supply', short: 'Farm Supply', seg: SI.IFS, inDir: 1, dests: ['IFS NH3', 'IFS UAN', 'IFS DOCK'], bx: [IFS_X - 10, IFS_X + 570], bh: 45, by: 20, day: () => true, near: [SI.IRA] },
+  GRAIN: { name: 'Prairie Grain Co.', short: 'Prairie Grain', seg: SI.GLD, inDir: -1, dests: ['GRAIN'], bx: [PG_X - 120, PG_X + 150], bh: 120, by: 34, day: () => true, near: [SI.GRA, SI.GL, SI.GT] },
+  HOUSE: { name: 'the Mattoon freight house', short: 'Freight house', seg: SI.HSE, inDir: 1, dests: ['HOUSE'], bx: [FH.x0 - 10, FH.x1 + 10], bh: 40, by: Y_H + 6, day: () => true, near: [], flagIn: Math.max(20, Math.min(BLUE_FLAG.flagIn, FH.d0 - 10)) },
 };
-for (const K in BF) { const z = BF[K], L = SEG[z.seg].len; z.d = z.inDir > 0 ? BLUE_FLAG.flagIn : L - BLUE_FLAG.flagIn; }
-const bfS = () => state.bf || (state.bf = Object.fromEntries(Object.keys(BF).map(K => [K, { up: false, rm: null, visit: 0, raised: 0, stuck: false }])));
+for (const K in BF) { const z = BF[K], L = SEG[z.seg].len, fi = z.flagIn || BLUE_FLAG.flagIn; z.d = z.inDir > 0 ? fi : L - fi; }
+const bfS = () => { const s = state.bf || (state.bf = {}); for (const K in BF) if (!s[K]) s[K] = { up: false, rm: null, visit: 0, raised: 0, stuck: false }; return s; }; // old saves: new customers added
 const inBF = (K, p) => p.s === BF[K].seg && (p.d - BF[K].d) * BF[K].inDir > 0;
 const consInBF = (K, c) => c.veh.some(id => { const v = V(id); return inBF(K, v.f) || inBF(K, v.r); });
-// Nov 2 (Stephen): a customer won't raise its flag while the player's train (engine or any attached car) is on its track or within
-// BF_NEAR ft of its switch (either end of the train, either direction along the rails); the flag waits until the train has left the area
-const BF_NEAR = 300;
-const trainNearBF = (K, c) => { const z = BF[K];
-  if (c.veh.some(id => { const v = V(id); return v.f.s === z.seg || v.r.s === z.seg; })) return true;
-  const node = z.inDir > 0 ? SEG[z.seg].a : SEG[z.seg].b, hit = p => walk(p, BF_NEAR, 'loose', null, id => id === node ? true : undefined) === true;
+// Nov 2 / Nov 4 (Stephen): no flag while the player's train is on the customer's tracks (its own, its run-around, lead or tail) or within
+// BLUE_FLAG.near ft of EITHER end of its track, either direction along the rails; it waits until the train has left the area
+const trainNearBF = (K, c) => { const z = BF[K], segs = new Set([z.seg, ...(z.near || [])]);
+  if (c.veh.some(id => { const v = V(id); return segs.has(v.f.s) || segs.has(v.r.s); })) return true;
+  const nodes = new Set([SEG[z.seg].a, SEG[z.seg].b, ...(z.near || []).flatMap(i => [SEG[i].a, SEG[i].b])]), hit = p => walk(p, BLUE_FLAG.near, 'loose', null, id => nodes.has(id) ? true : undefined) === true;
   return [front(c), rear(c)].some(p => hit(p) || hit(rev(p))); };
+const BFX = NII_SHARED.blueFlags({ defs: BF, S: bfS, onTrack: K => consInBF(K, locoCons()), near: K => trainNearBF(K, locoCons()),
+  carsOn: K => Object.values(state.veh).filter(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r))), day: () => dayNo(), time: () => state.time,
+  toast: (m, k) => toast(m, k), save: () => save(), seeded: n => seeded(n), sfx: n => sfx(n), penalize: (f, r) => { state.money -= f; state.rep -= r; state.dayBad = true; } });
 // feet before the moving end runs past an UP flag going in (Infinity if none ahead within maxD)
 function bfAhead(p, maxD) { let best = { t: Infinity, K: null }; const S = bfS();
   for (const K in BF) { if (!S[K].up || inBF(K, p)) continue; const z = BF[K], a = routeTo(p, { s: z.seg, d: z.d }, maxD); if (!a) continue;
     const b = routeTo(p, { s: z.seg, d: z.d + z.inDir }, maxD + 2); if (b && b.t > a.t && a.t < best.t) best = { t: a.t, K }; }
   return best; }
 function bfMove(c, sign) { // after each move: incursion check and the warning
-  if (!c.v) return; const S = bfS(), lead = sign > 0 ? front(c) : rev(rear(c));
+  if (!c.v) return; const lead = sign > 0 ? front(c) : rev(rear(c));
   for (const K in BF) { const now = consInBF(K, c), was = (live.bfIn || (live.bfIn = {}))[K]; live.bfIn[K] = now;
-    if (now && !was && S[K].up && was !== undefined) { c.v = 0; state.ap = null; state.ctl.notch = 0; state.money -= BLUE_FLAG.fine; state.rep -= BLUE_FLAG.rep; state.dayBad = true;
-      toast(`You ran a blue flag at ${BF[K].name}! -${BLUE_FLAG.rep} rep, -$${BLUE_FLAG.fine}.`, 'bad'); sfx('crash'); save(); return; } }
-  const a = bfAhead(lead, BLUE_FLAG.warnFt); if (a.K) { if (live.bfw !== a.K) { live.bfw = a.K; toast(`Blue flag up at ${BF[a.K].name} ahead! Stop, and have it taken down first (tap the building).`, 'bad'); } } else live.bfw = null;
+    if (BFX.incursion(K, now, was)) { c.v = 0; state.ap = null; state.ctl.notch = 0; return; } }
+  const a = bfAhead(lead, BLUE_FLAG.warnFt); if (a.K) { if (live.bfw !== a.K) { live.bfw = a.K; toast(BFX.warnMsg(a.K), 'bad'); } } else live.bfw = null;
 }
-function bfTick() { const S = bfS(), c = locoCons(), day = dayNo();
-  for (const K in BF) { const f = S[K];
-    if (consInBF(K, c)) f.visit = day;
-    if (f.rm != null && state.time >= f.rm) { f.up = false; f.rm = null; f.stuck = false; toast(`${BF[K].name} took down its blue flag. You can switch them now.`, 'good'); save(); }
-    if (!f.up && f.visit === day && f.raised !== day && !consInBF(K, c) && !trainNearBF(K, c) && Object.values(state.veh).some(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r)))) {
-      f.up = true; f.raised = day; f.stuck = false; toast(`${BF[K].name} put up its blue flag: they're working the cars. Stay off their track.`); save(); } } }
-function bfNewDay(day) { const S = bfS(), r = seeded(day * 613 + 41), out = [];
-  for (const K in BF) { const f = S[K], x = r(); if (!f.up || f.rm != null || !BF[K].day(day)) continue;
-    if (x < BLUE_FLAG.downOdds) { f.up = false; f.stuck = false; } else { f.stuck = true; out.push(`Blue flag still up at ${BF[K].name}: tap the building to ask them to take it down`); } }
-  return out; }
-function bfRequest(K) { const f = bfS()[K]; if (!f.up || f.rm != null) return; const [a, b] = BLUE_FLAG.rmMin, m = a + Math.floor(seeded(Math.round(state.time) + K.length)() * (b - a + 1));
-  f.rm = state.time + m * 60; toast(`Asked ${BF[K].name} to take the blue flag down (about ${m} min).`); save(); }
-function bfPanel(K) { const z = BF[K], f = bfS()[K], cars = Object.values(state.veh).filter(v => inBF(K, v.f) || inBF(K, v.r)), wk = cars.filter(v => v.work);
-  const st = !f.up ? '<p>&#9873; No blue flag. You can switch them.</p>' : f.rm != null ? `<p><b style="color:#1d4fd8">&#9873; Blue flag is up.</b> Removal requested: down in about <b>${Math.max(1, Math.ceil((f.rm - state.time) / 60))} min</b> (${clockStr(f.rm)}).</p>`
-    : `<p><b style="color:#1d4fd8">&#9873; Blue flag is up.</b> ${f.stuck ? 'They left it up from the last switch.' : 'They\'re working the cars behind it.'} Don't go past it.</p>`;
-  showModal(`<h2>${z.name}</h2>${st}<p>${cars.length} car${cars.length === 1 ? '' : 's'} on their track${wk.length ? `, ${wk.length} being worked` : ''}.</p>
-  <div class="btns">${f.up && f.rm == null ? `<button data-act="bfReq" data-k="${K}">Request removal</button>` : ''}<button data-act="close" class="alt">Back to game</button></div>`); }
+function bfTick() { BFX.tick(); }
+function bfNewDay(day) { return BFX.newDay(day); }
+function bfRequest(K) { BFX.request(K); }
+function bfPanel(K) { showModal(BFX.panelHtml(K, clockStr)); }
 function bfAt(x, y) { for (const K in BF) { const z = BF[K]; if (x >= z.bx[0] && x <= z.bx[1]) return K; } return null; }
 const AP = { vmax: 8 * FTS, acc: 1.6, dec: 1.4, couple: 2.0 * FTS };
 function apStep(c, dt, running) {
@@ -810,8 +835,8 @@ function apStep(c, dt, running) {
   let limit = rt.t, approach = false;
   const ob = scan(lead, rt.t + 80, c.id);
   if (ob) { if (ob.kind === 'veh') { if (ob.t <= limit + 0.5) { limit = ob.t; approach = true; } } else limit = Math.min(limit, Math.max(0, ob.t - 2)); }
-  if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(`Stopped at the blue flag at ${BF[a.K].name}. Tap the building to have it taken down.`, 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } apArrive(c); return; }
-  { const a = bfAhead(lead, rt.t + 80); if (a.K) { const room = a.t - 12; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast(`Stopped at the blue flag at ${BF[a.K].name}. Tap the building to have it taken down.`, 'bad'); return; } limit = Math.max(0, room); approach = false; } } }
+  if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } apArrive(c); return; }
+  { const a = bfAhead(lead, rt.t + 80); if (a.K) { const room = a.t - 12; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } limit = Math.max(0, room); approach = false; } } }
   { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
   let vdes = NII_SHARED.apVdes(limit, approach, trackLimit(c)); // Nov 4: the shared stopping curve (every town)
   let sp = Math.abs(c.v); ap.eq = 0;
@@ -925,7 +950,7 @@ function apArrive(c) {
 function tapTarget(target) { if (VISIT) { toast(NII.visitNote(), 'bad'); return; } state.crossGo = null; crossAsk = null;
   const c = locoCons(), l = locoOf(c);
   if (l.fuel <= 0) { toast('No fuel - the engine can\'t move.', 'bad'); return; }
-  for (const K in BF) if (bfS()[K].up && inBF(K, target) && !consInBF(K, c)) { toast(`Blue flag up at ${BF[K].name}. Tap the building to have it taken down first.`, 'bad'); return; }
+  for (const K in BF) if (bfS()[K].up && inBF(K, target) && !consInBF(K, c)) { toast(BFX.blockMsg(K), 'bad'); return; }
   if (!target.car) { const hv = vehAtSpot(target, c.id); if (hv) target = { s: target.s, d: target.d, car: hv.id }; } // a track spot under a car (the Map): either end, shortest route
   if (target.car ? V(target.car).cid === c.id : onTrainSpan(c, target)) { toast('That spot is under your train. Tap ahead of it or behind it.'); return; }
   const goal = target.car ? { car: V(target.car).cid } : { s: target.s, d: target.d };
@@ -3124,7 +3149,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
