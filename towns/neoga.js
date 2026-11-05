@@ -598,7 +598,7 @@ const zLim = z => Math.max(Math.min(0.5 * zBase(), W / 1100), Math.min(2.6 * zBa
 let W = 0, H = 0, DPR = 1;
 const sx = x => W / 2 + (x - cam.x) * cam.z, sy = y => H / 2 + (y - cam.y) * cam.z * K, hz = h => h * cam.z * HK;
 // perf (Nov 1): draw() calls this every frame; only touch the canvas when its size really changed (setting width reallocates and clears it)
-function resize() { W = wrap.clientWidth; H = wrap.clientHeight; DPR = window.devicePixelRatio || 1; const w = Math.floor(W * DPR), h = Math.floor(H * DPR), changed = cv.width !== w || cv.height !== h; if (changed) { cv.width = w; cv.height = h; cv.style.width = W + 'px'; cv.style.height = H + 'px'; } return changed; }
+function resize() { W = wrap.clientWidth; H = wrap.clientHeight; DPR = NII.dpr(); const w = Math.floor(W * DPR), h = Math.floor(H * DPR), changed = cv.width !== w || cv.height !== h; if (changed) { cv.width = w; cv.height = h; cv.style.width = W + 'px'; cv.style.height = H + 'px'; } return changed; }
 function line(pts, w, col) { g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(sx(x), sy(y)) : g.moveTo(sx(x), sy(y))); g.lineWidth = w; g.strokeStyle = col; g.stroke(); }
 function rectW(x0, y0, x1, y1, col) { g.fillStyle = col; g.fillRect(sx(x0), sy(y0), (x1 - x0) * cam.z, (y1 - y0) * cam.z * K); }
 // ---- scenery: farmland above the main, small town below

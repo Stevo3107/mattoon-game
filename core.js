@@ -1464,7 +1464,7 @@ const mapC = $('map'), mctx = mapC.getContext('2d');
 let mapChips = [];
 let userCam = false, cam = { x: 330, y: 170, z: 0.5 }, DPR = 1, MW = 0, MH = 0, fitted = false, mapOpen = false;
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 3);
+  DPR = NII.dpr();
   MW = mapC.clientWidth || mapC.getBoundingClientRect().width; MH = mapC.clientHeight || mapC.getBoundingClientRect().height; { const w = Math.round(MW * DPR), h = Math.round(MH * DPR); if (mapC.width !== w) mapC.width = w; if (mapC.height !== h) mapC.height = h; }
   sceneResize();
   if (!fitted) fit();

@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw3s45ap";</script>
+<script>window.NII_BUILD = "mw3szisu";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -346,7 +346,7 @@ let QUIET = 0;
   Object.defineProperty(proto, prop, { ...d, set(v) { if (QUIET && ok(this) && d.get.call(this) === String(v)) return; d.set.call(this, v); } }); };
   try { g(Node.prototype, 'textContent', el => el.childNodes.length <= 1); g(Element.prototype, 'innerHTML', () => true); g(Element.prototype, 'className', () => true); g(HTMLElement.prototype, 'title', () => true); } catch (e) { } })();
 function quiet(fn) { QUIET++; try { return fn(); } finally { QUIET--; } }
-window.NII = { TEST, quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading,
+window.NII = { dpr: () => Math.min(window.devicePixelRatio || 1, 2) /* Nov 5 (Stephen): drawing density capped at 2x, both towns (3x phones were choppy) */, TEST, quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading,
   fullscreen: FS, sharedMenu, shuffle: shuffleIn, industries, ind: indAdd, indKey,
   loadTown(id) { return env().towns[id] || null; },
   saveTown(id, st) { if (VISIT) return; const e = env(); e.towns[id] = st; if (id === 'mattoon') e.time = st.time; write(); },
@@ -362,7 +362,7 @@ const DEF_MAPS = {"mattoon":{"fy":1,"box":[-75,-30,2470,148],"names":["main (Cha
 function snapOf(id) { const e = env(); return (e.maps && e.maps[id]) || (DEF_MAPS && DEF_MAPS[id]) || null; }
 function putSnap(id, s) { if (VISIT) return; const e = env(); (e.maps || (e.maps = {}))[id] = s; }
 function drawSnap(cv, s, top, bot, vw) { vw = vw || { k: 1, dx: 0, dy: 0 }; // fit the snapshot into cv below `top` px and above `bot` px; returns world<->screen helpers
-  const W = cv.clientWidth, H = cv.clientHeight, D = window.devicePixelRatio || 1; cv.width = W * D; cv.height = H * D; const g = cv.getContext('2d'); g.setTransform(D, 0, 0, D, 0, 0);
+  const W = cv.clientWidth, H = cv.clientHeight, D = Math.min(window.devicePixelRatio || 1, 2); cv.width = W * D; cv.height = H * D; const g = cv.getContext('2d'); g.setTransform(D, 0, 0, D, 0, 0);
   g.fillStyle = '#efe9db'; g.fillRect(0, 0, W, H); if (!s) return null;
   const [x0, y0, x1, y1] = s.box, fy = s.fy ? -1 : 1, ky = s.ky || 1, z = vw.k * Math.min((W - 24) / (x1 - x0), (H - top - bot - 16) / ((y1 - y0) * ky));
   const cx = (x0 + x1) / 2 - vw.dx / z, cy = (y0 + y1) / 2 - fy * vw.dy / (z * ky), my = top + (H - top - bot) / 2, w2s = (x, y) => [W / 2 + (x - cx) * z, my + fy * (y - cy) * z * ky];
