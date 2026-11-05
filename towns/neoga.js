@@ -129,7 +129,7 @@ const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
 // ---- YARD LIMIT BOARDS (Nov 4, Stephen fine-tunes these). x = feet along the ICG main from the north end (0, toward Mattoon) to the south end (3,300);
 // y = feet off the main centre line (- farm side, + town side). Between the boards a train needs no caboose; once the REAR of a move goes out past
 // a board, the train needs a caboose anywhere in it (shared.js cabOK, the same rule as Mattoon). Light engines are exempt. warnFt etc. in shared.js.
-const YL_ON = false; // Nov 4: OFF until Stephen approves the Neoga boards (true = boards drawn + rule enforced)
+const YL_ON = true; // Nov 4: Stephen approved the Neoga boards // Nov 4: OFF until Stephen approves the Neoga boards (true = boards drawn + rule enforced)
 const YARD_LIMIT = { n: { x: 300, y: -10 }, s: { x: 2800, y: -10 } }; // north: before the house track switch (500); south: past run-around south (~2,660)
 function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a parallel track `off` ft away, then `tail` ft straight
   const h = Math.abs(off) / 2, th = Math.acos(1 - h / R), sg = Math.sign(off), pts = [], n = 16;
