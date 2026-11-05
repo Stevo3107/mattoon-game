@@ -168,7 +168,12 @@ window.NII_SHARED = (() => {
     if (IMG) for (const n of [...HOP_PARTS, ...TOPS]) { const src = get(n + '@2x'); if (src && !IMG[n]) { IMG[n] = new Image(); IMG[n].src = src; } }
     return { HOP_K, HOP_COL, HOP_PARTS };
   }
-  return { hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
+  // ---- CABOOSE RULE (Nov 4, Stephen): outside yard limits a train needs a caboose ANYWHERE in it (locals ran them mid-train or at the head end).
+  // Light engines are exempt. isCab / isLoco come from the town so each town's car records work.
+  const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: true, warnFt: 100 };
+  const cabOK = (vs, isCab, isLoco) => !CABOOSE_RULE.on || vs.some(isCab) || (CABOOSE_RULE.lightEngineExempt && vs.every(isLoco));
+  const CABOOSE_TOAST = 'Rule violation: your train needs a caboose outside yard limits.';
+  return { CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML };
 })();
 
 window.NII_ENGINE = function () {
@@ -772,13 +777,13 @@ const SPEED = { main: 25, other: 10 };
 const isMainSeg = si => /^M/.test(SEG[si].name);
 const trackLimit = c => { const l = locoOf(c); return (isMainSeg(l.f.s) ? SPEED.main : SPEED.other) * FTS; };
 // ---- 1970s rule: a train needs a caboose outside yard limits. Signs at x YL.n (north) and YL.s (south, same spots as scene.js)
-const CABOOSE_RULE = { on: true, fine: 100, rep: 5, lightEngineExempt: true, warnFt: 100 };
+const CABOOSE_RULE = NII_SHARED.CABOOSE_RULE; // Nov 4: shared.js (caboose anywhere in the train)
 const YL = { n: -476, s: P.iM[0] + 326 };
-// the rule is about the REAR of the move (the end away from the direction of travel): it must be the caboose once that end
-// is past a board. The leading end may go past freely (shoves, run-arounds, long cuts). Light engines are exempt (CABOOSE_RULE.lightEngineExempt).
-const CABOOSE_TOAST = 'Rule violation: caboose must be on the rear outside yard limits.';
+// Nov 4 (Stephen): the train must have a caboose in it, anywhere (rear, middle or head end), once its rear is past a board.
+// The leading end may go past freely (shoves, run-arounds, long cuts). Light engines are exempt (CABOOSE_RULE.lightEngineExempt).
+const CABOOSE_TOAST = NII_SHARED.CABOOSE_TOAST;
 const tailVeh = (c, sign) => V(sign > 0 ? c.veh[c.veh.length - 1] : c.veh[0]);
-const cabExempt = (c, sign) => !CABOOSE_RULE.on || tailVeh(c, sign).type === 'caboose' || (CABOOSE_RULE.lightEngineExempt && c.veh.every(id => TYPES[V(id).type].kind === 'loco'));
+const cabExempt = (c, sign) => NII_SHARED.cabOK(c.veh.map(V), v => v.type === 'caboose', v => TYPES[v.type].kind === 'loco'); // Nov 4: a caboose anywhere in the train
 const pX = p => xy(p.s, p.d)[0];
 const tailX = (c, sign) => pX(sign > 0 ? rear(c) : front(c)), headX = (c, sign) => pX(sign > 0 ? front(c) : rear(c));
 // feet the rear end has before it passes a yard limit board (Infinity if it isn't heading out, or the rule doesn't apply)
@@ -788,7 +793,7 @@ function cabooseRule(c, x0) { if (!c.v) return; const sg = Math.sign(c.v); if (c
   const x1 = tailX(c, sg);
   if ((x0 >= YL.n && x1 < YL.n) || (x0 <= YL.s && x1 > YL.s)) { c.v = 0; state.ap = null; state.ctl.notch = 0; state.money -= CABOOSE_RULE.fine; state.rep -= CABOOSE_RULE.rep; state.dayBad = true;
     toast(`${CABOOSE_TOAST} -$${CABOOSE_RULE.fine} -${CABOOSE_RULE.rep} rep.`, 'bad'); sfx('clank'); live.ylw = false; return; }
-  const room = ylRoom(c, sg); if (room < CABOOSE_RULE.warnFt) { if (!live.ylw) { live.ylw = true; toast('Yard limit: the rear of your train is near the board. The caboose must be on the rear to go past.', 'bad'); } } else if (room > CABOOSE_RULE.warnFt + 100) live.ylw = false;
+  const room = ylRoom(c, sg); if (room < CABOOSE_RULE.warnFt) { if (!live.ylw) { live.ylw = true; toast('Yard limit: the rear of your train is near the board. Your train needs a caboose to go past.', 'bad'); } } else if (room > CABOOSE_RULE.warnFt + 100) live.ylw = false;
 }
 // ---- BLUE FLAGS at the customers. Raised when the crew has spotted cars and left the customer's track; the customer works behind it.
 // At the next switch window it's down (BLUE_FLAG.downOdds), or still up until the player taps the building and asks (5-10 game min).
@@ -857,16 +862,16 @@ function apStep(c, dt, running) {
   let limit = rt.t, approach = false;
   const ob = scan(lead, rt.t + 80, c.id);
   if (ob) { if (ob.kind === 'veh') { if (ob.t <= limit + 0.5) { limit = ob.t; approach = true; } } else limit = Math.min(limit, Math.max(0, ob.t - 2)); }
-  if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } apArrive(c); return; }
+  if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } apArrive(c); return; }
   { const a = bfAhead(lead, rt.t + 80); if (a.K) { const room = a.t - 12; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } limit = Math.max(0, room); approach = false; } } }
-  { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
+  { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
   let vdes = NII_SHARED.apVdes(limit, approach, trackLimit(c)); // Nov 4: the shared stopping curve (every town)
   let sp = Math.abs(c.v); ap.eq = 0;
   if (!running) { vdes = 0; if (sp < 0.05) { state.ap = null; c.v = 0; toast('No fuel - the engine is dead.', 'bad'); return; } }
   { const r = NII_SHARED.apAccel(sp, vdes, dt); sp = r.sp; ap.eq = r.eq; }
   let dx = sp * dt; if (!approach && dx > limit) dx = limit;
   c.v = sign * sp;
-  if (!approach && dx >= limit - 1e-6) { moveWithContacts(c, sign * dx); if (ylRoom(c, sign) - 5 <= 0.5) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: the caboose must be on the rear of your train to go past it.', 'bad'); return; } if (state.ap) apArrive(c); else c.v = 0; return; }
+  if (!approach && dx >= limit - 1e-6) { moveWithContacts(c, sign * dx); if (ylRoom(c, sign) - 5 <= 0.5) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } if (state.ap) apArrive(c); else c.v = 0; return; }
   moveWithContacts(c, sign * dx);
 }
 // ---- tap-mode auto-routing. Plan the moves (forward, plus any reversing moves at a switch) from the engine and
@@ -1429,7 +1434,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 <li><b>Switches:</b> tap a switch stand beside the track to throw it; the small letter above it names the switch. Green = straight (normal), red = diverging (reversed) target. If it flashes red, cars or the engine are on the points. You can also tap the markers on the Map.</li>
 <li><b>Drive mode:</b> set the reverser to F or R, release the brake, and notch the throttle up. F runs short hood first.</li>
 <li><b>Tap mode:</b> tap the track (or a car) in the picture or on the Map and the engine goes there at yard speed. Tapping a car couples to it. The engine lines the switches itself (you'll see the stands flip) and makes any reversing move it needs, pulling the whole cut clear of the switch first. If a car is in the way it tells you which one. In Drive mode you throw every switch yourself.</li>
-<li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Once the rear of your move passes one, the caboose must be the last car on that rear end (1970s rule). The front can go past freely, so you can shove or run around partway. A light engine (engines only, no cars) is exempt and can run past the boards. Break the rule and you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
+<li><b>Yard limits and speed:</b> the white YARD LIMIT boards stand at each end of town. Once the rear of your move passes one, your train must have a caboose in it, anywhere in the train (1970s rule). The front can go past freely, so you can shove or run around partway. A light engine (engines only, no cars) is exempt and can run past the boards. Break the rule and you're stopped and fined $100 and 5 rep. Track speed is 25 mph on the main and 10 mph on every other track.</li>
 <li><b>Blue flags:</b> when you've spotted cars at a customer and left, they put a blue flag on their track and work the cars behind it. It's usually down by their next switch window (CIC: Mon / Wed / Fri; the others daily), but now and then they leave it up: tap the building and Request removal (5-10 min). Running past a blue flag costs $250 and 20 rep.</li>
 <li><b>Waybills:</b> every car has a waybill. Tap a car's tag (or any car in Drive mode) to read it; the menu's Waybills list shows where every car is going and which are ready for IC.</li>
 <li><b>Coupling:</b> ease into a car under 4 mph. Faster costs you money and reputation.</li>
@@ -3173,7 +3178,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
