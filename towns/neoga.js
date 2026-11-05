@@ -245,6 +245,7 @@ const BOX_ART = { IC: ['boxcar50dd_icg', 'boxcar50dd_bn', 'boxcar50dd_np', 'boxc
   'N&W': ['boxcar40_nw'], PC: ['boxcar40_pc'], 'C&NW': ['boxcar40_cnw'], GTW: ['boxcar40_gtw'] };
 const { HOP_K, HOP_COL, HOP_PARTS } = NII_SHARED.hopperArt(C.ART, BA, null); // Nov 4: twin hopper defs live in shared.js (core art pack)
 const TANK_ART = { GATX: 'tank_gatx', ACFX: 'tank_acfx', UTLX: 'tank_utlx' };
+const NEW_CARS = []; let NUM_SER_C = null; const NUM_SER = () => NUM_SER_C || (NUM_SER_C = NII_SHARED.numSeries(NUMSP)); // Nov 4: cars made this session, not yet on a track list
 function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC' or 'NW')
   const id = 'ng' + (S.nid++); let v;
   if (dest === 'NG OIL') { const road = ['GATX', 'ACFX', 'UTLX'][Math.floor(R() * 3)], art = TANK_ART[road]; v = { id, type: 'tank', art, road, num: numOf(art) || String(10000 + Math.floor(R() * 89999)), load: { c: 'Heating oil (No. 2)', t: 50 } }; }
@@ -253,7 +254,14 @@ function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC
     v = { id, type: 'hopper', coal: true, art: 'coal_hopper40_' + k, L: 37, road, num: String(road === 'NS' ? 9100 + Math.floor(R() * 100) : road === 'N&W' ? 30000 + Math.floor(R() * 9999) : road === 'IC' ? 70000 + Math.floor(R() * 9999) : 860000 + Math.floor(R() * 9999)), load: { c: 'Coal (stoker)', t: 50 } }; fixLoad(v); v.lv = ['', '-b', '-d'][Math.floor(R() * 3)]; }
   else { const roads = via === 'NW' ? ['N&W', 'N&W', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
     v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
+    if (R() < NII_SHARED.PS1.SHARE * (art.startsWith('boxcar50dd_') ? 1 : 0.5)) { const P = NII_SHARED.PS1.cars[Math.floor(R() * NII_SHARED.PS1.cars.length)], [lo, hi] = P[2]; v.type = 'boxcar50'; v.art = P[0]; v.road = P[1]; v.num = String(lo + Math.floor(R() * (hi - lo + 1))); } // Nov 4: PS-1 50 footers (shared table); any road can reach Neoga by either interchange
     if (R() < 0.75) v.load = { c: ['Groceries', 'Feed', 'Hardware', 'Bagged fertilizer', 'Seed', 'Appliances'][Math.floor(R() * 6)], t: 30 + Math.floor(R() * 15) }; else v.forLoad = { c: 'Bagged grain', t: 40 }; }
+  { // Nov 4: numbers like Mattoon (shared.js): the painted number if it is free, else one from the road's series; never twice on the railroad (both towns)
+    const SER = NUM_SER(), hop = { NS: [9100, 9199], 'N&W': [30000, 39998], IC: [70000, 79998], NYC: [860000, 869998] }, kind = v.type === 'hopper' ? null : v.type === 'tank' ? 'tank' : v.type === 'boxcar40' ? 'box40' : 'box';
+    const range = kind ? SER[kind + ':' + v.road] || SER[kind + ':' + v.road.replace('C&NW', 'CNW')] : hop[v.road], painted = v.type === 'hopper' ? null : numOf(v.art);
+    const used = NII_SHARED.usedNums(E, S.cuts.flatMap(c => c.veh).concat(S.pendIC || [], S.nwPend || []), NEW_CARS);
+    const num = range ? NII_SHARED.freeNum(range, v.road, painted, used, R) : null; if (num) v.num = num; else while (used.has(v.road + ' ' + v.num)) v.num = String(+v.num + 1 + Math.floor(R() * 50));
+    NEW_CARS.push(v); if (NEW_CARS.length > 200) NEW_CARS.shift(); }
   v.loaded = !!v.load; v.wt = 30 + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
 const SHIP = { coal: { IC: ['Southern Illinois Coal Co.', 'Marion, IL', 'IC'], NW: ['Big Sandy Coal Co.', 'Williamson, WV', 'N&W'] }, tank: { IC: ['Bayou Refining Co.', 'Norco, LA', 'IC'], NW: ['Maumee Refining Co.', 'Toledo, OH', 'N&W'] } };
