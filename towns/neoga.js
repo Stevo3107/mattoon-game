@@ -614,6 +614,49 @@ const BLDG = [{ x: 330 - 150, y: 230, w: 90, d: 40, h: 22, col: '#b5714f', roof:
 const BLDG_ART = ['neoga-hardware@2x', 'neoga-bank@2x', 'neoga-cafe@2x'];
 function visX() { const a = sx(0), b = sx(1) - a; return [(0 - a) / b - 200, (W - a) / b + 200]; } // world x on screen (padded)
 let stubPat = null, beanPat = null;
+// ---- Nov 5 (Stephen / Danny): SCENERY prep. OFF by default: nothing below draws or changes the live look until SCENERY_ON = true.
+// Placement data for Danny's pieces (world ft: x along the main, y toward the viewer / town side; main at y 0, house track y 60, main street y 252-272,
+// back lane y 446-458). Ground pieces are drawn flat like groundImg (w x d ft, depth squashed by K); upright pieces like drawArt (side view, 10.1 px/ft @2x,
+// base centre at x, y). Placeholders: grey lot, gravel drives, coloured car boxes, simple trees / fence lines.
+var SCENERY_ON = false;
+let SCN_ = null; const SCN = () => SCN_ || (SCN_ = (() => { // built on first use (needs STREET_Y / FY from further down)
+  const door = FH.doorX, team = FH.doorX + 120, hy = HOUSE_OFF;
+  const lot = { name: 'house-track pickup lot', x0: door - 45, x1: team + 45, y0: hy + 9, y1: hy + 64, art: 'neoga-house-lot@2x' }; // gravel / cinder lot along the house track, road side
+  const apron = { name: 'team-track gravel apron', x0: team - 30, x1: team + 30, y0: hy + 5, y1: hy + 9, art: 'neoga-team-apron@2x' }; // strip between rail and lot at the team spot
+  const access = { name: 'lot access drive to Main Street', x0: team + 10, x1: team + 30, y0: lot.y1, y1: STREET_Y, art: 'neoga-lot-drive-v@2x' }; // 20 ft gravel drive, lot to Main Street
+  const lotCars = [{ x: door - 20, y: hy + 40, kind: 'pickup', col: '#7a8f6a' }, { x: door + 14, y: hy + 42, kind: 'sedan', col: '#b8452f' }, { x: team - 6, y: hy + 30, kind: 'stake', col: '#3e5f8a' }];
+  const houses = [], drives = [], cars = [];
+  const add = (x, y, w, faceY, tag) => { // faceY: the road the drive runs to; drive beside the house on its right
+    const dx = x + w / 2 + 6, len = Math.abs(faceY - y), d = faceY > y ? { x0: dx, x1: dx + 10, y0: y, y1: faceY } : { x0: dx, x1: dx + 10, y0: faceY, y1: y - 4 };
+    houses.push({ tag, x: Math.round(x), y: Math.round(y), w: Math.round(w), road: faceY === STREET_Y + 20 ? 'Main Street (south edge y 272)' : faceY === 446 ? 'back lane (y 446)' : faceY === STREET_Y ? 'Main Street (north edge y 252)' : 'road', driveSide: 'right (+x) of the house', driveLen: Math.round(len - (faceY > y ? 0 : 4)) });
+    drives.push(d); if ((x * 7) % 10 < 6) cars.push({ x: dx + 5, y: faceY > y ? faceY - 8 : y + 6, kind: (x % 3) < 1 ? 'wagon' : (x % 3) < 2 ? 'sedan' : 'pickup', col: ['#c9b27a', '#5b7d9a', '#8a3b2e', '#d8d2c2', '#4f6b4a'][Math.floor(x) % 5] }); };
+  for (const h of HOUSES) { const cx = h.x + 18; if (h.y < 380) add(cx + (h.garage ? 27 : 0) - 9, h.y, 18, STREET_Y + 20, 'row300'); else add(cx + (h.garage ? 27 : 0) - 9, h.y, 18, 446, 'row420'); }
+  for (const [n, x, y] of TOWN_ART) if (/-front$/.test(n)) add(x, y, 30, STREET_Y, 'trackside');
+  // open ground for trees / fences: candidates on a 40 ft grid, kept only if clear of every track (30 ft), switch, signal, yard-limit board, building, house, road and lot
+  let trees = null, fences = null;
+  const open = () => { if (trees) return { trees, fences }; trees = []; const R = seeded(1105), boxes = [[lot.x0 - 15, lot.y0 - 10, access.x1 + 15, STREET_Y + 20], [FY.x0 - 10, FY.y0 - 10, FY.x0 + FY.w + 10, STREET_Y + 20], [NWX - 70, -3000, NWX + 70, 3000], [340, -3000, 420, 3000], [GL0, 246, GR0, 280], [GL0, 440, GR0, 464], [door - 40, hy - 30, door + 40, hy + 10]];
+    for (const h of HOUSES) boxes.push([h.x - 12, h.y - 40, h.x + 70, h.y + 10]); for (const [, x, y] of TOWN_ART) boxes.push([x - 30, y - 30, x + 30, y + 12]); for (const b of BLDG) boxes.push([b.x - 10, b.y - b.d - 10, b.x + b.w + 10, b.y + 12]);
+    for (const o of [CHURCH, GAS, FEED]) boxes.push([o.x - 60, o.y - 40, o.x + 60, o.y + 15]); for (const k in SWITCHES) { const p = SWITCHES[k].at; boxes.push([p[0] - 40, p[1] - 30, p[0] + 60, p[1] + 30]); }
+    for (const x of [SIGS, SIGN]) boxes.push([x - 25, -30, x + 25, 30]); for (const k in YARD_LIMIT) { const b = YARD_LIMIT[k]; boxes.push([b.x - 25, b.y - 25, b.x + 25, b.y + 25]); }
+    const pts = []; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 10) pts.push(ptAt(t, d));
+    const clear = (x, y) => !boxes.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d) && !pts.some(p => Math.abs(p[0] - x) < 30 && Math.abs(p[1] - y) < 30) && Math.abs(y) > 40;
+    for (let y = -200; y <= 700; y += 40) for (let x = -300; x <= 3600; x += 40) { const jx = x + (R() - 0.5) * 24, jy = y + (R() - 0.5) * 16; if (clear(jx, jy) && R() < 0.08) trees.push({ x: Math.round(jx), y: Math.round(jy), art: ['house-tree-maple', 'house-tree-elm', 'house-tree-fruit'][Math.floor(R() * 3)] }); }
+    fences = [{ name: 'lot back fence (chain-link, railroad side of the lot is open)', pts: [[lot.x0, lot.y0], [lot.x0, lot.y1], [access.x0, lot.y1]], art: 'house-fence-chain' }, { name: 'lot fence, far side', pts: [[access.x1, lot.y1], [lot.x1, lot.y1], [lot.x1, lot.y0]], art: 'house-fence-chain' },
+      { name: 'farm fence along the field edge north of the main (gaps at the county road and N&W)', pts: [[-300, -62], [330, -62]], art: 'farm-fence-wire' }, { name: 'farm fence (2)', pts: [[430, -62], [NWX - 80, -62]], art: 'farm-fence-wire' }, { name: 'farm fence (3)', pts: [[NWX + 80, -62], [3600, -62]], art: 'farm-fence-wire' }];
+    return { trees, fences }; };
+  const GL0 = -400, GR0 = 3700;
+  return { lot, apron, access, lotCars, houses, drives, cars, open };
+})());
+function drawSceneryGround() { if (!SCENERY_ON) return; const Z = SCN(), L = Z.lot, A = Z.access, P = Z.apron;
+  groundImg(L.art, L.x0, L.y0, L.x1 - L.x0, L.y1 - L.y0) || rectW(L.x0, L.y0, L.x1, L.y1, '#9c978d'); groundImg(P.art, P.x0, P.y0, P.x1 - P.x0, P.y1 - P.y0) || rectW(P.x0, P.y0, P.x1, P.y1, '#b3aa95');
+  tileV(A.art, A.x0, A.y0, A.x1 - A.x0, A.y1 - A.y0, 40) || rectW(A.x0, A.y0, A.x1, A.y1, '#a9a49a'); for (const d of Z.drives) tileV('neoga-drive-gravel@2x', d.x0, d.y0, d.x1 - d.x0, d.y1 - d.y0, 40) || rectW(d.x0, d.y0, d.x1, d.y1, '#b1aa9c'); }
+// a ground strip tiled along y every `t` ft from y0 (the last tile cropped), like the fuel drive; false if the art isn't there
+function tileV(n, x0, y0, w, d, t) { const i = img(BA(n)); if (!ok(i)) return false; for (let y = y0; y < y0 + d - 0.01; y += t) { const h = Math.min(t, y0 + d - y); g.drawImage(i, 0, 0, i.naturalWidth, i.naturalHeight * h / t, sx(x0), sy(y), w * cam.z, h * cam.z * K); } return true; }
+const CAR_DIM = { sedan: [17, 6.5, 4.6], wagon: [18, 6.5, 4.8], pickup: [17, 6.6, 5.6], stake: [20, 7.5, 7] }; // 1975 sizes (ft): length, width, height
+function sceneryItems(items) { if (!SCENERY_ON) return; const Z = SCN(), parked = Z.lotCars.concat(Z.cars);
+  for (const c of parked) items.push({ y: c.y, f: () => { const [l, w, h] = CAR_DIM[c.kind] || CAR_DIM.sedan; if (drawArt('car-1975-' + c.kind + '@2x', c.x, c.y)) return; box3(c.x - l / 2, c.y, l, w, h, c.col, '#2c2c2c'); } });
+  const o = Z.open(); for (const t of o.trees) items.push({ y: t.y, f: () => drawArt(t.art, t.x, t.y) || tree(t.x, t.y, 1) });
+  for (const f of o.fences) items.push({ y: Math.max(...f.pts.map(p => p[1])), f: () => line(f.pts, Math.max(1, 0.5 * cam.z), '#d9d4c7') }); }
 function drawGround() { const [vL, vR] = visX(), GL = Math.min(-400, vL), GR = Math.max(3700, vR);
   const sky = g.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#9fb07a'); sky.addColorStop(1, '#93a16f'); g.fillStyle = sky; g.fillRect(0, 0, W, H);
   // Nov 1 (pretty pass): Mattoon's stubble fields (farm-field-stubble, 5.05 px/ft) on the farm side and past the town; fence rows between fields
@@ -631,6 +674,7 @@ function drawGround() { const [vL, vR] = visX(), GL = Math.min(-400, vL), GR = M
   rectW(GL, 200, GR, NG_YB + 200, '#7fa356'); // town side: lawn green all the way down (Stephen)
   rectW(GL, 252, GR, 272, '#6d6b66'); rectW(GL, 446, GR, 458, '#76746e'); // main street + back lane line([[GL, 262], [GR, 262]], 1, 'rgba(255,255,255,.35)'); // town lawns + street
   rectW(360, -3000, 400, NG_YB + 200, '#6d6b66'); // county road crossing the main
+  drawSceneryGround(); // Nov 5: off unless SCENERY_ON
   line([[NWX, -3000], [NWX, NG_YB + 200]], Math.max(3, 10 * cam.z), '#9a8f7c'); // N&W right of way (ballast)
 }
 // background elevator (farm side, set well back from the N&W and the main); Danny's neoga-elevator@2x wins when it arrives
@@ -855,7 +899,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   const items = []; // depth-sorted scenery + cars
   items.push({ y: ELEV.y, f: drawElevator }); items.push({ y: POLE_Y, f: drawPoles }); for (const [n, x, y] of TOWN_ART) items.push({ y, f: () => drawArt(n, x, y) || tree(x, y, 1) });
   items.push({ y: -26, f: drawTower }); items.push({ y: HOUSE_OFF - 13.5, f: drawFreightHouse }); items.push({ y: FUEL_OFF - 14, f: drawFuel }); items.push({ y: STREET_Y - 3, f: drawFuelSign });
-  for (const h of HOUSES) items.push({ y: h.y, f: () => drawHouse(h) });
+  for (const h of HOUSES) items.push({ y: h.y, f: () => drawHouse(h) }); sceneryItems(items);
   for (const [n, o, fb] of [['neoga-church@2x', CHURCH], ['neoga-gas-station@2x', GAS], ['neoga-feed-store@2x', FEED]]) items.push({ y: o.y, f: () => drawArt(n, o.x, o.y) });
   BLDG.forEach((b, i) => items.push({ y: b.y, f: () => { if (drawArt(BLDG_ART[i], b.x + b.w / 2, b.y + 18)) return; box3(b.x, b.y, b.w, b.d, b.h, b.col, b.roof); g.fillStyle = '#f2ead6'; g.font = `700 ${Math.max(7, 2.4 * cam.z)}px Arial`; g.textAlign = 'center'; g.fillText(b.sign, sx(b.x + b.w / 2), sy(b.y) - hz(b.h - 4)); } }));
   items.push({ y: -620, f: () => { if (!drawArt('neoga-farmhouse@2x', 840, -620)) box3(820, -620, 40, 30, 16, '#efe9dc', '#4b4b4b', 8); drawArt('house-tree-maple', 790, -626) || tree(780, -615, 1.3); } }); // no barn (Stephen)
@@ -1008,5 +1052,5 @@ build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

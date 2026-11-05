@@ -401,9 +401,10 @@ const SPOTS = {
   'IFS NH3': { s: SI.IFS, d0: artD('IFS', 502, 172.75 - 29), d1: artD('IFS', 502, 172.75 + 29), name: 'the anhydrous (NH3) spot at Illini Farm Supply', spots: [artD('IFS', 502, 172.75)] },
   'IFS UAN': { s: SI.IFS, d0: artD('IFS', 502, 236.75 - 29), d1: artD('IFS', 502, 236.75 + 29), name: 'the UAN spot at Illini Farm Supply', spots: [artD('IFS', 502, 236.75)] },
   'IFS DOCK': { s: SI.IFS, d0: artD('IFS', 502, 469 - 36), d1: SEG[SI.IFS].len, name: 'the boxcar dock at Illini Farm Supply', spots: [artD('IFS', 502, 469)] },
-  GRAIN: { s: SI.GLD, d0: 0, d1: SEG[SI.GLD].len, name: 'the Prairie Grain loading track (the car puller takes it from there)' },
+  GRAIN: { s: SI.GLD, d0: 0, d1: 1, name: 'under the Prairie Grain elevator spout' }, // filled in below once SPOUT_D is known
 };
 const SPOUT_D = (PG_X + 15.5) - (PG_X - 602.51); // car centre under the elevator spout, on the loading track (straight, from switch G1)
+{ const t = 30; SPOTS.GRAIN.d0 = SPOUT_D - t; SPOTS.GRAIN.d1 = SPOUT_D + t; SPOTS.GRAIN.spots = [SPOUT_D]; } // Nov 5 (Stephen): the player spots under the spout; nothing is ever pulled there
 
 const linkEq = (l, s, end) => l.seg === s && l.end === end;
 function nextFrom(nodeId, s, end) {
@@ -1195,7 +1196,7 @@ function jobStatus() {
   return { there, attached, ok: there && !attached && Math.abs(locoCons().v) < 0.05 };
 }
 function finishTask(t) { const v = V(t.car); t.done = true; t.doneDay = dayNo();
-  if (t.type === 'spot' && t.spot !== 'GRAIN') startWork(v); else if (t.type === 'house') startWork(v);
+  if (t.type === 'spot' || t.type === 'house') startWork(v);
   else if (t.type === 'yard' && unloadsInYard(v)) { v.loaded = false; v.load = null; v.wt = TYPES[v.type].tare; v.dest = 'IC-INT'; }
   else if (t.type === 'yard' && roadOf(v) === 'NII' && !v.loaded) { v.dest = null; v.idle = true; }
   const rp = t.type === 'yard' && roadOf(v) === 'NII' ? 0 : (t.rep || 0); // no rep for putting a company-owned (NI&I) car back in the yard (Stephen, Oct 30)
@@ -1252,7 +1253,7 @@ const DEST = {
   'IFS NH3': { sub: 'MAT', name: 'Illini Farm Supply: anhydrous ammonia (NH3) spot' },
   'IFS UAN': { sub: 'MAT', name: 'Illini Farm Supply: UAN spot' },
   'IFS DOCK': { sub: 'MAT', name: 'Illini Farm Supply: boxcar dock (ramp)' },
-  GRAIN: { sub: 'MAT', name: 'Prairie Grain: leave the empties on the loading track; the car puller spots them' },
+  GRAIN: { sub: 'MAT', name: 'Prairie Grain: spot each empty under the elevator spout' },
 };
 let tagsOn = false; const TAGS_KEY = 'nii-mattoon-tags'; let spotsOn = false; const SPOTS_KEY = 'nii-mattoon-spots'; let namesOn = true; const NAMES_KEY = 'nii-mattoon-tracknames';
 function carDest(v) { // destination code for a car, or null for engines
@@ -1289,24 +1290,13 @@ function doneWork(v) { // finish one car: returns a summary line
   v.relK = k0; v.relT = state.time; delete v.wb; waybillOf(v); // released: now it's on us to pull it before the free time runs out
   return { id: v.id, name, what, pay };
 }
-// the elevator's car puller: an uncoupled cut of hoppers on the loading track is drawn north one car at a time, each empty stopped under the spout
-function grainPuller() {
-  for (const c of Object.values(state.cons)) {
-    if (locoOf(c) || Math.abs(c.v) > 0.01) continue; const vs = c.veh.map(V);
-    if (!vs.some(v => v.dest === 'GRAIN' && !v.loaded)) continue;
-    if (vs.some(v => v.work)) continue; // one at a time
-    // the empty furthest north (lowest x) that's on the loading track goes under the spout
-    const cand = vs.filter(v => v.dest === 'GRAIN' && !v.loaded && v.f.s === SI.GLD && v.r.s === SI.GLD); if (!cand.length) continue;
-    const v = cand.reduce((a, b) => (a.f.d + a.r.d < b.f.d + b.r.d ? a : b)), mid = (v.f.d + v.r.d) / 2, dx = (SPOUT_D - mid) * Math.sign(v.f.d - v.r.d);
-    if (Math.abs(dx) > 0.05) { moveConsist(c, dx); reindex(); }
-    startWork(v);
-  }
-}
+// Nov 5 (Stephen): the elevator used to pull empties under the spout on its own when you cut away. Removed. Spotting is only when YOU leave a car under the spout.
+function grainPuller() { }
 function finishWork(all) { // all = end of day: everything finishes. Otherwise only cars whose time is up.
   const out = [];
   for (let k = 0; k < 20; k++) { let any = false;
     for (const v of Object.values(state.veh)) if (v.work && ((all && !v.work.hold) || state.time >= v.work.until)) { out.push(doneWork(v)); any = true; }
-    grainPuller(); if (!all || !any) break; }
+    if (!all || !any) break; }
   return out;
 }
 let workT = 0;
@@ -1315,8 +1305,7 @@ function workTick() { // a few times a game minute: start work on cars left at t
   for (const v of Object.values(state.veh)) if (v.fhDone && !carWhere(v).house) delete v.fhDone;
   for (const v of Object.values(state.veh)) if (!v.work && !v.fhDone && !carLoad(v) && (v.type === 'boxcarIC' || v.type === 'boxcar50' || v.type === 'boxcar40') && carWhere(v).house) { const c = C(v.cid); if (locoOf(c) || Math.abs(c.v) > 0.01) continue;
     if (v.dest !== 'HOUSE') { v.dest = 'HOUSE'; v.idle = false; } if (!v.out) { const cap = TYPES[v.type].cap; v.out = pickLoad(FREIGHT.houseOut, cap, seeded(+v.num + state.icSeq * 29 + Math.round(state.time))); } }
-  for (const v of Object.values(state.veh)) if (!v.work && ((SPOTS[v.dest] && v.dest !== 'GRAIN' && carWhere(v).spot(v.dest)) || (v.dest === 'HOUSE' && carWhere(v).house))) { const c = C(v.cid); if (!locoOf(c) && Math.abs(c.v) < 0.01) startWork(v); }
-  grainPuller();
+  for (const v of Object.values(state.veh)) if (!v.work && ((SPOTS[v.dest] && carWhere(v).spot(v.dest)) || (v.dest === 'HOUSE' && carWhere(v).house))) { const c = C(v.cid); if (!locoOf(c) && Math.abs(c.v) < 0.01) startWork(v); }
   const done = finishWork(false);
   for (const d of done) toast(`${d.name}: ${d.what}. Tagged IC-INT.`);
   if (done.length) { syncTasks(); save(); }
@@ -3229,7 +3218,11 @@ function frame(t) {
   requestAnimationFrame(frame);
 }
 function boot() {
-  startState(); load(); reindex(); resize();
+  startState(); load(); reindex();
+  // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
+  for (const v of Object.values(state.veh)) { if (!v.work || !SPOTS[v.dest]) continue; if (carWhere(v).spot(v.dest) || (v.dest === 'HOUSE' && carWhere(v).house)) continue;
+    delete v.work; delete v.spotT; delete v.fhDone; delete v.wb; try { waybillOf(v); } catch (e) { } }
+  resize();
   try { setTags(localStorage.getItem(TAGS_KEY) === '1'); } catch (e) { setTags(false); }
   try { setSpots(localStorage.getItem(SPOTS_KEY) === '1'); } catch (e) { setSpots(false); }
   try { setNames(localStorage.getItem(NAMES_KEY) !== '0'); } catch (e) { setNames(true); }
