@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw3rbkkf";</script>
+<script>window.NII_BUILD = "mw3s45ap";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -447,9 +447,9 @@ const visitNote = () => `View only. Your train is in ${TOWNS[VISIT.home].name}.`
     setTimeout(() => { try { if (TID === 'mattoon') window.NII_ENGINE(); else (window.NII_TOWNS && window.NII_TOWNS[TID] || window.NII_TOWN_STUB)(window.NII); visitBanner(); hideLoading(); } catch (err) { fail('The game hit an error while starting: ' + String(err && err.message || err).replace(/</g, '&lt;')); throw err; } }, Math.max(0, minMs - (Date.now() - t0)));
   }).catch(err => fail(`Couldn't load <b>${err.message}</b>.` + (location.protocol === 'file:' ? '<br>Opened as a file: keep core.js and the towns folder next to index.html, or play at <a href="https://stevo3107.github.io/mattoon-game/">stevo3107.github.io/mattoon-game</a>.' : '<br>Check the connection and reload the page.')));
 })();
-if (TEST) { const mark = () => { const t = document.getElementById('top'); if (!t) return setTimeout(mark, 200); if (document.getElementById('testMark')) return;
-  const m = document.createElement('div'); m.id = 'testMark'; m.textContent = 'TEST GAME'; m.title = 'Separate test save. Open the site without ?test=rep100 for your real game.';
-  m.style.cssText = 'background:#c0392b;color:#fff;font:700 11px/1 sans-serif;padding:4px 6px;border-radius:4px;align-self:center;margin:0 6px;letter-spacing:.5px;flex:none'; t.insertBefore(m, t.firstChild); }; mark(); }
+if (TEST) { const mark = () => { if (!document.body) return setTimeout(mark, 200); if (document.getElementById('testMark')) return; // Nov 5 fix: a corner overlay, outside the top bar (it used to push the Menu button off a phone screen)
+  const m = document.createElement('div'); m.id = 'testMark'; m.textContent = 'TEST GAME';
+  m.style.cssText = 'position:fixed;left:50%;bottom:0;transform:translateX(-50%);z-index:9999;pointer-events:none;background:rgba(192,57,43,.85);color:#fff;font:700 9px/1 sans-serif;padding:2px 6px;border-radius:4px 4px 0 0;letter-spacing:.5px'; document.body.appendChild(m); }; mark(); }
 })();
 </script>
 </body>
