@@ -66,7 +66,7 @@ window.NII_SHARED = (() => {
   }
   // ---- DESTINATION TAGS: Mattoon's flag over every car, coloured by subdivision, code + load line, stacked so none overlap,
   // with the subdivision key at the bottom. hs: [{ id, x0, x1, y0, depth, t: { code, load, sub, color, ink } }]. Returns the tags drawn (tappable).
-  const SUBDIVS = { MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' }, NEO: { name: 'Neoga', color: '#b3261e' /* Nov 4 (Stephen): Mattoon's red; was #1f5fa8 */, ink: '#ffffff' } };
+  const SUBDIVS = { MAT: { name: 'Mattoon', color: '#b3261e', ink: '#ffffff' }, NEO: { name: 'Neoga', color: '#b3261e' /* Nov 4 (Stephen): Mattoon's red; was #1f5fa8 */, ink: '#ffffff' }, EFF: { name: 'Effingham', color: '#b3261e', ink: '#ffffff' } };
   const TAG_FONT = '800 12.5px -apple-system,Segoe UI,Roboto,Arial', TAG_FONT2 = '700 11.5px -apple-system,Segoe UI,Roboto,Arial', TAG_H1 = 19, TAG_H2 = 32;
   function drawTags(g, hs, VW, VH, keyX) {
     const placed = []; hs = hs.slice().sort((a, b) => a.depth - b.depth);
