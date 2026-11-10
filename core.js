@@ -5328,6 +5328,217 @@ window.__game = { fixEnginePG, showTasks, neogaStatus, cabExempt, icSetOut, endD
 boot();
 };
 
+// Nov 10 (Stephen): ?spawn=effingham — test-save only. After the Effingham pack boots (NII_ENGINE
+// itself never runs there), add 2 extra NI&I GP9s and 2 cabooses on clear facility/yard tracks,
+// and top up the PC Interchange with inbound customer cars from the normal generator. Idempotent,
+// leaves money/rep/time/jobs alone, never touches the live nii-towns-v10 save.
+(function installSpawnEffinghamHook() {
+  function dropSpawnParam() {
+    try {
+      const u = new URL(location.href);
+      u.searchParams.delete('spawn');
+      history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+    } catch (e) { }
+  }
+  function spawnToast(msg) {
+    const b = document.getElementById('toast');
+    if (!b) return;
+    b.innerHTML = '';
+    const d = document.createElement('div');
+    d.textContent = msg;
+    b.appendChild(d);
+    setTimeout(() => { d.style.opacity = 0; }, 4500);
+  }
+  function segsOverlap(a, b, pad) {
+    for (const g of a.path || []) for (const h of b.path || []) if (g.t === h.t) {
+      const lo = Math.max(Math.min(g.d0, g.d1), Math.min(h.d0, h.d1));
+      const hi = Math.min(Math.max(g.d0, g.d1), Math.max(h.d0, h.d1));
+      if (hi - lo > -pad) return true;
+    }
+    return false;
+  }
+  function allVeh(E, extra) {
+    const out = extra ? extra.slice() : [];
+    const towns = (E && E.towns) || {};
+    const mt = towns.mattoon;
+    if (mt && mt.veh) out.push(...Object.values(mt.veh));
+    if (mt && mt.awayTrain && mt.awayTrain.veh) out.push(...mt.awayTrain.veh);
+    for (const id of ['neoga', 'effingham']) {
+      const s = towns[id]; if (!s) continue;
+      for (const c of s.cuts || []) out.push(...(c.veh || []));
+      out.push(...(s.pendIC || []), ...(s.pcPend || []), ...(s.nwPend || []));
+      for (const b of s.nwBack || []) if (b && b.v) out.push(b.v);
+    }
+    if (E && E.trainIn) out.push(...E.trainIn);
+    return out;
+  }
+  function usedNums(E, extra) {
+    const used = new Set();
+    for (const v of allVeh(E, extra)) {
+      const road = v.road || (v.type === 'gp9' || v.type === 'caboose' ? 'NII' : '');
+      if (v.num != null) used.add(road + ' ' + v.num);
+    }
+    return used;
+  }
+  function nextFree(used, road, start) {
+    let n = start;
+    while (used.has(road + ' ' + n)) n++;
+    used.add(road + ' ' + n);
+    return String(n);
+  }
+  function vLen(v) { return v.L || (v.type === 'gp9' ? 56.17 : v.type === 'caboose' ? 45.67 : 50); }
+  function isMain(t) { return /^M\d+$/.test(t); }
+  function trackHasCars(S, t) {
+    return (S.cuts || []).some(c => (c.path || []).some(g => g.t === t));
+  }
+  function placeOnTrack(EF, veh, tracks, opts) {
+    const S = EF.S, T = EF.T, L = vLen(veh);
+    const want = tracks.filter(t => t && !isMain(t) && T[t] && T[t].len >= L + 10);
+    const stack = (opts && opts.stackOn) || [];
+    // Engines: one per clear stall. Cabooses: fill the caboose runaround first if they fit.
+    const rest = want.filter(t => !stack.includes(t));
+    const ordered = stack.filter(t => want.includes(t))
+      .concat(rest.filter(t => !trackHasCars(S, t)))
+      .concat(rest.filter(t => trackHasCars(S, t)));
+    for (const t of ordered) {
+      const len = T[t].len;
+      for (let hd = len - 4; hd >= L + 4; hd -= 6) {
+        const c = EF.placeCut([veh], [true], t, hd, 1);
+        const ds = (c.path || []).flatMap(g => [g.d0, g.d1]);
+        if (!c.path || !c.path.length || c.path.some(g => g.t !== t)) continue;
+        if (Math.min(...ds) < 2 || Math.max(...ds) > len - 2) continue;
+        if (S.cuts.some(o => o !== c && segsOverlap(o, c, 2))) continue;
+        S.cuts.push(c);
+        return { track: t, name: (T[t].name || t), hd };
+      }
+    }
+    return null;
+  }
+  function setOutPCX(EF, cars) {
+    if (!cars || !cars.length) return false;
+    const S = EF.S, T = EF.T, clr = EF.clr;
+    let hd = clr - 2;
+    for (const o of S.cuts) if ((o.path || []).length && o.path.every(g => g.t === 'PCX'))
+      hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)).map(x => x - 2));
+    const L = cars.reduce((a, v) => a + vLen(v), 0);
+    const c = EF.placeCut(cars, cars.map(() => true), 'PCX', hd, 1);
+    if (S.cuts.some(o => o !== c && segsOverlap(o, c, 2)) || hd - L < 120) return false;
+    S.cuts.push(c);
+    return true;
+  }
+  function copyRoadEngine(E, S) {
+    const here = (S.cuts || []).flatMap(c => c.veh || []).find(v => v.type === 'gp9' && (v.road || 'NII') === 'NII');
+    const mt = E.towns && E.towns.mattoon && E.towns.mattoon.veh;
+    const home = mt && Object.values(mt).find(v => v.type === 'gp9' && (v.road || 'NII') === 'NII');
+    const src = here || home || { type: 'gp9', wt: 124, fuel: 320, sand: 60, road: 'NII' };
+    const o = { type: 'gp9', L: src.L || 56.17, wt: src.wt || 124, fuel: 320, sand: 60, road: src.road || 'NII' };
+    if (src.art) o.art = src.art;
+    return o;
+  }
+  function runSpawnEffingham(NII) {
+    if (!NII || NII.TEST !== 'rep100') return;
+    if (!/[?&]test=rep100(&|$)/.test(location.search)) return;
+    if (!/[?&]spawn=effingham(&|$)/.test(location.search)) return;
+    try { if (sessionStorage.getItem('nii-visit')) return; } catch (e) { }
+    const E = NII.env && NII.env();
+    if (!E || E.v !== 10) return;
+    const EF = window.__effingham;
+    if (!EF || !EF.S || !EF.T || !EF.placeCut || !EF.newCar) return;
+    const S = EF.S;
+    if (S.spawnEffingham) { dropSpawnParam(); return; }
+
+    const used = usedNums(E, (S.cuts || []).flatMap(c => c.veh || []));
+    const proto = copyRoadEngine(E, S);
+    const engineTracks = ['FESTALL1', 'FESTALL2', 'FELEAD', 'Y2', 'Y1'];
+    const cabooseTracks = ['CB', 'Y2', 'Y3', 'Y1'];
+    const placed = [];
+    const hadLoco = (S.cuts || []).some(c => (c.veh || []).some(v => v.type === 'gp9'));
+
+    for (let i = 1; i <= 2; i++) {
+      const num = nextFree(used, proto.road || 'NII', 1752 + i);
+      const v = Object.assign({}, proto, { id: 'efsp-gp9-' + i, num });
+      const at = placeOnTrack(EF, v, engineTracks);
+      if (at) placed.push({ kind: 'engine', num: v.num, id: v.id, track: at.track, name: at.name });
+    }
+    for (let i = 1; i <= 2; i++) {
+      const num = nextFree(used, 'NII', 855 + i);
+      const v = { id: 'efsp-cab-' + i, type: 'caboose', num, wt: 24, L: 45.67, road: 'NII' };
+      const at = placeOnTrack(EF, v, cabooseTracks, { stackOn: ['CB'] });
+      if (at) placed.push({ kind: 'caboose', num: v.num, id: v.id, track: at.track, name: at.name });
+    }
+    // Keep the player's existing engine as liveCut (first loco in S.cuts). New power stays parked.
+    if (hadLoco) {
+      const park = [], rest = [];
+      for (const c of S.cuts) ((c.veh || []).some(v => /^efsp-/.test(v.id)) ? park : rest).push(c);
+      S.cuts.splice(0, S.cuts.length, ...rest, ...park);
+    }
+
+    const DEST_OK = d => /^EF /.test(d || '');
+    const onPcx = [];
+    for (const c of S.cuts) {
+      if (!(c.path || []).length || !c.path.every(g => g.t === 'PCX')) continue;
+      for (const v of c.veh || []) if (v.type !== 'gp9' && v.type !== 'caboose' && DEST_OK(v.dest)) onPcx.push(v);
+    }
+    const seen = new Set(allVeh(E).map(v => (v.road || '') + ' ' + v.num));
+    const odds = [['EF HOUSE', 0.18], ['EF GRAIN', 0.35], ['EF BURGESS', 0.12], ['EF SCRAP', 0.10], ['EF PROPANE', 0.08], ['EF GLASS', 0.15]];
+    const tw = odds.reduce((a, x) => a + x[1], 0);
+    let rs = ((E.time | 0) ^ 0x5e0f ^ ((S.nid || 1) * 7919)) >>> 0;
+    const R = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
+    const pickDest = () => { let x = R() * tw; for (const [d, w] of odds) { x -= w; if (x <= 0) return d; } return 'EF GRAIN'; };
+    const add = [];
+    for (let i = 0; i < 16 && add.length < 12; i++) {
+      const v = EF.newCar(pickDest(), 'PC');
+      const key = (v.road || '') + ' ' + v.num;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      add.push(v);
+    }
+    let k = add.length, added = [];
+    while (k > 0 && !setOutPCX(EF, add.slice(0, k))) k--;
+    if (k) added = add.slice(0, k);
+
+    S.spawnEffingham = 1;
+    try { if (typeof EF.save === 'function') EF.save(); } catch (e) { }
+    dropSpawnParam();
+    const en = placed.filter(p => p.kind === 'engine').map(p => 'NI&I ' + p.num + ' on ' + p.name);
+    const cb = placed.filter(p => p.kind === 'caboose').map(p => 'NI&I ' + p.num + ' on ' + p.name);
+    const nPc = onPcx.length + added.length;
+    spawnToast('Test spawn: ' + en.length + ' engines, ' + cb.length + ' cabooses' + (nPc ? ', ' + nPc + ' cars on the PC Interchange' : '') + '.');
+    try { window.__spawnEffingham = { units: placed, pcAdded: added.map(v => ({ id: v.id, road: v.road, num: v.num, dest: v.dest, via: v.via, type: v.type, art: v.art, load: v.load || null, forLoad: v.forLoad || null })), pcHad: onPcx.length }; } catch (e) { }
+  }
+
+  function wrap(fn) {
+    if (typeof fn !== 'function' || fn.__niiSpawnEf) return fn;
+    const wrapped = function (NII) {
+      const ret = fn.apply(this, arguments);
+      try { runSpawnEffingham(NII || window.NII); } catch (e) { }
+      return ret;
+    };
+    wrapped.__niiSpawnEf = true;
+    return wrapped;
+  }
+  const towns = window.NII_TOWNS = window.NII_TOWNS || {};
+  const desc = Object.getOwnPropertyDescriptor(towns, 'effingham');
+  if (desc && desc.set) {
+    const origSet = desc.set, origGet = desc.get;
+    Object.defineProperty(towns, 'effingham', {
+      configurable: true, enumerable: true,
+      get() { return origGet ? origGet.call(this) : undefined; },
+      set(fn) { origSet.call(this, wrap(fn)); }
+    });
+    const cur = origGet && origGet.call(towns);
+    if (typeof cur === 'function') towns.effingham = cur;
+  } else {
+    let cur = towns.effingham;
+    Object.defineProperty(towns, 'effingham', {
+      configurable: true, enumerable: true,
+      get() { return cur; },
+      set(fn) { cur = wrap(fn); }
+    });
+    if (typeof cur === 'function') towns.effingham = cur;
+  }
+})();
+
 window.NII_SOLID_KIT = function (H) {
 const ART = NII_CORE.ART, XART = NII_CORE.XART, NUMSPEC = NII_CORE.NUMSPEC; let DPR = 1, HZ = 0; const HIT = { vehs: [] };
 const artOf = v => v.art || v.type, vehScreen = v => H.vehScreen(v), advance = (p, d) => H.advance(p, d), xy = (s, d) => H.xy(s, d), pr = (x, y) => H.pr(x, y), railPt = (s, d, o) => H.railPt(s, d, o);
