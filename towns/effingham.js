@@ -1516,7 +1516,20 @@ const isLease = v => /X$/.test(roadOf(v));
 const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon', gon: 'gon' })[v.type];
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
-const liveCut = () => S.cuts.find(c => c.veh.some(isLoco));
+function myEngineId() { try { return NII.env().myEngine || null; } catch (e) { return null; } }
+function setMyEngine(id) { try { const e = NII.env(); e.myEngine = id || null; NII.write(); } catch (e) { } }
+function locoLabel(v) { if (!v) return 'the engine'; return 'GP9 ' + v.num; }
+function claimEngine(id) {
+  const q = standingCars().find(o => o.v && o.v.id === id && isLoco(o.v)); if (!q) return false;
+  const cur = myEngineId(), oldC = liveCut();
+  if (oldC && cur !== id) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; }
+  setMyEngine(id); toast(locoLabel(q.v) + ' is now your engine.'); save(); return true;
+}
+const liveCut = () => {
+  const id = myEngineId();
+  if (id) { const c = S.cuts.find(c => (c.veh || []).some(v => v.id === id && isLoco(v))); if (c) return c; }
+  return S.cuts.find(c => c.veh.some(isLoco));
+};
 function pathPt(c, s) { let acc = 0; for (const g of c.path) { const l = Math.abs(g.d1 - g.d0); if (s <= acc + l + 1e-6) return { t: g.t, d: g.d0 + g.dir * (s - acc) }; acc += l; } const g = c.path[c.path.length - 1]; return { t: g.t, d: g.d1 }; }
 function extendHead(c, s) { let done = 0; while (s - done > 1e-6) { const g = c.path[c.path.length - 1], tr = T[g.t], room = g.dir > 0 ? (g.t === 'PCX' && !SWITCHES.S_PCX && typeof PCX_CLR === 'number' ? Math.max(0, PCX_CLR - g.d1) : tr.len - g.d1) : g.d1, step = Math.min(room, s - done);
     g.d1 += g.dir * step; done += step; if (s - done <= 1e-6) break;
@@ -1862,13 +1875,53 @@ const swBetween = (t1, t2) => Object.keys(SWITCHES).find(k => { const s = SWITCH
 const cutName = o => { const v = o.veh.find(v => !isLoco(v)) || o.veh[0]; return `${roadOf(v)} ${v.num}`; };
 // Mattoon's planRoute, on Effingham's track: cheapest set of moves (distance + REV_COST per reversal, at most MAX_REV), lining switches on the way;
 // a move may reverse once the whole train is CLEAR past a switch it trailed through; cars in the way block, the goal car is coupled to.
-function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c), keys = Object.keys(SWITCHES), save0 = { ...S.sw };
+// Only enumerate linings of switches on (or near) a path from the train to the goal.
+// Enumerating every free switch in town is 2^N and hangs Effingham Tap (no toast, no move).
+function routeSwitchKeys(c, goal) {
+  const adj = {};
+  for (const k of Object.keys(SWITCHES)) {
+    if (k === 'S_PCX' || k === 'PCL') continue;
+    const sw = SWITCHES[k], ts = [sw.stem[0], sw.N[0], sw.R[0]];
+    for (const t of ts) (adj[t] || (adj[t] = [])).push({ k, ts });
+  }
+  for (const [a, b] of (typeof JOINS !== 'undefined' ? JOINS : [])) {
+    const ts = [a[0], b[0]];
+    for (const t of ts) (adj[t] || (adj[t] = [])).push({ k: null, ts });
+  }
+  const distFrom = seeds => { const d = {}, q = []; for (const t of seeds) { if (t && d[t] == null) { d[t] = 0; q.push(t); } }
+    for (let i = 0; i < q.length; i++) for (const e of (adj[q[i]] || [])) for (const u of e.ts) if (d[u] == null) { d[u] = d[q[i]] + 1; q.push(u); } return d; };
+  const starts = new Set((c.path || []).map(g => g.t)), goals = new Set();
+  if (goal && goal.t) goals.add(goal.t);
+  if (goal && goal.cut) (goal.cut.path || []).forEach(g => goals.add(g.t));
+  const ds = distFrom(starts), dg = goals.size ? distFrom(goals) : {};
+  let sp = Infinity; for (const t of Object.keys(ds)) if (dg[t] != null) sp = Math.min(sp, ds[t] + dg[t]);
+  if (!isFinite(sp)) sp = 0;
+  const score = k => { const sw = SWITCHES[k], ts = [sw.stem[0], sw.N[0], sw.R[0]]; return Math.min(...ts.map(t => Math.min(ds[t] != null ? ds[t] : 99, dg[t] != null ? dg[t] : 99))); };
+  const pathScore = k => { const sw = SWITCHES[k], ts = [sw.stem[0], sw.N[0], sw.R[0]];
+    return Math.min(...ts.map(t => (ds[t] != null && dg[t] != null) ? ds[t] + dg[t] : 999)); };
+  let keys = Object.keys(SWITCHES).filter(k => {
+    if (k === 'S_PCX' || k === 'PCL') return false;
+    const sw = SWITCHES[k], ts = [sw.stem[0], sw.N[0], sw.R[0]];
+    const nearPath = ts.some(t => ds[t] != null && dg[t] != null && ds[t] + dg[t] <= sp + 3);
+    const nearEnd = ts.some(t => (ds[t] != null && ds[t] <= 2) || (dg[t] != null && dg[t] <= 2));
+    return nearPath || nearEnd || !goals.size;
+  });
+  if (!goals.size) keys = keys.filter(k => score(k) <= 6);
+  keys.sort((a, b) => pathScore(a) - pathScore(b) || score(a) - score(b));
+  if (keys.length > 8) keys = keys.slice(0, 8);
+  return keys;
+}
+function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c), keys = routeSwitchKeys(c, goal), save0 = { ...S.sw };
   let best = null; const blocks = [], seen = new Set(), queue = [{ p: cloneCut(c), sgn: 1, sw: { ...S.sw }, legs: [], cost: 0 }, { p: cloneCut(c), sgn: -1, sw: { ...S.sw }, legs: [], cost: 0 }];
+  const tPlan = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   try { for (let guard = 0; queue.length && guard < 200; guard++) {
+    if (((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - tPlan > 800) break;
     queue.sort((a, b) => a.cost - b.cost); const q = queue.shift(); if (best && q.cost >= best.cost) break;
     const le = leadingEnd(q.p, q.sgn), key = `${le.t}:${Math.round(le.d / 4)}:${q.sgn}:${q.legs.length ? 1 : 0}`; if (seen.has(key)) continue; seen.add(key);
     const free = keys.filter(k => !busyFor(k, [q.p, ...others])), runs = new Set();
-    for (let m = 0; m < (1 << free.length); m++) { const sw = { ...q.sw }; free.forEach((k, i) => { if ((m >> i) & 1) sw[k] = sw[k] === 'N' ? 'R' : 'N'; }); Object.assign(S.sw, sw);
+    for (let m = 0; m < (1 << free.length); m++) {
+      if (best && m > 0 && ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - tPlan > 200) break;
+      const sw = { ...q.sw }; free.forEach((k, i) => { if ((m >> i) & 1) sw[k] = sw[k] === 'N' ? 'R' : 'N'; }); Object.assign(S.sw, sw);
       const p = cloneCut(q.p), trav = [], revs = []; let dist = 0, sig = '';
       for (let i = 0; i < 5000; i++) { const l0 = leadingEnd(p, q.sgn), t0 = leadingEnd(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = leadingEnd(p, q.sgn), t1 = leadingEnd(p, -q.sgn);
         if (l1.t !== l0.t) { const k = swBetween(l0.t, l1.t); if (k) { trav.push([k, S.sw[k], dist]); sig += k + S.sw[k]; } }
@@ -3728,7 +3781,8 @@ function hud() { const c = liveCut(), l = locoV(c) || {}, mph = ctl.v / FTS, mod
   let w = ''; if (c && fu <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (ctl.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (ctl.slide) w = 'WHEELS SLIDING! Sand helps you stop.'; else if (mph > lim + 0.5) w = `Over the ${lim} mph track speed.`;
   else if (mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.'; else if (S.crossWait) w = 'Request the route from the tower to continue.'; $('warn').textContent = w;
   const L = jobs(), nd = L.filter(j => j.done).length, nx = L.find(j => !j.done); $('jobText').innerHTML = (nx ? '📋 ' + esc(nx.text) : L.length ? '✅ All Effingham cars worked' : ngOpen() ? '📋 No cars to work. End the day for new cars.' : '📋 Effingham customers open at 100 reputation');
-  $('jobStatus').className = ''; $('jobStatus').textContent = `Effingham · Day ${dayNo()} · ${nd} of ${L.length} jobs done · tap for the list`; }
+  const eng = l && l.num ? ' · GP9 ' + l.num : '';
+  $('jobStatus').className = ''; $('jobStatus').textContent = `Effingham · Day ${dayNo()} · ${nd} of ${L.length} jobs done · tap for the list${eng}`; }
 const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 60) % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 // ================================================================= UI
 let toastT = 0; function toast(t, kind) { const b = $('toast'); if (!b) return; let d = b.children.length === 1 ? b.firstChild : null; // perf (Nov 1): the same message still showing is kept (timer restarted), not rebuilt every sim step
@@ -3771,11 +3825,12 @@ function save() { if (VISIT) return; try { NII.mapTabs.put('effingham', mapSnap(
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
   <p style="font-size:13px">Customers: <b>Illini Grain</b>, <b>Burgess Building Supply</b>, <b>Effingham Iron &amp; Metal</b>, <b>Crossroads Propane</b>, <b>Midstate Glass</b>, and the <b>freight house</b> (house track). Cars come by the IC (down from Neoga) or the PC (set on the PC Interchange; leave PC cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
-function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length;
+function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length, mine = isLoco(v) && myEngineId() === v.id;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · '}${v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : 'Tag: ' + esc(carTag(v).code)}${v.work && v.work.until ? ` · spotted, done about ${clockWhen(v.work.until)}` : (v.work ? ` · at the spot` : '')}</p>
-  <div class="btns">${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
+  const locoNote = isLoco(v) ? (mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.') : '';
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && v.work.until ? ` · spotted, done about ${clockWhen(v.work.until)}` : (v.work ? ` · at the spot` : '')}</p>
+  <div class="btns">${isLoco(v) && !mine ? '<button data-a="makeEngine">Make this my engine</button>' : ''}${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live && !isLoco(v) ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
 function setUncouple(on) { UNC_ON = on; const b = $('uncBtn'); if (b) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); } if (on) toast('Uncouple: tap the car to cut off (it and the cars beyond it stay).'); }
@@ -3860,9 +3915,22 @@ function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400
   // Assigned-crew Midstate swap runs after overnight work so a released empty can come off and the next load can go on. No auto-move if no crew was sent.
   if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
   newDay(); save(); hideModal(); }
+function bindCrewBoard() {
+  if (!window.NII_CALLSHEET) return;
+  const mt = () => { const e = NII.env(); e.towns = e.towns || {}; const m = e.towns.mattoon || (e.towns.mattoon = { time: e.time || 0, money: (M && M.money) || 0, rep: (M && M.rep) || 0 }); if (!m.veh) m.veh = {}; if (!m.cons) m.cons = {}; return m; };
+  NII_CALLSHEET.bind({
+    getState: mt, dayNo, weekday: (d) => ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][(d - 1) % 7],
+    showModal, hideModal, toast, save: () => { try { NII.write(); } catch (e) { } }, book,
+    place() {}, reindex() {}, carWhere: () => ({ house: false, yard: () => false, icIn: false, icOut: false, spot: () => false }),
+    locoCons: () => null, locoOf: c => c && (c.veh || []).find(isLoco), cicDay: () => false, cicNext: () => 0,
+    roadOf, TYPES: { gp9: { kind: 'loco', name: 'GP9' }, caboose: { kind: 'car' } },
+    SI: {}, SEG: {}, YARD: {}, SPOTS: {}, ECON, FH: {}, NY: 6, ICI_N: 0, ICI_ROOM: 0,
+    env: () => NII.env(), myEngineId, claimEngine
+  });
+}
 function build() {
   for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
-  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div>`); } // Menu (Nov 1): Full screen, Industries, other towns
+  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div>`); } // Menu (Nov 1): Full screen, Industries, other towns
   // Nov 3 (Stephen: "the screen should look the same as mattoon"): Mattoon's top bar, job bar, scene buttons and cab panel drive Effingham too
   const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="route" id="rtBtn">Request route</button><button class="act" data-a="north">To Neoga</button><button class="act" data-a="endday">End day</button>');
   { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
@@ -3883,7 +3951,7 @@ function build() {
   { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
     cv.addEventListener('pointermove', e => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, e); if (pts.size === 2 && d0) { const [a, b] = [...pts.values()]; cam.z = zLim(z0 * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / d0); } });
     for (const t of ['pointerup', 'pointercancel']) cv.addEventListener(t, e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; }); }
-  document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
+  document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); bindCrewBoard(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); return; } const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'bfReq') { BFNX.request(b.dataset.k); bfPanelN(b.dataset.k); return; } if (a === 'bfOpen') { bfPanelN(b.dataset.k); return; }
     if (a === 'close') hideModal(); else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
@@ -3893,6 +3961,7 @@ function build() {
     else if (a === 'endGo') endDay(); else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
     else if (a === 'wb') { const v = standingCars().find(q => q.v.id === b.dataset.id); if (v) carModal(v); }
+    else if (a === 'makeEngine') { hideModal(); if (carModal.q) claimEngine(carModal.q.v.id); }
     else if (a === 'uncL' || a === 'uncR') { hideModal(); uncouple(carModal.q, a === 'uncL' ? 'L' : 'R'); }
     else if (a === 'apCar') { hideModal(); const q = carModal.q, e = (q.p0.d < q.p1.d) ? q.p0 : q.p1; apTo(q.pm.t, q.pm.d); } });
   // canvas: drag to pan, tap a stand to throw it, tap a car for its waybill, tap the track to run the engine there
@@ -3948,5 +4017,5 @@ function migrateIndustrySpots() {
 }
 
 migrateIndustrySpots();
-window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
