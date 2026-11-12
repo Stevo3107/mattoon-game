@@ -207,7 +207,12 @@ const isLease = v => /X$/.test(roadOf(v));
 const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
-const liveCut = () => S.cuts.find(c => c.veh.some(isLoco));
+function myEngineId() { try { return NII.env().myEngine || null; } catch (e) { return null; } }
+const liveCut = () => { // Nov 12: drive the engine the player picked (shared myEngine); else first engine found
+  const id = myEngineId();
+  if (id) { const c = S.cuts.find(c => (c.veh || []).some(v => v.id === id && isLoco(v))); if (c) return c; }
+  return S.cuts.find(c => c.veh.some(isLoco));
+};
 function pathPt(c, s) { let acc = 0; for (const g of c.path) { const l = Math.abs(g.d1 - g.d0); if (s <= acc + l + 1e-6) return { t: g.t, d: g.d0 + g.dir * (s - acc) }; acc += l; } const g = c.path[c.path.length - 1]; return { t: g.t, d: g.d1 }; }
 function extendHead(c, s) { let done = 0; while (s - done > 1e-6) { const g = c.path[c.path.length - 1], tr = T[g.t], room = g.dir > 0 ? (g.t === 'NWI' && typeof NWI_CLR === 'number' ? Math.max(0, NWI_CLR - g.d1) : tr.len - g.d1) : g.d1, step = Math.min(room, s - done);
     g.d1 += g.dir * step; done += step; if (s - done <= 1e-6) break;
