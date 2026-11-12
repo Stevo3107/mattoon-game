@@ -1255,9 +1255,24 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return id;
   }
   function trackTown(id) { return townName((R().trackInfo(id) || {}).town || 'mattoon'); }
+  function playerEngineId() {
+    try { return (G && G.env && G.env().myEngine) || (G && G.myEngineId && G.myEngineId()) || null; } catch (e) { return null; }
+  }
   function locos() {
-    const s = st(), T = G.TYPES;
-    return Object.values(s.veh).filter(function (v) { return T[v.type] && T[v.type].kind === 'loco'; });
+    const s = st(), T = G.TYPES || {}, mine = playerEngineId(), list = [];
+    const isLoco = function (v) { return v && ((T[v.type] && T[v.type].kind === 'loco') || v.type === 'gp9'); };
+    if (s && s.veh) Object.values(s.veh).forEach(function (v) { if (isLoco(v)) list.push(v); });
+    try {
+      const towns = (G.env && G.env().towns) || {};
+      Object.keys(towns).forEach(function (id) {
+        (towns[id] && towns[id].cuts || []).forEach(function (c) {
+          (c.veh || []).forEach(function (v) {
+            if (isLoco(v) && !list.some(function (x) { return x.id === v.id; })) list.push(v);
+          });
+        });
+      });
+    } catch (e) { }
+    return list.filter(function (v) { return !mine || v.id !== mine; }); // hired jobs cannot take the player's engine
   }
   function locoName(v) {
     const road = (v.road || 'NII') === 'NII' ? 'NI&I' : v.road;
@@ -1406,6 +1421,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
 
   function ensure() {
     const s = st();
+    if (!s.veh) s.veh = {};
     if (!s.crews || !s.crews.length) s.crews = R().starterRoster();
     if (!s.calls) s.calls = [];
     if (!s.crewSeq) s.crewSeq = 1;
@@ -2822,7 +2838,7 @@ const numKey = art => art && art.startsWith('boxcarIC_') ? 'boxcarIC' : art;
 let NUM_FONTS = false; const NUM_PIC = new Map();
 if (NUMSPEC && typeof document !== 'undefined' && document.fonts) {
   const fams = new Set(); for (const sp of Object.values(NUMSPEC)) for (const o of sp.occ) if (!o.glyph) fams.add(o.font.split(',')[0]);
-  Promise.all([...fams].map(f => document.fonts.load(`700 20px ${f}`, '0123456789'))).catch(() => 0).then(() => { NUM_FONTS = true; NUM_PIC.clear(); });
+  fams.add("'Barlow Condensed'"); Promise.all([...fams].map(f => document.fonts.load(`700 20px ${f}`, '0123456789'))).catch(() => 0).then(() => { NUM_FONTS = true; NUM_PIC.clear(); });
   setTimeout(() => { NUM_FONTS = true; }, 4000);
 }
 function numText(o, num) { // the text one placeholder shows
@@ -2850,6 +2866,19 @@ function paintNumber(g, sp, num, far, W) {
   }
 }
 // the picture to draw for a car: its paint with its own number on it
+// Danny's GP9 side has 1752 baked in (no NUMSPEC / nonum art). Paint any other number over the cab stencil.
+const GP9_PAINTED = '1752';
+function paintGp9Number(base, num, far) {
+  if (!base || !num || num === GP9_PAINTED || !base.complete || !base.naturalWidth) return base;
+  const key = 'gp9|' + num + '|' + (far ? 1 : 0); let c = NUM_PIC.get(key);
+  if (c) return c;
+  const W = base.naturalWidth, H = base.naturalHeight, a = ART && ART.gp9, px = (a && a.px) || 22, x0 = a && a.x0 != null ? a.x0 : -1, y0 = a && a.y0 != null ? a.y0 : -17.5;
+  c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.drawImage(base, 0, 0);
+  let x = (40.42 - x0) * px; if (far) x = W - x; const y = (-7.65 - y0) * px, size = 1.9 * px, tw = size * 0.55 * Math.max(3, String(num).length);
+  g.fillStyle = '#1c2b50'; g.fillRect(x - tw / 2 - 3, y - size * 0.92, tw + 6, size * 1.2);
+  g.fillStyle = '#f4f1ea'; g.font = '700 ' + size + "px 'Barlow Condensed','Arial Narrow',sans-serif"; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText(String(num), x, y);
+  c.complete = true; c.naturalWidth = W; c.naturalHeight = H; if (NUM_PIC.size > 300) NUM_PIC.clear(); NUM_PIC.set(key, c); return c;
+}
 function carPic(v, far) {
   const art = artOf(v), painted = IMG[art + (far ? '-far' : '')], k = numKey(art), sp = NUMSPEC && NUMSPEC[k], num = v.num && String(v.num);
   let base;
@@ -2863,6 +2892,7 @@ function carPic(v, far) {
       base = c;
     }
   }
+  if ((art === 'gp9' || k === 'gp9') && num) base = paintGp9Number(base, num, far) || base;
   return (NII_SHARED.withScrapLoad && NII_SHARED.withScrapLoad(v, 'side', far, base)) || base;
 }
 const B40_ODDS = 0.3; // share of freight house / farm supply boxcars that are 40 ft cars
@@ -2982,7 +3012,21 @@ function place(ids, front, aFronts) {
 }
 const front = c => V(c.veh[0]).f, rear = c => V(c.veh[c.veh.length - 1]).r;
 const locoOf = c => c && c.veh.map(V).find(v => TYPES[v.type].kind === 'loco');
-const locoCons = () => Object.values(state.cons).find(c => locoOf(c));
+function myEngineId() { try { return NII.env().myEngine || null; } catch (e) { return null; } }
+function setMyEngine(id) { try { const e = NII.env(); e.myEngine = id || null; NII.write(); } catch (e) { } }
+function locoLabel(v) { if (!v) return 'the engine'; const T = TYPES[v.type] || {}; return (T.name || 'GP9') + ' ' + v.num; }
+function claimEngine(id) {
+  const v = V(id); if (!v || !TYPES[v.type] || TYPES[v.type].kind !== 'loco') return false;
+  const cur = myEngineId(), old = locoCons();
+  if (old && cur !== id) { old.v = 0; }
+  state.ap = null; state.stopping = false; state.ctl.notch = 0; if (state.ctl) state.ctl.brake = 1;
+  setMyEngine(id); toast(locoLabel(v) + ' is now your engine.'); save(); return true;
+}
+const locoCons = () => {
+  const id = myEngineId();
+  if (id) { const v = state.veh[id]; if (v && TYPES[v.type] && TYPES[v.type].kind === 'loco' && v.cid && state.cons[v.cid]) return state.cons[v.cid]; }
+  return Object.values(state.cons).find(c => locoOf(c));
+};
 const weight = c => c.veh.reduce((a, id) => a + V(id).wt, 0);
 function flipVeh(v) { const f = v.f; v.f = rev(v.r); v.r = rev(f); v.aFront = !v.aFront; }
 function locoSign(c) { const l = locoOf(c); return (l.aFront === TYPES[l.type].frontIsA) ? 1 : -1; }
@@ -3660,8 +3704,11 @@ function wbCard(v) {
   const vals = { carInit: `${roadOf(v)} ${v.num}`, carKind: w.kname, waybillNo: w.no, date: w.date, fromStation: w.from, fromRoad: w.fromRoad, toStation: w.to, toRoad: w.toRoad, routing: w.route, consignee: w.cons, weight: w.lbs, contents: w.what };
   return NII_SHARED.wbCard(vals, NII_SHARED.wbStamp(v, w, carDest(v) === 'CIC HOLD'), k => (BART && BART[k]) || null); // Nov 4: shared painter, same markup
 }
-function showWaybill(id, go) { const v = V(id); showModal(`<h2>Waybill: ${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.wb && v.wb.loaded ? 'Load' : 'Empty'} · ${carDest(v) === 'IC-INT' ? '<b>Ready for IC</b>: put it on IC Outbound.' : 'Tag: ' + (carDest(v) || '-')}${v.work ? ' · ' + workLine(v) : ''}</p>
-  <div class="btns">${go ? '<button data-act="tapGo">Move engine here</button>' : ''}<button data-act="waybills" class="alt">All waybills</button><button data-act="close" class="alt">Back to game</button></div>`); }
+function showWaybill(id, go) { const v = V(id), loco = TYPES[v.type] && TYPES[v.type].kind === 'loco', mine = loco && myEngineId() === v.id;
+  const head = loco ? `<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v).replace(' (caboose)', '')}<p style="font-size:13px">${mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.'}</p>`
+    : `<h2>Waybill: ${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.wb && v.wb.loaded ? 'Load' : 'Empty'} · ${carDest(v) === 'IC-INT' ? '<b>Ready for IC</b>: put it on IC Outbound.' : 'Tag: ' + (carDest(v) || '-')}${v.work ? ' · ' + workLine(v) : ''}</p>`;
+  showModal(head + `
+  <div class="btns">${loco && !mine ? `<button data-act="makeEngine" data-id="${v.id}">Make this my engine</button>` : ''}${go && !loco ? '<button data-act="tapGo">Move engine here</button>' : ''}${loco ? '' : '<button data-act="waybills" class="alt">All waybills</button>'}<button data-act="close" class="alt">Back to game</button></div>`); }
 function showWaybills() { const vs = Object.values(state.veh).filter(v => TYPES[v.type].cap).sort((a, b) => (carDest(a) === 'IC-INT' ? 0 : 1) - (carDest(b) === 'IC-INT' ? 0 : 1) || roadOf(a).localeCompare(roadOf(b)));
   const row = v => { const w = waybillOf(v); return `<li><button class="alt wbrow" data-act="wbCar" data-id="${v.id}"><b>${roadOf(v)} ${v.num}</b> ${w.loaded ? esc(w.what) : 'empty'} → ${esc(w.toRoad === 'NI&I' ? w.cons : w.to + ' (' + w.toRoad + ')')}</button></li>`; };
   const rdy = vs.filter(v => carDest(v) === 'IC-INT'), rest = vs.filter(v => carDest(v) !== 'IC-INT');
@@ -3829,6 +3876,7 @@ document.addEventListener('click', e => {
   else if (a === 'waybills') showWaybills();
   else if (a === 'wbCar') showWaybill(b.dataset.id, false);
   else if (a === 'tapGo') { hideModal(); if (TAP_PEND) { TAP_ASKED = true; sceneTap(TAP_PEND.sx, TAP_PEND.sy); } TAP_PEND = null; }
+  else if (a === 'makeEngine') { hideModal(); claimEngine(b.dataset.id); }
   else if (a === 'callSheet') { if (window.NII_CALLSHEET) NII_CALLSHEET.open(); }
   else if (a === 'dayDone') { if (window.NII_CALLSHEET && NII_CALLSHEET.pendingTieUps()) NII_CALLSHEET.showTieUps(); else { hideModal(); state.help = false; save(); } }
   else if (a === 'endDay') { const r = endDay(); showDaySummary(r); (r.returned || []).forEach(t => toast(t + '.', 'good')); sfx(r.pay ? 'cash' : 'tick'); }
@@ -5017,6 +5065,7 @@ function sceneTap(sx, sy) {
   let target;
   if (pk.kind === 'car' && !TAP_ASKED) { const v = V(pk.car); if (v.idle && !v.rent && !locoCons().veh.includes(v.id)) { // idle NI&I empty: offer to rent it to IC
     TAP_PEND = { sx, sy, car: v.id }; showModal(`<h2>${roadOf(v)} ${v.num}: idle empty</h2><p>No customer has asked for it. Rent it to IC? It goes out on the next IC pickup, earns $${ECON.RENT_HR.toFixed(2)}/hr while gone, and comes back empty on an IC cut when IC is done with it.</p><div class="btns"><button data-act="rentIC">Rent to IC</button><button data-act="tapGo">Move engine here</button></div>`); return; } }
+  if (pk.kind === 'car' && !TAP_ASKED && TYPES[V(pk.car).type] && TYPES[V(pk.car).type].kind === 'loco') { TAP_PEND = { sx, sy, car: pk.car }; showWaybill(pk.car, false); return; }
   if (pk.kind === 'car' && !TAP_ASKED && (state.mode !== 'tap' || pk.via === 'tag')) { TAP_PEND = { sx, sy, car: pk.car }; showWaybill(pk.car, state.mode === 'tap'); return; }
   TAP_ASKED = false;
   if (pk.kind === 'car') { const v = V(pk.car), r = retreat(v.f, v.L / 2); target = { s: r.s, d: r.d, car: v.id };
@@ -5236,7 +5285,8 @@ const SOLID_END = {
   gp9ShortCorner(g, G, b, Lf) { const m = Lf / 2;                                               // an angled corner face of the nose: number board near the top
     fr(g, 0, b.h0, 0.07, b.h1, 'rgba(255,255,255,.2)'); fr(g, Lf - 0.05, b.h0, Lf, b.h1, 'rgba(0,0,0,.3)'); // its edges: light where it turns from the hood side, dark at the centre face
     fr(g, 0, 6.0, Lf, 6.16, '#ea7424');
-    fr(g, m - 0.6, 12.2, m + 0.6, 13.3, '#0e1426'); fr(g, m - 0.5, 12.3, m + 0.5, 13.2, '#f3f0e6'); for (let i = 0; i < 4; i++) fr(g, m - 0.36 + i * 0.2, 12.5, m - 0.24 + i * 0.2, 13.0, '#222');
+    fr(g, m - 0.6, 12.2, m + 0.6, 13.3, '#0e1426'); fr(g, m - 0.5, 12.3, m + 0.5, 13.2, '#f3f0e6');
+    { const num = String((G.v && G.v.num) || ''); if (num) { g.save(); g.fillStyle = '#1a1a1a'; g.font = '700 0.55px Arial,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(num, m, 12.75); g.restore(); } }
   },
   gp9Long(g, G, b, outer) { if (!outer) return; const w = b.w, navy = '#1a2849';
     // u runs from the side we are looking at (0) to the other side (w). Seen from outside this end, its left corner is the far
@@ -5244,7 +5294,8 @@ const SOLID_END = {
     const U = u => G.far ? u : w - u, frU = (u0, h0, u1, h1, c) => fr(g, U(u0), h0, U(u1), h1, c), feU = (u, h, rx, ry, c) => fe(g, U(u), h, rx, ry, c);
     fr(g, 0, b.h0, w, b.h1, navy); fr(g, 0, 6.0, w, 6.16, '#ea7424');
     frU(0.5, 11.9, 1.6, 13.85, '#121b33'); feU(1.05, 12.42, 0.3, 0.3, '#d9d4bf'); feU(1.05, 13.35, 0.3, 0.3, '#d9d4bf'); feU(1.05, 12.42, 0.17, 0.17, '#fff6c8'); feU(1.05, 13.35, 0.17, 0.17, '#fff6c8'); // stacked headlights, top left
-    frU(2.2, 12.6, 5.0, 13.6, '#0e1426'); frU(2.3, 12.7, 4.9, 13.5, '#f3f0e6'); for (let i = 0; i < 4; i++) frU(2.7 + i * 0.5, 12.85, 3.0 + i * 0.5, 13.35, '#222');    // wide number board
+    frU(2.2, 12.6, 5.0, 13.6, '#0e1426'); frU(2.3, 12.7, 4.9, 13.5, '#f3f0e6');    // wide number board
+    { const num = String((G.v && G.v.num) || ''); if (num) { g.save(); g.fillStyle = '#1a1a1a'; g.font = '700 0.7px Arial,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(num, U(3.6), 13.1); g.restore(); } }
     for (const u of [0.55, w - 0.55]) fe(g, u, 10.9, 0.2, 0.2, '#b8302a');
     fr(g, 1.2, 6.5, w - 1.2, 11.2, 'rgba(0,0,0,.12)'); for (let h = 7.0; h < 11; h += 0.5) fr(g, 1.4, h, w - 1.4, h + 0.22, 'rgba(0,0,0,.25)'); // end radiator grille
   },
@@ -5513,7 +5564,8 @@ function updateUI0() {
   const j = state.job; $('jobText').innerHTML = (j.done ? '✅ ' : '📋 ') + j.text;
   const js = jobStatus(); const st = $('jobStatus');
   const T = state.tasks || [], nd = T.filter(t => t.done).length, cnt = `${nd} of ${T.length} jobs done · tap for the list`;
-  st.className = js.there ? 'ok' : ''; st.textContent = j.type === 'none' ? `${weekday(dayNo())} · Day ${dayNo()} · ${cnt}` : js.there ? (js.attached ? 'Car is in place. Stop and uncouple to finish.' : 'In place.') : `${js.attached ? 'Coupled to your engine · ' : ''}${taskRepLabel(j)} · ${cnt}`;
+  const el = locoOf(c); const eng = el ? ' · ' + locoLabel(el) : '';
+  st.className = js.there ? 'ok' : ''; st.textContent = j.type === 'none' ? `${weekday(dayNo())} · Day ${dayNo()} · ${cnt}${eng}` : js.there ? (js.attached ? 'Car is in place. Stop and uncouple to finish.' : 'In place.') : `${js.attached ? 'Coupled to your engine · ' : ''}${taskRepLabel(j)} · ${cnt}${eng}`;
 }
 
 // ---------------------------------------------------------------- loop
@@ -5578,7 +5630,7 @@ function bindCallSheet() {
   NII_CALLSHEET.bind({
     getState: () => state, dayNo, weekday, showModal, hideModal, toast, save, book, place, reindex,
     carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM,
-    env: () => NII.env()
+    env: () => NII.env(), myEngineId, claimEngine
   });
 }
 function boot() {
@@ -5608,7 +5660,7 @@ function boot() {
 }
 // test hooks
 window.__game = { fixEnginePG, showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
-  get state() { return state; }, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
+  get state() { return state; }, myEngineId, setMyEngine, claimEngine, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
   setFuel(g) { locoOf(locoCons()).fuel = g; }, setSand(s) { locoOf(locoCons()).sand = s; }, live: () => live,
@@ -5947,7 +5999,7 @@ const numKey = art => art && art.startsWith('boxcarIC_') ? 'boxcarIC' : art;
 let NUM_FONTS = false; const NUM_PIC = new Map();
 if (NUMSPEC && typeof document !== 'undefined' && document.fonts) {
   const fams = new Set(); for (const sp of Object.values(NUMSPEC)) for (const o of sp.occ) if (!o.glyph) fams.add(o.font.split(',')[0]);
-  Promise.all([...fams].map(f => document.fonts.load(`700 20px ${f}`, '0123456789'))).catch(() => 0).then(() => { NUM_FONTS = true; NUM_PIC.clear(); });
+  fams.add("'Barlow Condensed'"); Promise.all([...fams].map(f => document.fonts.load(`700 20px ${f}`, '0123456789'))).catch(() => 0).then(() => { NUM_FONTS = true; NUM_PIC.clear(); });
   setTimeout(() => { NUM_FONTS = true; }, 4000);
 }
 function numText(o, num) { // the text one placeholder shows
@@ -5975,6 +6027,19 @@ function paintNumber(g, sp, num, far, W) {
   }
 }
 // the picture to draw for a car: its paint with its own number on it
+// Danny's GP9 side has 1752 baked in (no NUMSPEC / nonum art). Paint any other number over the cab stencil.
+const GP9_PAINTED = '1752';
+function paintGp9Number(base, num, far) {
+  if (!base || !num || num === GP9_PAINTED || !base.complete || !base.naturalWidth) return base;
+  const key = 'gp9|' + num + '|' + (far ? 1 : 0); let c = NUM_PIC.get(key);
+  if (c) return c;
+  const W = base.naturalWidth, H = base.naturalHeight, a = ART && ART.gp9, px = (a && a.px) || 22, x0 = a && a.x0 != null ? a.x0 : -1, y0 = a && a.y0 != null ? a.y0 : -17.5;
+  c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d'); g.drawImage(base, 0, 0);
+  let x = (40.42 - x0) * px; if (far) x = W - x; const y = (-7.65 - y0) * px, size = 1.9 * px, tw = size * 0.55 * Math.max(3, String(num).length);
+  g.fillStyle = '#1c2b50'; g.fillRect(x - tw / 2 - 3, y - size * 0.92, tw + 6, size * 1.2);
+  g.fillStyle = '#f4f1ea'; g.font = '700 ' + size + "px 'Barlow Condensed','Arial Narrow',sans-serif"; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText(String(num), x, y);
+  c.complete = true; c.naturalWidth = W; c.naturalHeight = H; if (NUM_PIC.size > 300) NUM_PIC.clear(); NUM_PIC.set(key, c); return c;
+}
 function carPic(v, far) {
   const art = artOf(v), painted = IMG[art + (far ? '-far' : '')], k = numKey(art), sp = NUMSPEC && NUMSPEC[k], num = v.num && String(v.num);
   let base;
@@ -5988,6 +6053,7 @@ function carPic(v, far) {
       base = c;
     }
   }
+  if ((art === 'gp9' || k === 'gp9') && num) base = paintGp9Number(base, num, far) || base;
   return (NII_SHARED.withScrapLoad && NII_SHARED.withScrapLoad(v, 'side', far, base)) || base;
 }
 
@@ -6158,7 +6224,8 @@ const SOLID_END = {
   gp9ShortCorner(g, G, b, Lf) { const m = Lf / 2;                                               // an angled corner face of the nose: number board near the top
     fr(g, 0, b.h0, 0.07, b.h1, 'rgba(255,255,255,.2)'); fr(g, Lf - 0.05, b.h0, Lf, b.h1, 'rgba(0,0,0,.3)'); // its edges: light where it turns from the hood side, dark at the centre face
     fr(g, 0, 6.0, Lf, 6.16, '#ea7424');
-    fr(g, m - 0.6, 12.2, m + 0.6, 13.3, '#0e1426'); fr(g, m - 0.5, 12.3, m + 0.5, 13.2, '#f3f0e6'); for (let i = 0; i < 4; i++) fr(g, m - 0.36 + i * 0.2, 12.5, m - 0.24 + i * 0.2, 13.0, '#222');
+    fr(g, m - 0.6, 12.2, m + 0.6, 13.3, '#0e1426'); fr(g, m - 0.5, 12.3, m + 0.5, 13.2, '#f3f0e6');
+    { const num = String((G.v && G.v.num) || ''); if (num) { g.save(); g.fillStyle = '#1a1a1a'; g.font = '700 0.55px Arial,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(num, m, 12.75); g.restore(); } }
   },
   gp9Long(g, G, b, outer) { if (!outer) return; const w = b.w, navy = '#1a2849';
     // u runs from the side we are looking at (0) to the other side (w). Seen from outside this end, its left corner is the far
@@ -6166,7 +6233,8 @@ const SOLID_END = {
     const U = u => G.far ? u : w - u, frU = (u0, h0, u1, h1, c) => fr(g, U(u0), h0, U(u1), h1, c), feU = (u, h, rx, ry, c) => fe(g, U(u), h, rx, ry, c);
     fr(g, 0, b.h0, w, b.h1, navy); fr(g, 0, 6.0, w, 6.16, '#ea7424');
     frU(0.5, 11.9, 1.6, 13.85, '#121b33'); feU(1.05, 12.42, 0.3, 0.3, '#d9d4bf'); feU(1.05, 13.35, 0.3, 0.3, '#d9d4bf'); feU(1.05, 12.42, 0.17, 0.17, '#fff6c8'); feU(1.05, 13.35, 0.17, 0.17, '#fff6c8'); // stacked headlights, top left
-    frU(2.2, 12.6, 5.0, 13.6, '#0e1426'); frU(2.3, 12.7, 4.9, 13.5, '#f3f0e6'); for (let i = 0; i < 4; i++) frU(2.7 + i * 0.5, 12.85, 3.0 + i * 0.5, 13.35, '#222');    // wide number board
+    frU(2.2, 12.6, 5.0, 13.6, '#0e1426'); frU(2.3, 12.7, 4.9, 13.5, '#f3f0e6');    // wide number board
+    { const num = String((G.v && G.v.num) || ''); if (num) { g.save(); g.fillStyle = '#1a1a1a'; g.font = '700 0.7px Arial,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(num, U(3.6), 13.1); g.restore(); } }
     for (const u of [0.55, w - 0.55]) fe(g, u, 10.9, 0.2, 0.2, '#b8302a');
     fr(g, 1.2, 6.5, w - 1.2, 11.2, 'rgba(0,0,0,.12)'); for (let h = 7.0; h < 11; h += 0.5) fr(g, 1.4, h, w - 1.4, h + 0.22, 'rgba(0,0,0,.25)'); // end radiator grille
   },
