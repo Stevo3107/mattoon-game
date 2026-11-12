@@ -103,20 +103,26 @@ const WB_PLACES = [
 // where each road hands to the IC (1975 junctions; flavour, not a timetable)
 const WB_JCT = { PC: 'Effingham', 'N&W': 'Decatur', 'C&NW': 'Chicago', GTW: 'Chicago', MILW: 'Chicago', RI: 'Chicago', SLSF: 'Memphis', MP: 'East St. Louis', ATSF: 'Chicago',
   UP: 'Council Bluffs', SP: 'SSW–East St. Louis', BN: 'East St. Louis', SOU: 'Birmingham', 'L&N': 'Louisville', 'B&O': 'East St. Louis', 'C&O': 'Chicago', SCL: 'L&N–Louisville',
-  SOO: 'Chicago', KCS: 'New Orleans', SSW: 'East St. Louis', MKT: 'Kansas City', 'D&RGW': 'MP–Kansas City', RDG: 'PC–Effingham', EL: 'Chicago', WP: 'UP–Council Bluffs', IC: null };
+  SOO: 'Chicago', KCS: 'Shreveport', SSW: 'East St. Louis', MKT: 'Kansas City', 'D&RGW': 'MP–Kansas City', RDG: 'PC–Effingham', EL: 'Chicago', WP: 'UP–Council Bluffs', GN: 'Chicago', IC: null };
 const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH3': ['Illini Farm Supply', 'Mattoon, IL'], 'IFS UAN': ['Illini Farm Supply', 'Mattoon, IL'],
   'IFS DOCK': ['Illini Farm Supply', 'Mattoon, IL'], GRAIN: ['Prairie Grain Co.', 'Mattoon, IL'], HOUSE: ['NI&I Freight House (team track)', 'Mattoon, IL'],
   'EF PROPANE': ['Crossroads Propane', 'Effingham, IL'],
-  'EF SCRAP': ['Effingham Iron & Metal', 'Effingham, IL'] };
+  'EF SCRAP': ['Effingham Iron & Metal', 'Effingham, IL'],
+  'EF GLASS': ['Midstate Glass Container Co.', 'Effingham, IL'],
+  'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'] };
 // car owner's home / pool for empty returns
 const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
   ACFX: ['ACF Industries lessee', 'St. Charles, MO'], UTLX: ['Union Tank Car lessee', 'Whiting, IN'], PC: ['PC car distributor', 'Philadelphia, PA'], CNW: ['C&NW car distributor', 'Chicago, IL'],
   'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'],
-  NATX: ['NATX lessee (North American)', 'Chicago, IL'], SUNX: ['Sun Energy', 'Columbus, OH'], PRR: ['PC car distributor (ex-PRR)', 'Philadelphia, PA'] };
+  NATX: ['NATX lessee (North American)', 'Chicago, IL'], SUNX: ['Sun Energy', 'Columbus, OH'], PRR: ['PC car distributor (ex-PRR)', 'Philadelphia, PA'],
+  KCS: ['Kansas City Southern', 'Kansas City, MO'],
+  ACY: ['Akron, Canton & Youngstown', 'Akron, OH'],
+  BN: ['Burlington Northern', 'St. Paul, MN'],
+  GN: ['Great Northern', 'St. Paul, MN'] };
 const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'IC–Mattoon–NI&I' : `${road}–${j}–IC–Mattoon–NI&I`; };
 const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–IC' : `NI&I–Mattoon–IC–${j}–${road}`; };
-const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', gondola: 'gon' };
-const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', gon: 'GB GON 52FT' };
+const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon' };
+const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', ps2: 'LO PS-2 35FT', cf: 'LO CTR FLOW 54FT', cf2: 'LO CTR FLOW 40FT', gon: 'GB GON 52FT' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
 
 const VISIT = !!NII.visit;
@@ -130,7 +136,32 @@ const PC_ROUTE_ODDS = 0.20; // mixed-cut reassignment IC <-> PC (same rule as Ne
 const INBOUND_ODDS = { HOUSE: 0.18, GRAIN: 0.35, BURGESS: 0.12, SCRAP: 0.10, PROPANE: 0.08, GLASS: 0.15 };
 const PC_SHARE = 0.35; // share of inbound cars PC sets on the PC Interchange
 const WORK_H = { 'EF HOUSE': [2, 3], 'EF GRAIN': [3, 5], 'EF BURGESS': [2, 4], 'EF SCRAP': [2, 3], 'EF PROPANE': [2, 3], 'EF GLASS': [3, 5] };
-const workH = v => { const [a, b] = WORK_H[v.dest] || [2, 3]; return a + (b - a) * seeded((+v.num || 7) * 131 + Math.round(E.time))(); };
+// Nov 12 (Stephen): loaded soda-ash on GAC releases in 20-48 game hours; ground limestone on GLC in 12-16 (uniform integer, inclusive). Other Midstate tracks keep 3-5 h.
+const SODA_WORK_H = [20, 48];
+const LIME_WORK_H = [12, 16];
+const isSodaAsh = v => !!(window.NII_SHARED && NII_SHARED.isSodaAshCar ? NII_SHARED.isSodaAshCar(v) : (v && v.load && v.load.c === 'Soda Ash'));
+const isLime = v => !!(window.NII_SHARED && NII_SHARED.isLimeCar ? NII_SHARED.isLimeCar(v) : (v && v.load && v.load.c === 'Ground Limestone'));
+function rollWorkHrs(v, range) {
+  if (v.workHrs == null) {
+    const [a, b] = range, r = seeded((+v.num || 7) * 131 + Math.round((v.work && v.work.from) || E.time) + String(v.id || '').length)();
+    v.workHrs = a + Math.floor(r * (b - a + 1));
+    if (v.workHrs > b) v.workHrs = b;
+  }
+  return v.workHrs;
+}
+function workH(v) {
+  if (isSodaAsh(v)) return rollWorkHrs(v, SODA_WORK_H);
+  if (isLime(v)) return rollWorkHrs(v, LIME_WORK_H);
+  if (v.workHrs != null) return v.workHrs;
+  const [a, b] = WORK_H[v.dest] || [2, 3];
+  return a + (b - a) * seeded((+v.num || 7) * 131 + Math.round(E.time))();
+}
+function clockWhen(t) {
+  const tod = clock(t), d0 = Math.floor((E.time || 0) / 86400), d1 = Math.floor(t / 86400);
+  if (d1 <= d0) return tod;
+  if (d1 === d0 + 1) return tod + ' tomorrow';
+  return tod + ', day ' + (d1 + 1);
+}
 const monAM = t => { let d = Math.floor(t / 86400); while (d % 7 >= 5) d++; return Math.max(t, d * 86400 + 8 * 3600); };
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;
 const EDGE_PAD = 100, EF_YT = -1300, EF_YB = 1800;
@@ -1172,9 +1203,18 @@ const PCL = { at: [PC.x, -276], name: 'PC connection (locked)' }; // never throw
  road(9402,1228,4998,24,'scrap far-side site gate','east map edge');road(13033,274,1367,24,'glass north gate','east map edge');road(13033,286,24,12,'glass access collector','glass site');road(10570,-230,3830,24,'freight truck lot','east map edge');
  function spot(id,t,d,dest,name,L,tol=2){spots.push({id,t,d,dest,name,L,tol});}
  DATA.elevator.meta.tracks.loading.spots.forEach((s,i)=>{spot('GRAIN-'+String(i+1).padStart(2,'0'),'GLD',s.centre,'EF GRAIN',i===12?'grain active loadout spout':'grain standing slot '+(i+1),60.54,5);spots.at(-1).workActive=i===12;});
- for(let i=1;i<=2;i++)[48,140,232].forEach((d,j)=>spot('BURGESS-'+i+String.fromCharCode(65+j),'B'+i,d,'EF BURGESS','Burgess '+i+' spot '+(j+1),60,5));
+ // Nov 12 (Stephen): one long working-length spot per Burgess track, cap 3 cars each.
+ // Designed pad spots were centres 48/140/232, L=60 → working span 18–262 (244 ft). B1/B2 bodies are 352 ft
+ // and could physically hold more 50-ft boxcars, but operating capacity stays 3 (original designed spots).
+ // B1 is south / lower on screen (bottom): lumber. B2 is north / upper (top): other building materials.
+ { const burgL=244, burgD=140, burgTol=burgL/2;
+   spot('BURGESS-B1','B1',burgD,'EF BURGESS','Burgess lumber (bottom track)',burgL,burgTol); spots.at(-1).cap=3;
+   spot('BURGESS-B2','B2',burgD,'EF BURGESS','Burgess building materials (top track)',burgL,burgTol); spots.at(-1).cap=3; }
  [80,137,193].forEach((d,i)=>spot('SCRAP-'+(i+1),'IM',d,'EF SCRAP','scrap gon '+(i+1),54,4));[42,110].forEach((d,i)=>spot('PROPANE-'+(i+1),'PR',d,'EF PROPANE','LPG spot '+(i+1),63,4));
- for(const[t,ds,len,name]of [['GSC',[34,80,126],43,'sand'],['GLC',[30,76],43,'limestone'],['GAC',[36,100],58,'soda'],['GW',[234,294,354],55.96,'boxcar']])ds.forEach((d,i)=>spot('GLASS-'+name.toUpperCase()+'-'+(i+1),t,d,'EF GLASS',name+' spot '+(i+1),len,3));
+ for(const[t,ds,len,name]of [['GSC',[34,80,126],43,'sand'],['GLC',[30,76],43,'limestone'],['GW',[234,294,354],55.96,'boxcar']])ds.forEach((d,i)=>spot('GLASS-'+name.toUpperCase()+'-'+(i+1),t,d,'EF GLASS',name+' spot '+(i+1),len,3));
+ // Nov 12 (Stephen): one soda-ash spot at the rear (stub/far end) of GAC, capacity 1 car.
+ { const gac=T.GAC||T.GA, sodaL=58, sodaD=gac?Math.max(sodaL/2, gac.len-sodaL/2):100;
+   spot('GLASS-SODA','GAC',sodaD,'EF GLASS','soda ash (rear)',sodaL,sodaL/2); spots.at(-1).cap=1; }
  [28,53,78].forEach((x,i)=>spot('HOUSE-DOOR-'+(i+1),'HT',house.planX-house.x+x,'EF HOUSE','freight door '+(i+1),50,3));spot('HOUSE-TEAM','HT',335,'EF HOUSE','team ramp',50,5);
  let dlo=0,dhi=T.IL0.len;for(let i=0;i<70;i++){const d=(dlo+dhi)/2;if(T.IL0.analyticAt(d)[0]<2340)dlo=d;else dhi=d;}const dd=(dlo+dhi)/2,dp=T.IL0.analyticAt(dd),beltDiamond={track:'IL0',d:dd,at:dp.slice(0,2),heading:dp[2],source:'exact mock second physical PC/belt diamond; no graph junction',frogPoints:[]};
  for(const pcOffset of [-2.35,2.35])for(const beltOffset of [-2.35,2.35]){let lo=dd-30,hi=dd+30;for(let i=0;i<60;i++){const p=T.IL0.analyticAt((lo+hi)/2);if(p[0]-Math.sin(p[2])*beltOffset<2340+pcOffset)lo=(lo+hi)/2;else hi=(lo+hi)/2;}const p=T.IL0.analyticAt((lo+hi)/2);beltDiamond.frogPoints.push([p[0]-Math.sin(p[2])*beltOffset,p[1]+Math.cos(p[2])*beltOffset]);}
@@ -1405,23 +1445,19 @@ function nextFrom(t, e) { const n = NODE[t + e]; if (!n) return { stop: 'end of 
 // ================================================================= STATE
 const DEST = {
   'EF HOUSE': { name: 'Effingham Freight House (house track)', town: 'Effingham, IL', kinds: ['box', 'box40'] },
-  'EF GRAIN': { name: 'Illini Grain Corp', town: 'Effingham, IL', kinds: ['hopper'] },
+  'EF GRAIN': { name: 'Illini Grain Corp', town: 'Effingham, IL', kinds: ['hopper', 'cf'] },
   'EF BURGESS': { name: 'Burgess Building Supply', town: 'Effingham, IL', kinds: ['box', 'box40'] },
   'EF SCRAP': { name: 'Effingham Iron & Metal', town: 'Effingham, IL', kinds: ['gon'] },
   'EF PROPANE': { name: 'Crossroads Propane', town: 'Effingham, IL', kinds: ['lpg'] },
-  'EF GLASS': { name: 'Midstate Glass Container Co.', town: 'Effingham, IL', kinds: ['hopper', 'box'] },
+  'EF GLASS': { name: 'Midstate Glass Container Co.', town: 'Effingham, IL', kinds: ['ps2', 'cf', 'cf2', 'box'] },
 };
 const SPOTS = [
   { id: 'HOUSE-DOOR', t: 'HT', d: 0, dest: 'EF HOUSE', name: 'freight house door', tol: 30 },
   { id: 'HOUSE-TEAM', t: 'HT', d: 0, dest: 'EF HOUSE', name: 'team track spot', tol: 30 },
   { id: 'GRAIN-1', t: 'GLD', d: 0, dest: 'EF GRAIN', name: 'grain spout west', tol: 30 },
   { id: 'GRAIN-2', t: 'GLD', d: 0, dest: 'EF GRAIN', name: 'grain spout east', tol: 30 },
-  { id: 'BURGESS-1A', t: 'B1', d: 0, dest: 'EF BURGESS', name: 'Burgess track 1 spot 1', tol: 30 },
-  { id: 'BURGESS-1B', t: 'B1', d: 0, dest: 'EF BURGESS', name: 'Burgess track 1 spot 2', tol: 30 },
-  { id: 'BURGESS-1C', t: 'B1', d: 0, dest: 'EF BURGESS', name: 'Burgess track 1 spot 3', tol: 30 },
-  { id: 'BURGESS-2A', t: 'B2', d: 0, dest: 'EF BURGESS', name: 'Burgess track 2 spot 1', tol: 30 },
-  { id: 'BURGESS-2B', t: 'B2', d: 0, dest: 'EF BURGESS', name: 'Burgess track 2 spot 2', tol: 30 },
-  { id: 'BURGESS-2C', t: 'B2', d: 0, dest: 'EF BURGESS', name: 'Burgess track 2 spot 3', tol: 30 },
+  { id: 'BURGESS-B1', t: 'B1', d: 140, dest: 'EF BURGESS', name: 'Burgess lumber (bottom track)', L: 244, tol: 122, cap: 3 },
+  { id: 'BURGESS-B2', t: 'B2', d: 140, dest: 'EF BURGESS', name: 'Burgess building materials (top track)', L: 244, tol: 122, cap: 3 },
   { id: 'SCRAP-1', t: 'IM', d: 0, dest: 'EF SCRAP', name: 'scrap gon 1', tol: 30 },
   { id: 'SCRAP-2', t: 'IM', d: 0, dest: 'EF SCRAP', name: 'scrap gon 2', tol: 30 },
   { id: 'SCRAP-3', t: 'IM', d: 0, dest: 'EF SCRAP', name: 'scrap gon 3', tol: 30 },
@@ -1429,7 +1465,7 @@ const SPOTS = [
   { id: 'PROPANE-2', t: 'PR', d: 0, dest: 'EF PROPANE', name: 'propane rack 2', tol: 30 },
   { id: 'GLASS-SAND', t: 'GS', d: 0, dest: 'EF GLASS', name: 'sand pit', tol: 30 },
   { id: 'GLASS-LIME', t: 'GL', d: 0, dest: 'EF GLASS', name: 'limestone', tol: 30 },
-  { id: 'GLASS-SODA', t: 'GA', d: 0, dest: 'EF GLASS', name: 'soda ash', tol: 30 },
+  { id: 'GLASS-SODA', t: 'GAC', d: 0, dest: 'EF GLASS', name: 'soda ash (rear)', L: 58, tol: 29, cap: 1 },
   { id: 'GLASS-BOX', t: 'GW', d: 0, dest: 'EF GLASS', name: 'warehouse', tol: 30 },
 ];
 { const sp = Object.fromEntries(SPOTS.map(s => [s.id, s]));
@@ -1439,14 +1475,9 @@ const SPOTS = [
   // Illini Grain: meta spoutX=800 on loading track; empties west / loads east of spout (centres ±60.54)
   sp['GRAIN-1'].d = Math.min(800 - 60.54, T.GLD.len - 40);
   sp['GRAIN-2'].d = Math.min(800 + 60.54, T.GLD.len - 40);
-  // Burgess: meta track1/2 spot centres 48 / 140 / 232
-  sp['BURGESS-1A'].d = Math.min(48, T.B1.len - 20);
-  sp['BURGESS-1B'].d = Math.min(140, T.B1.len - 20);
-  sp['BURGESS-1C'].d = Math.min(232, T.B1.len - 20);
-  // keep spots on B1; lengths follow equalized 352-ft tracks
-  sp['BURGESS-2A'].d = Math.min(48, T.B2.len - 20);
-  sp['BURGESS-2B'].d = Math.min(140, T.B2.len - 20);
-  sp['BURGESS-2C'].d = Math.min(232, T.B2.len - 20);
+  // Burgess: one long working-length spot per track (span 18–262)
+  if (sp['BURGESS-B1']) sp['BURGESS-B1'].d = Math.min(140, T.B1.len - 20);
+  if (sp['BURGESS-B2']) sp['BURGESS-B2'].d = Math.min(140, T.B2.len - 20);
   // Scrap: meta gon centres 80 / 137 / 193 along spur body — place near end of IM (straight yard)
   { const base = Math.max(0, T.IM.len - 220);
     sp['SCRAP-1'].d = Math.min(base + 80, T.IM.len - 30);
@@ -1462,8 +1493,8 @@ const SPOTS = [
   if (T.GSC) { sp['GLASS-SAND'].t = 'GSC'; }
   sp['GLASS-LIME'].d = Math.min(76, (T.GLC || T.GL).len - 20);
   if (T.GLC) { sp['GLASS-LIME'].t = 'GLC'; }
-  sp['GLASS-SODA'].d = Math.min(100, (T.GAC || T.GA).len - 20);
-  if (T.GAC) { sp['GLASS-SODA'].t = 'GAC'; }
+  { const gac = T.GAC || T.GA, sodaL = 58;
+    if (sp['GLASS-SODA'] && gac) { sp['GLASS-SODA'].t = 'GAC'; sp['GLASS-SODA'].d = Math.max(sodaL / 2, gac.len - sodaL / 2); } }
   sp['GLASS-BOX'].d = Math.min(294, T.GW.len - 40);
 }
 if(globalThis.EF_INDUSTRY_LAYOUT) SPOTS.splice(0,SPOTS.length,...globalThis.EF_INDUSTRY_LAYOUT.spots);
@@ -1477,12 +1508,12 @@ const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 let R = seeded((E.time | 0) ^ 0x5eed);
 
-const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar50: 55.96, boxcar40: 46.01, tank: 41.99, tank_lpg: 67, hopper: 60.54, gondola: 57 };
+const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar50: 55.96, boxcar40: 46.01, tank: 41.99, tank_lpg: 67, hopper: 60.54, hopper_ps2: 35, hopper_cf: 54.5, hopper_cf2: 40.3, gondola: 57 };
 const vL = v => (/^coal_hopper40_/.test(v.art || '') ? 37 : v.L) || (C.ART[v.art || v.type] || {}).L || TYPE_L[v.type] || 50;
 const isLoco = v => v.type === 'gp9';
 const roadOf = v => v.road || ({ boxcarIC: 'IC', boxcar40: 'NII' })[v.type] || 'NII';
 const isLease = v => /X$/.test(roadOf(v));
-const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', gondola: 'gon', gon: 'gon' })[v.type];
+const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon', gon: 'gon' })[v.type];
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
 const liveCut = () => S.cuts.find(c => c.veh.some(isLoco));
@@ -1530,8 +1561,32 @@ function newCar(dest, via) { // an interchange car for a Effingham customer (via
     if (road === 'SUNX' || art === 'tank_sunx_74300') via = 'PC'; // Sun-owned: arrives loaded via the PC, same as the empty home route
   }
   else if (dest === 'EF GRAIN') {
-    const road=R()<0.75?'IC':'ITC',art=road==='IC'?'hopper_ic':'hopper_itc';
-    v={id,type:'hopper',art,road,L:60.542,num:numOf(art)||String(765000+Math.floor(R()*999)),forLoad:{c:'Grain',t:100}};
+    // Nov 11: mostly the existing PS-4750s; about 20% are the five grain-capable Center Flows. Never PS-2s, never UP/SP.
+    const pick = (NII_SHARED.pickGrainCar && NII_SHARED.pickGrainCar(R)) || (R()<0.75 ? {art:'hopper_ic',road:'IC',type:'hopper',L:60.54} : {art:'hopper_itc',road:'ITC',type:'hopper',L:60.54});
+    const t = (pick.art && NII_SHARED.VIEW_CARS[pick.art] && NII_SHARED.VIEW_CARS[pick.art].ldlmt) ? Math.floor(NII_SHARED.VIEW_CARS[pick.art].ldlmt / 2000) : (pick.L > 50 ? 100 : 70);
+    v={id,type:pick.type,art:pick.art,road:pick.road,L:pick.L,num:pick.painted||numOf(pick.art)||String(765000+Math.floor(R()*999)),forLoad:{c:'Grain',t:t}};
+  }
+  else if (dest === 'EF GLASS') {
+    // Nov 11: hoppers arrive loaded (Glass Sand / Ground Limestone / Soda Ash) and leave empty. Warehouse boxcars arrive empty and leave with bottles in cartons.
+    const glassLists = () => [S.cuts.flatMap(c => c.veh || []), S.pendIC || [], S.pcPend || []];
+    const sodaN = (NII_SHARED.sodaOutstandingCount && NII_SHARED.sodaOutstandingCount(glassLists())) || 0;
+    const limeN = (NII_SHARED.limeOutstandingCount && NII_SHARED.limeOutstandingCount(glassLists())) || 0;
+    const sodaCap = (NII_SHARED.SODA_OUTSTANDING_CAP != null) ? NII_SHARED.SODA_OUTSTANDING_CAP : 3;
+    const limeCap = (NII_SHARED.LIME_OUTSTANDING_CAP != null) ? NII_SHARED.LIME_OUTSTANDING_CAP : 3;
+    const exclude = [];
+    if (sodaN >= sodaCap) exclude.push('Soda Ash');
+    if (limeN >= limeCap) exclude.push('Ground Limestone');
+    const move = NII_SHARED.pickGlassMove && NII_SHARED.pickGlassMove(R, exclude.length ? { exclude } : null);
+    if (move && move.kind !== 'box' && move.pick) {
+      const p = move.pick;
+      v = { id, type: p.type, art: p.art, road: p.road, num: p.painted, L: p.L, load: { c: move.commodity, t: move.tons }, spotT: move.track };
+    } else {
+      const roads = via === 'PC' ? ['PC', 'PC', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
+      v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
+      if (R() < NII_SHARED.PS1.SHARE * (art.startsWith('boxcar50dd_') ? 1 : 0.5)) { const P = NII_SHARED.PS1.cars[Math.floor(R() * NII_SHARED.PS1.cars.length)], [lo, hi] = P[2]; v.type = 'boxcar50'; v.art = P[0]; v.road = P[1]; v.num = String(lo + Math.floor(R() * (hi - lo + 1))); }
+      v.forLoad = { c: 'Bottles in cartons', t: 18 + Math.floor(R() * 11) };
+      v.spotT = 'GW';
+    }
   }
   else if (dest === 'EF SCRAP') {
     // Nov 10 (Stephen): inbound gons arrive EMPTY; the dealer loads scrap and they go out loaded. Load art is a same-sprite placeholder.
@@ -1541,19 +1596,33 @@ function newCar(dest, via) { // an interchange car for a Effingham customer (via
     const forLoad = (NII_SHARED.scrapLoadOf && NII_SHARED.scrapLoadOf({ num }, R)) || { c: ((parseInt(String(num).replace(/\D/g, ''), 10) || 0) % 2) ? 'Scrap Aluminum' : 'Scrap Steel', t: 55 };
     v = { id, type: 'gondola', art, road, num, L: 57, forLoad, loadArt: (forLoad.c === 'Scrap Aluminum' ? 'aluminum' : 'steel') };
   }
+  else if (dest === 'EF BURGESS') {
+    // Nov 12 (Stephen): inbound boxcars. B1 (bottom) lumber only; B2 (top) roofing/cement/insulation/drywall.
+    const move = (NII_SHARED.pickBurgessMove && NII_SHARED.pickBurgessMove(R)) || { track: 'B1', commodity: 'Lumber', tons: 36 };
+    const roads = via === 'PC' ? ['PC', 'PC', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
+    v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
+    if (R() < NII_SHARED.PS1.SHARE * (art.startsWith('boxcar50dd_') ? 1 : 0.5)) { const P = NII_SHARED.PS1.cars[Math.floor(R() * NII_SHARED.PS1.cars.length)], [lo, hi] = P[2]; v.type = 'boxcar50'; v.art = P[0]; v.road = P[1]; v.num = String(lo + Math.floor(R() * (hi - lo + 1))); }
+    v.load = { c: move.commodity, t: move.tons };
+    v.spotT = move.track;
+  }
   else { const roads = via === 'PC' ? ['PC', 'PC', 'PC'] : ['IC', 'IC', 'C&NW', 'GTW'], road = roads[Math.floor(R() * roads.length)], arts = BOX_ART[road], art = arts[Math.floor(R() * arts.length)];
     v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
     if (R() < NII_SHARED.PS1.SHARE * (art.startsWith('boxcar50dd_') ? 1 : 0.5)) { const P = NII_SHARED.PS1.cars[Math.floor(R() * NII_SHARED.PS1.cars.length)], [lo, hi] = P[2]; v.type = 'boxcar50'; v.art = P[0]; v.road = P[1]; v.num = String(lo + Math.floor(R() * (hi - lo + 1))); } // Nov 4: PS-1 50 footers (shared table); any road can reach Effingham by either interchange
     if (R() < 0.75) v.load = { c: ['Groceries', 'Feed', 'Hardware', 'Bagged fertilizer', 'Seed', 'Appliances'][Math.floor(R() * 6)], t: 30 + Math.floor(R() * 15) }; else v.forLoad = { c: 'Bagged grain', t: 40 }; }
+  if (NII_SHARED.biasVia) via = NII_SHARED.biasVia(via, v, R);
   { // Nov 4: numbers like Mattoon (shared.js): the painted number if it is free, else one from the road's series; never twice on the railroad (both towns)
     const SER = NUM_SER(), hop = { NS: [9100, 9199], 'PC': [30000, 39998], IC: [70000, 79998], NYC: [860000, 869998] };
-    const kind = v.type === 'hopper' ? 'hopper' : v.type === 'tank' ? 'tank' : v.type === 'tank_lpg' ? 'lpg' : (v.type === 'gondola' || v.type === 'gon') ? 'gon' : v.type === 'boxcar40' ? 'box40' : 'box';
+    const kind = v.type === 'hopper' ? 'hopper' : v.type === 'hopper_ps2' ? 'ps2' : v.type === 'hopper_cf' ? 'cf' : v.type === 'hopper_cf2' ? 'cf2' : v.type === 'tank' ? 'tank' : v.type === 'tank_lpg' ? 'lpg' : (v.type === 'gondola' || v.type === 'gon') ? 'gon' : v.type === 'boxcar40' ? 'box40' : 'box';
     const range = kind ? SER[kind + ':' + v.road] || SER[kind + ':' + v.road.replace('C&NW', 'CNW')] : hop[v.road];
     const painted = numOf(v.art) || (NII_SHARED.VIEW_CARS && NII_SHARED.VIEW_CARS[v.art] && NII_SHARED.VIEW_CARS[v.art].painted) || null;
     const used = NII_SHARED.usedNums(E, S.cuts.flatMap(c => c.veh).concat(S.pendIC || [], S.pcPend || []), NEW_CARS);
     const num = range ? NII_SHARED.freeNum(range, v.road, painted, used, R) : null; if (num) v.num = num; else while (used.has(v.road + ' ' + v.num)) v.num = String(+v.num + 1 + Math.floor(R() * 50));
     NEW_CARS.push(v); if (NEW_CARS.length > 200) NEW_CARS.shift(); }
-  v.loaded = !!v.load; v.wt = 30 + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
+  if (NII_SHARED.applyStencil) NII_SHARED.applyStencil(v);
+  if (v.load && NII_SHARED.clampLoadToStencil) v.load = NII_SHARED.clampLoadToStencil(v, v.load);
+  if (v.forLoad && NII_SHARED.clampLoadToStencil) v.forLoad = NII_SHARED.clampLoadToStencil(v, v.forLoad);
+  const tare = (v.tare != null) ? v.tare : 30;
+  v.loaded = !!v.load; v.wt = tare + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
 const SHIP = { coal: { IC: ['Southern Illinois Coal Co.', 'Marion, IL', 'IC'], NW: ['Big Sandy Coal Co.', 'Williamson, WV', 'PC'] }, tank: { IC: ['Bayou Refining Co.', 'Norco, LA', 'IC'], NW: ['Maumee Refining Co.', 'Toledo, OH', 'PC'] } };
 function routeIn(road, via) { return via === 'PC' ? (road === 'PC' ? 'PC–Effingham–NI&I' : `${road}–PC–Effingham–NI&I`) : wbRoute(road === 'PC' || !(road in WB_JCT) ? 'IC' : road) + '–Effingham'; }
@@ -1563,15 +1632,31 @@ function waybill(v) { fixLoad(v); if (v.wb && v.load && /^(Coal \(stoker\)|Fuel 
   const r = seeded((+v.num || 7) * 31 + key.length * 977), road = roadOf(v), kind = kindOf(v), cu = DEST[v.dest];
   let w;
   if (cu) { // inbound to a Effingham customer
-    if (v.loaded) { const sh = kind === 'coal' || kind === 'tank' ? SHIP[kind][v.via] : (() => { const pk = (kind === 'box40' || kind === 'lpg' || kind === 'gon') ? kind : 'box'; const p = wbPick(pk, v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
-      w = { from: `${sh[0]}, ${sh[1]}`, fromRoad: sh[2], to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(sh[2], v.via), cons: cu.name, what: v.load.c }; }
-    else w = { from: (WB_HOME[road] || WB_HOME.IC).join(', '), fromRoad: road, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(road, v.via), cons: cu.name, what: 'EMPTY for loading' }; }
+    if (v.loaded) {
+      const glassC = v.load && /^(Glass Sand|Ground Limestone|Soda Ash)$/.test(v.load.c);
+      if (glassC) {
+        // Ricky / Stephen: real shippers, picked at random per car (soda ash is tied to the car owner). fromRoad is the interchange the car arrived on — no invented serving railroad.
+        const sh = (NII_SHARED.pickGlassShipper && NII_SHARED.pickGlassShipper(v, r)) || null;
+        const fromRoad = v.via === 'PC' ? 'PC' : 'IC';
+        const from = sh ? `${sh.name}, ${sh.city}, ${sh.state}` : (fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : 'IC interchange, Mattoon, IL');
+        w = { from, fromRoad, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(fromRoad, v.via), cons: cu.name, what: v.load.c };
+      } else if (NII_SHARED.BURGESS_SHIPPER_GAP && NII_SHARED.BURGESS_SHIPPER_GAP.includes(v.load.c)) {
+        // No shipper on file for this commodity — do not invent a firm. Bill from the arrival interchange.
+        const fromRoad = v.via === 'PC' ? 'PC' : 'IC';
+        const from = fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : 'IC interchange, Mattoon, IL';
+        w = { from, fromRoad, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(fromRoad, v.via), cons: cu.name, what: v.load.c };
+      } else {
+        const sh = kind === 'coal' || kind === 'tank' ? SHIP[kind][v.via] : (() => { const pk = (kind === 'box40' || kind === 'lpg' || kind === 'gon') ? kind : 'box'; const p = wbPick(pk, v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
+        w = { from: `${sh[0]}, ${sh[1]}`, fromRoad: sh[2], to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(sh[2], v.via), cons: cu.name, what: v.load.c };
+      }
+    } else w = { from: (WB_HOME[road] || WB_HOME.IC).join(', '), fromRoad: road, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(road, v.via), cons: cu.name, what: 'EMPTY for loading' }; }
   else if (v.dest === 'IC-INT' || v.dest === 'PC-INT') { const via = v.dest === 'PC-INT' ? 'PC' : 'IC', home = WB_HOME[road] || WB_HOME.IC, at = DEST[v.from] || DEST['EF HOUSE'];
-    if (v.loaded) { let cn, to; const sk = NII_SHARED.scrapKindOf && NII_SHARED.scrapKindOf(v.load && v.load.c); if (sk) { const p = wbPick('gon', v.load.c, r, via === 'PC' ? 'IC' : 'PC') || wbPick('gon', v.load.c, r); cn = [p[0], p[1], p[2], p[3]]; to = (p[1] && p[1] !== '—') ? `${p[1]}, ${p[2]}` : p[3]; } else { cn = via === 'PC' ? ['PC', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']; to = `${cn[1]}, ${cn[2]}`; } w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
+    if (v.loaded) { let cn, to; const sk = NII_SHARED.scrapKindOf && NII_SHARED.scrapKindOf(v.load && v.load.c); if (sk) { const p = wbPick('gon', v.load.c, r, via === 'PC' ? 'IC' : 'PC') || wbPick('gon', v.load.c, r); cn = [p[0], p[1], p[2], p[3]]; to = (p[1] && p[1] !== '—') ? `${p[1]}, ${p[2]}` : p[3]; } else if (v.load && v.load.c === 'Bottles in cartons') { const rec = (NII_SHARED.pickBottleConsignee && NII_SHARED.pickBottleConsignee(r)) || { name: 'via ' + via, city: via === 'PC' ? 'Effingham' : 'Mattoon', state: 'IL' }; cn = [via, rec.city, rec.state, rec.name]; to = `${rec.city}, ${rec.state}`; } else { cn = via === 'PC' ? ['PC', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']; to = `${cn[1]}, ${cn[2]}`; } w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
     else w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'PC' ? 'PC' : 'IC', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
     if (v.reassigned) w.route += ' (REROUTED: car reassigned, was via ' + (via === 'PC' ? 'IC' : 'PC') + ')'; }
   else w = { from: 'Effingham, IL', fromRoad: 'NI&I', to: 'Neoga, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'North to Neoga', what: v.load ? v.load.c : 'EMPTY' };
-  return (v.wb = Object.assign(w, { key, no: String(10000 + Math.floor(r() * 89999)), date: wbDate(E.time), kname: kind === 'coal' ? 'HT HOPPER 40FT' : WB_KNAME[kind] || 'XM BOX', lbs: v.load ? (v.load.t * 2000).toLocaleString() : '', loaded: !!v.loaded })); }
+  const lbs = v.load ? (v.load.lb != null ? v.load.lb : Math.round(v.load.t * 2000)).toLocaleString() : '';
+  return (v.wb = Object.assign(w, { key, no: String(10000 + Math.floor(r() * 89999)), date: wbDate(E.time), kname: kind === 'coal' ? 'HT HOPPER 40FT' : WB_KNAME[kind] || 'XM BOX', lbs, loaded: !!v.loaded, capy: v.capy, ldlmt: v.ldlmt, ltWt: v.ltWt, capyNominal: v.capyNominal })); }
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const WB_FIELDS = { carInit: [11, 44.5, 114], carKind: [135, 44.5, 118], waybillNo: [11, 70.5, 114], date: [135, 70.5, 118], fromStation: [11, 96.5, 244], fromRoad: [265, 96.5, 84],
   toStation: [11, 122.5, 244], toRoad: [265, 122.5, 84], routing: [11, 148.5, 338], consignee: [11, 174.5, 218], weight: [239, 174.5, 110], contents: [11, 200.5, 338] };
@@ -1580,15 +1665,28 @@ function wbCard(v) { if (v.type === 'gp9' || v.type === 'caboose') return `<p>${
   return SH.wbCard(vals, SH.wbStamp(v, w, ngHeld(v)), BA); } // Nov 4: Mattoon's waybill card and stamps (HOT / HOLD / EMPTY), shared painter
 // ================================================================= CUSTOMERS, JOBS, DAY
 // Nov 4 (spots parity): a customer is full when every one of its spots holds one of its cars; its other cars wait on HOLD (Mattoon's CIC HOLD)
-function ngFull(k, cars) { cars = cars || standingCars(); const sps = SPOTS.filter(sp => sp.dest === k); return sps.length > 0 && sps.every(sp => cars.some(o => o.v.dest === k && !o.live && o.pm.t === sp.t && Math.abs(o.pm.d - sp.d) <= sp.tol)); }
-function ngHeld(v, cars) { cars = cars || standingCars(); if (!DEST[v.dest]) return false; const q = cars.find(o => o.v === v); if (!q || (!q.live && carAtSpot(v, q.pm))) return false; return ngFull(v.dest, cars); }
+function spotCap(sp) { return (sp && sp.cap) || 1; }
+function carsOnSpot(sp, cars) { cars = cars || standingCars(); return cars.filter(o => !o.live && o.pm.t === sp.t && Math.abs(o.pm.d - sp.d) <= sp.tol).sort((a, b) => Math.abs(a.pm.d - sp.d) - Math.abs(b.pm.d - sp.d)); }
+function spotHasRoom(sp, cars, v) {
+    const on = carsOnSpot(sp, cars), cap = spotCap(sp);
+    if (!v) return on.length < cap;
+    const others = on.filter(o => o.v !== v);
+    if (others.length < cap) return true;
+    // Already at capacity: keep cars that were already on the track (cut order), don't let a later car bump them.
+    const rank = (o) => { const i = (S.cuts || []).findIndex(c => c.veh && c.veh.includes(o.v)); return i < 0 ? 1e9 : i; };
+    const kept = on.slice().sort((a, b) => rank(a) - rank(b)).slice(0, cap);
+    return kept.some(o => o.v === v);
+  }
+function ngFull(k, cars) { cars = cars || standingCars(); const sps = SPOTS.filter(sp => sp.dest === k); return sps.length > 0 && sps.every(sp => !spotHasRoom(sp, cars)); }
+function ngTrackFull(v, cars) { cars = cars || standingCars(); const sps = SPOTS.filter(sp => sp.dest === v.dest && (!v.spotT || sp.t === v.spotT)); return sps.length > 0 && sps.every(sp => !spotHasRoom(sp, cars, v)); }
+function ngHeld(v, cars) { cars = cars || standingCars(); if (!DEST[v.dest]) return false; const q = cars.find(o => o.v === v); if (!q || (!q.live && carAtSpot(v, q.pm))) return false; return v.spotT ? ngTrackFull(v, cars) : ngFull(v.dest, cars); }
 const SPOT_LEN = { 'EF HOUSE': 50, 'EF GRAIN': 37, 'EF PROPANE': 44 }; // car-length marks, as Mattoon's
 let spotsOn = (() => { try { return localStorage.getItem('nii-mattoon-spots') === '1'; } catch (e) { return false; } })(); // the same Spot marks setting as Mattoon
 function drawSpotMarks() { for (const sp of SPOTS) { if(globalThis.EF_PHASE1_TRACK_OK&&!globalThis.EF_PHASE1_TRACK_OK(sp.t))continue; const L = sp.L || SPOT_LEN[sp.dest] || 50, d0 = Math.max(0, sp.d - L / 2), d1 = Math.min(T[sp.t].len, sp.d + L / 2), a = [], b = [];
     for (let d = d0; ; d += 3) { const dd = Math.min(d, d1), p = ptAt(sp.t, dd), q = ptAt(sp.t, Math.min(T[sp.t].len, dd + 0.5)), p0 = ptAt(sp.t, Math.max(0, dd - 0.5)), tx = q[0] - p0[0], ty = q[1] - p0[1], n = Math.hypot(tx, ty) || 1, nx = -ty / n * 4.6, ny = tx / n * 4.6;
       a.push([sx(p[0] + nx), sy(p[1] + ny)]); b.push([sx(p[0] - nx), sy(p[1] - ny)]); if (dd >= d1) break; }
     const pts = a.concat(b.reverse()); g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fillStyle = 'rgba(220,30,30,0.3)'; g.fill(); g.strokeStyle = 'rgba(190,20,20,0.75)'; g.lineWidth = 1.2; g.stroke(); } }
-function carAtSpot(v, pm) { return SPOTS.find(sp => sp.workActive !== false && sp.t === pm.t && Math.abs(sp.d - pm.d) <= sp.tol && sp.dest === v.dest) || null; }
+function carAtSpot(v, pm) { const sp = SPOTS.find(s => s.workActive !== false && s.t === pm.t && Math.abs(s.d - pm.d) <= s.tol && s.dest === v.dest && (!v.spotT || s.t === v.spotT)); if (!sp) return null; return spotHasRoom(sp, standingCars(), v) ? sp : null; }
 function standingCars() { const out = []; for (const c of S.cuts) { const live = c.veh.some(isLoco); for (const q of vehPos(c)) out.push({ ...q, c, live }); } return out; }
 function IND(dest, f, amt) { try { NII.ind(NII.indKey(dest), f, amt == null ? 1 : amt); } catch (e) { } } // Industries page counters (Nov 1)
 function book(k, amt) { M.led = M.led || { earn: 0, hire: 0, dem: 0, crew: 0, fuel: 0, sand: 0 }; M.led[k] = (M.led[k] || 0) + amt; M.money = (M.money || 0) + ((k === 'earn' || k === 'dem') ? amt : -amt); }
@@ -1601,7 +1699,7 @@ const pickVia = v => { const back = v.via || 'IC'; if (R() < PC_ROUTE_ODDS) { v.
 // startWork / doneWork. The clock time counts even while the crew is in Mattoon (releaseDue runs on arrival and every advance).
 function startWorkN(v, sp) { if (typeof v.work === 'number') v.work = { until: E.time + Math.max(0, workH(v) - v.work) * 3600 }; // old saves: hours already worked
   if (v.work) return; if (!v.ngFee) { v.ngFee = 1; const fee = SH.switchFee(v); book('earn', fee); IND(v.dest, 'in'); IND(v.dest, 'inc', fee); toast(`${roadOf(v)} ${v.num} spotted at the ${sp.name}: switching fee $${fee}.`, 'good'); }
-  let until = E.time + workH(v) * 3600; if (MILLER(v.dest)) until = monAM(until); v.work = { from: E.time, until }; }
+  const hrs = workH(v); let until = E.time + hrs * 3600; if (MILLER(v.dest)) until = monAM(until); v.work = { from: E.time, until, hrs }; }
 function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.work || !DEST[v.dest]) continue; if (typeof v.work === 'number') { const sp = carAtSpot(v, q.pm); if (sp) startWorkN(v, sp); else continue; }
     if (!SH.ngRelease(v, E.time)) continue; const via = v.outVia;
     toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'PC' ? 'PC (leave it on the PC Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
@@ -1657,9 +1755,13 @@ function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendI
   if (setOutPCX(S.pendIC.slice())) { S.pendIC = []; note(`The IC way freight set out ${n} car${n > 1 ? 's' : ''} for Effingham on the interchange track.`); }
   else note(`${n} IC car${n > 1 ? 's' : ''} for Effingham wait at Mattoon: the interchange track is full.`); }
 function jobs() { const L = [], cars = standingCars(); for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
-    if (DEST[v.dest] && ngHeld(v, cars)) continue; // HOLD: no job until a spot opens (Mattoon's CIC rule)
-    if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), what = v.dest === 'EF HOUSE' ? 'the freight house door or team spot' : v.dest === 'EF GRAIN' ? 'Illini Grain single loading track' : v.dest==='EF PROPANE' ? 'the LPG rack' : DEST[v.dest].name;
-      L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && v.work && v.work.until ? ` - spotted, done about ${clock(v.work.until)}` : ''}` }); }
+    if (DEST[v.dest] && ngHeld(v, cars)) {
+      if (isSodaAsh(v)) L.push({ done: false, car: v, hold: true, text: `${w} (Soda Ash): HOLD -- the rear soda-ash spot is busy. Store it in the yard or leave it on the Midstate lead until the rack is free.` });
+      else if (isLime(v)) L.push({ done: false, car: v, hold: true, text: `${w} (Ground Limestone): HOLD -- both limestone spots are busy. Store it in the yard or leave it on the Midstate lead until a GLC spot is free.` });
+      continue; // HOLD: no spot job until a spot opens (Mattoon's CIC rule)
+    }
+    if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), glassWhat = v.dest==='EF GLASS' ? ({ GSC: 'the Midstate Glass sand track (GSC)', GLC: 'the Midstate Glass limestone track (GLC)', GAC: 'the Midstate Glass soda ash track (GAC, rear)', GW: 'the Midstate Glass warehouse (GW)' }[v.spotT] || 'Midstate Glass Container Co.') : null, burgessWhat = v.dest==='EF BURGESS' ? ({ B1: 'the Burgess lumber track (B1, bottom)', B2: 'the Burgess building-materials track (B2, top)' }[v.spotT] || 'Burgess Building Supply') : null, what = v.dest === 'EF HOUSE' ? 'the freight house door or team spot' : v.dest === 'EF GRAIN' ? 'Illini Grain single loading track' : v.dest==='EF PROPANE' ? 'the LPG rack' : (glassWhat || burgessWhat || DEST[v.dest].name);
+      L.push({ done: !!sp && !q.live, car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): spot at ${what}${sp && v.work && v.work.until ? ` - spotted, done about ${clockWhen(v.work.until)}` : ''}` }); }
     else if (v.dest === 'PC-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the PC - leave it on the PC Interchange${v.reassigned ? ' (rerouted)' : ''}` });
     else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}${!q.live && onWyeInterchange(q.c) && q.c.veh.some(o => o.dest === 'PC-INT') ? ` - WARNING: coupled to PC cars, the PC will take it ($${SH.PC_WRONG_FEE} fee)` : ''}` });
     else if (v.mattoonN) L.push({ car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): for ${v.dest} in Mattoon - came off the PC, take it to Mattoon` }); }
@@ -3672,7 +3774,7 @@ function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · '}${v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : 'Tag: ' + esc(carTag(v).code)}${v.work ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · '}${v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : 'Tag: ' + esc(carTag(v).code)}${v.work && v.work.until ? ` · spotted, done about ${clockWhen(v.work.until)}` : (v.work ? ` · at the spot` : '')}</p>
   <div class="btns">${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
@@ -3684,8 +3786,80 @@ function uncouple(q, side) { const c = q.c, i = c.veh.indexOf(q.v), left = sideO
 function uncAt(c, k) { if (k <= 0 || k >= c.veh.length) return false; if (c.veh.some(isLoco) && Math.abs(ctl.sv || ctl.v || 0) * 0.6818182 > 1) { toast('Stop first, then pull the pin.', 'bad'); return false; }
   const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s), a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
   S.cuts.splice(S.cuts.indexOf(c), 1, a, b); toast('Uncoupled.'); save(); return true; }
+// Midstate lead tracks (approaches, not the customer spots themselves). Yard tracks Y1-Y4.
+const GLASS_LEAD = ['GS', 'GSP', 'GL', 'GLP', 'GA', 'GAP', 'GWB'];
+const YARD_TS = ['Y1', 'Y2', 'Y3', 'Y4'];
+function onGlassLead(pm) { return !!(pm && GLASS_LEAD.includes(pm.t)); }
+function onYard(pm) { return !!(pm && /^Y[1-4]$/.test(pm.t)); }
+function isolateStandingCar(q) {
+  if (!q || q.live) return null;
+  const c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
+  if (i < 0) return null;
+  if (c.veh.length === 1) return c;
+  if (!uncAt(c, i === 0 ? 1 : i)) return null;
+  const q2 = standingCars().find(o => o.v === q.v);
+  return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
+}
+function yardOrLeadSlot() {
+  const tryT = YARD_TS.concat(GLASS_LEAD).filter(t => T[t]);
+  for (const t of tryT) {
+    const probe = placeCut([{ type: 'boxcar50', L: 56, dest: 'TMP' }], [true], t, T[t].len - 6, 1);
+    if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d: T[t].len - 6 };
+  }
+  return null;
+}
+function moveStandingCar(q, t, dHead) {
+  const c0 = isolateStandingCar(q); if (!c0) return false;
+  const aT = c0.aT.slice(), veh = c0.veh.slice();
+  S.cuts.splice(S.cuts.indexOf(c0), 1);
+  const nc = placeCut(veh, aT, t, dHead, 1);
+  if (S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
+  S.cuts.push(nc); return true;
+}
+function crewSwapMidstate() {
+  // Assigned-crew work only: pull released empties off GAC / GLC, then spot waiting loads from the lead (preferred) or yard.
+  const notes = [];
+  const cars = () => standingCars();
+  const waitersOf = (kindFn) => cars().filter(o => !o.live && kindFn(o.v) && o.v.dest === 'EF GLASS' && (onGlassLead(o.pm) || onYard(o.pm)))
+    .sort((a, b) => {
+      const pa = onGlassLead(a.pm) ? 0 : 1, pb = onGlassLead(b.pm) ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
+    });
+  const pullReleasedOn = (track, label) => {
+    for (const o of cars().filter(o => !o.live && o.pm.t === track && o.v.doneAt && (o.v.dest === 'IC-INT' || o.v.dest === 'PC-INT'))) {
+      const slot = yardOrLeadSlot();
+      if (!slot) { notes.push('no room in the yard or on the lead to pull the released ' + label + ' car'); break; }
+      if (moveStandingCar(o, slot.t, slot.d)) notes.push((roadOf(o.v) + ' ' + o.v.num) + ' pulled from the ' + label + ' to ' + slot.t);
+    }
+  };
+  const spotWaitersOn = (spots, trackLen, kindFn, label) => {
+    for (const sp of spots || []) {
+      if (!spotHasRoom(sp, cars())) continue;
+      const next = waitersOf(kindFn)[0];
+      if (!next) break;
+      const L = vL(next.v), head = Math.min((trackLen || 140) - 0.5, sp.d + L / 2);
+      if (moveStandingCar(next, sp.t, head)) {
+        const q = cars().find(o => o.v === next.v);
+        if (q && carAtSpot(next.v, q.pm)) startWorkN(next.v, sp);
+        notes.push((roadOf(next.v) + ' ' + next.v.num) + ' spotted at ' + label);
+      } else notes.push('could not spot the next ' + label + ' load');
+    }
+  };
+  const soda = SPOTS.filter(sp => sp.t === 'GAC' && sp.dest === 'EF GLASS');
+  const lime = SPOTS.filter(sp => sp.t === 'GLC' && sp.dest === 'EF GLASS');
+  pullReleasedOn('GAC', 'soda rack');
+  pullReleasedOn('GLC', 'limestone track');
+  spotWaitersOn(soda, T.GAC && T.GAC.len, isSodaAsh, 'the rear soda-ash rack');
+  spotWaitersOn(lime, T.GLC && T.GLC.len, isLime, 'the limestone track');
+  return notes;
+}
+
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
-  for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
+  for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x));
+  // Assigned-crew Midstate swap runs after overnight work so a released empty can come off and the next load can go on. No auto-move if no crew was sent.
+  if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
+  newDay(); save(); hideModal(); }
 function build() {
   for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
   { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div>`); } // Menu (Nov 1): Full screen, Industries, other towns
@@ -3749,5 +3923,30 @@ build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+
+// Nov 12: map old Burgess 3-spot IDs onto the new long spots; move a car left on the old
+// front soda-ash spot (GLASS-SODA-1) to the single rear spot if the rear is empty.
+const SPOT_ID_MAP = { 'BURGESS-1A':'BURGESS-B1','BURGESS-1B':'BURGESS-B1','BURGESS-1C':'BURGESS-B1','BURGESS-2A':'BURGESS-B2','BURGESS-2B':'BURGESS-B2','BURGESS-2C':'BURGESS-B2','GLASS-SODA-1':'GLASS-SODA','GLASS-SODA-2':'GLASS-SODA' };
+function migrateIndustrySpots() {
+  if (!S || S._spotMig >= 1) return;
+  try {
+    for (const c of S.cuts || []) for (const v of c.veh || []) {
+      if (v.spotId && SPOT_ID_MAP[v.spotId]) v.spotId = SPOT_ID_MAP[v.spotId];
+    }
+    const soda = SPOTS.find(sp => sp.t === 'GAC' && sp.dest === 'EF GLASS');
+    if (soda && typeof moveCut === 'function') {
+      const cars = standingCars().filter(o => o.pm.t === 'GAC' && !o.live);
+      const atRear = cars.filter(o => Math.abs(o.pm.d - soda.d) <= soda.tol);
+      const atOldFront = cars.filter(o => o.pm.d < soda.d - soda.tol && o.pm.d < 70);
+      if (!atRear.length && atOldFront.length) {
+        const o = atOldFront[0];
+        moveCut(o.c, soda.d - o.pm.d);
+      }
+    }
+  } catch (e) {}
+  S._spotMig = 1;
+}
+
+migrateIndustrySpots();
+window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
