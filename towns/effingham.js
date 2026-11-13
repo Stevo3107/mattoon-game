@@ -1490,6 +1490,7 @@ function efCrossSignal(c,sgn,before,after){
   efTowerTick();
 }
 function efAutomaticBoundary(c,sgn){const red=efRedAhead(c,sgn),bf=bfAheadN(c,sgn);if(bf.K&&(!red||bf.t-12<red.distance-25))return {key:'BLUE:'+bf.K,bf:bf.K,kind:'blueflag',distance:bf.t,buffer:12};return red?{...red,buffer:25}:null;}
+function efAutoRequest(c, sgn) { const red = efRedAhead(c, sgn); if (!red || red.distance > 2500) { AUTO_REQ = null; return; } const k = red.key + ':' + red.dir, now = performance.now(); if (EF_IL.pending || efHasGrant(red.key, c, red.dir) || (AUTO_REQ && AUTO_REQ.k === k && now - AUTO_REQ.t < 8000)) return; AUTO_REQ = { k, t: now }; requestNamedRoute(red.key, red.dir); } // asks again (every 8 s at most) if a request was turned down
 function efAutoProtectionStep(c,sgn,dt,lim){
   // HARD: NEVER invoked for unassisted manual Drive; manual brake/notch/reverser stay untouched.
   let state=EF_IL.auto,a=state?state.target:efAutomaticBoundary(c,sgn);
@@ -1506,7 +1507,7 @@ function efAutoProtectionStep(c,sgn,dt,lim){
   const {W,Wl}=efBrakeInputs(c),v=SH.driveStep({v:sp,W,Wl,notch:0,rev:0,sign:1,brake:1,sand:false,running:true,tapIdle:false,lim},dt).v;
   const old=leadingEnd(c,sgn);ctl.v=Math.abs(v);ctl.sv=sgn*ctl.v;moveStep(c,sgn,ctl.v*dt);a.distance-=Math.abs(v)*dt;
   const l=locoV(c);if(l)SH.consume(l,{sand:false,sandT:0},0,dt);
-  if(ctl.v<1e-6){const evidence={key:state.key,guard:state.guard,initialSpeed:state.initialSpeed,initialRoom:state.initialRoom,earlyAllowanceFt:state.earlyAllowanceFt,infeasible:state.infeasible,finalRoom:a.distance-(a.buffer||25),stoppedByPhysicalModel:Math.abs(v)<1e-6,safeStop:!state.infeasible&&Math.abs(v)<1e-6&&a.distance>=(a.buffer||25)-1e-5};EF_IL.autoEvidence.push(evidence);if(EF_IL.autoEvidence.length>32)EF_IL.autoEvidence.shift();ctl.ap=null;ctl.stopping=false;S.crossWait=!!S.crossT;EF_IL.auto=null;toast(evidence.safeStop?'Stopped approaching '+a.key+'. Request this crossing only.':'Automatic braking ended; unsafe approach recorded, NOT a safe-stop pass.','bad');}
+  if(ctl.v<1e-6){const evidence={key:state.key,guard:state.guard,initialSpeed:state.initialSpeed,initialRoom:state.initialRoom,earlyAllowanceFt:state.earlyAllowanceFt,infeasible:state.infeasible,finalRoom:a.distance-(a.buffer||25),stoppedByPhysicalModel:Math.abs(v)<1e-6,safeStop:!state.infeasible&&Math.abs(v)<1e-6&&a.distance>=(a.buffer||25)-1e-5};EF_IL.autoEvidence.push(evidence);if(EF_IL.autoEvidence.length>32)EF_IL.autoEvidence.shift();const hadAp=!!ctl.ap;ctl.ap=null;ctl.stopping=false;S.crossWait=!!S.crossT;EF_IL.auto=null;if((hadAp||((S.mode||'drive')==='tap'&&AP_GOAL))&&!a.bf&&sigHold(sgn)){}else toast(evidence.safeStop?'Stopped approaching '+a.key+'. Request this crossing only.':'Automatic braking ended; unsafe approach recorded, NOT a safe-stop pass.','bad');}
   return true;
 }
 function efPlanBlueFlags(){const I=globalThis.EF_INDUSTRY_LAYOUT,defs={},daily=()=>true,week=d=>((d-1)%7)<5;
@@ -1937,6 +1938,7 @@ function step(dt) {
   const c = liveCut(); if (!c) return; { const l0 = locoV(c), cf = SH.crewFuel(dt, ctl.notch, !!(l0 && l0.fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); } // Nov 4: crew + fuel every step in every mode (Drive or Tap), as in Mattoon
   const lim = (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) * FTS;
   if(!ctl.ap&&(S.mode||'drive')==='drive')EF_IL.auto=null; // manual override cancels only private auto state
+  if ((S.mode || 'drive') === 'tap') { if (ctl.ap) efAutoRequest(c, ctl.ap.sgn); else if (SIG_WAIT) efAutoRequest(c, SIG_WAIT.sgn); } // Nov 13: tap mode asks the tower ahead (never in Drive)
   if ((ctl.ap || (S.mode || 'drive') === 'tap') && efAutoProtectionStep(c, Math.sign(ctl.sv) || (ctl.ap && ctl.ap.sgn) || ctl.dir || 1, dt, lim)) return;
   if (ctl.stopping) { if (ctl.v < 0.05) { ctl.v = 0; ctl.sv = 0; ctl.stopping = false; } else { const sg = Math.sign(ctl.sv) || ctl.dir || 1; ctl.v = Math.max(0, ctl.v - SH.STOP_DEC * dt); ctl.sv = ctl.v * sg; moveStep(c, sg, ctl.v * dt); return; } } // Mattoon's STOP
   if (!ctl.ap) { const sgn = drivePhys(c, dt, lim, (S.mode || 'drive') === 'tap'); if (!sgn) return; ctl.dir = sgn; return moveStep(c, sgn, ctl.v * dt); } // Tap mode with no run: Mattoon's idle brake (shared driveStep)
@@ -1946,6 +1948,7 @@ function step(dt) {
 function moveStep(c, sgn, s) {
   if(ngOpen())for(const K in BFN)bfIn[K]=cutInBFN(K,c);
   while (s > 1e-6) { const ds = Math.min(1, s); const before = leadingEnd(c, sgn), tb = leadingEnd(c, -sgn), r = moveCut(c, sgn * ds), after = leadingEnd(c, sgn), ta = leadingEnd(c, -sgn); s -= ds; if (ctl.ap) ctl.ap.left -= r.moved;
+    if (after.t !== before.t && !(sgn > 0 ? c.path.slice(0, -1) : c.path.slice(1)).some(g => g.t === after.t) && window.NII_CALLSHEET && NII_CALLSHEET.guard && NII_CALLSHEET.guard('effingham', after.t, true)) { moveCut(c, -sgn * ds); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; S.crossT = null; NII_CALLSHEET.guard('effingham', after.t); break; } // Nov 13 clock sim
     crossSignal(c, sgn, before, after); if (c.veh.some(isLoco) && ylCheckN(c, sgn, tb, ta)) break; if (bfMoveN(c, sgn)) break;
     const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
     if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') toast('Effingham is the end of the line, coming later. Back up.'); else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'clear') toast('Clearance point: cars past here would foul the PC main.', 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
@@ -2054,11 +2057,12 @@ function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, othe
   return { msg: goal.cut ? `Can't reach ${cutName(goal.cut)} from here: there's no clear way around to it.` : 'No way to get there from here.' }; }
 function apTo(t, d, goal) { const c = liveCut(); if (!c) return; // Mattoon's tapTarget: plan, line the switches, run (reversing as needed)
   if (!goal) { const o = S.cuts.find(o => o !== c && o.path.some(g => g.t === t && Math.min(g.d0, g.d1) - 1 <= d && Math.max(g.d0, g.d1) + 1 >= d)); goal = o ? { cut: o } : { t, d }; } // a spot under a car: couple to it (either end)
-  if (ctl.ap && ctl.v > 0.5 * FTS) { ctl.ap = { replan: { t, d, goal }, sgn: ctl.ap.sgn, legs: [], k: 0, pend: [], tw: 0, left: 0 }; toast('Stopping first, then lining the new route.'); return true; }
+  if (ctl.ap && ctl.v > 0.5 * FTS) { AP_GOAL = { t, d, goal }; SIG_WAIT = null; ctl.ap = { replan: { t, d, goal }, sgn: ctl.ap.sgn, legs: [], k: 0, pend: [], tw: 0, left: 0 }; toast('Stopping first, then lining the new route.'); return true; }
   if (ngOpen()) for (const K in BFN) if (BFNX.up(K) && !cutInBFN(K, c) && (goal.t ? inBFN(K, { t: goal.t, d: goal.d }) : goal.cut && cutInBFN(K, goal.cut))) { toast(BFNX.blockMsg(K), 'bad'); return false; }
+  { const gt = goal.t || (goal.cut && goal.cut.path[0] && goal.cut.path[0].t); if (gt && !c.path.some(g => g.t === gt) && window.NII_CALLSHEET && NII_CALLSHEET.guard && NII_CALLSHEET.guard('effingham', gt)) return false; } // Nov 13 clock sim
   const r = planRoute(c, goal); if (!r.legs) { toast(r.msg, 'bad'); return false; }
   const sim = { ...S.sw }, throws = []; r.legs.forEach(L => L.req.forEach(([k, g]) => { if (sim[k] !== g) { if (!throws.includes(k)) throws.push(k); sim[k] = g; } }));
-  ctl.ap = { legs: r.legs, k: -1, sgn: r.legs[0].sgn, left: 0, pend: [], tw: 0 }; ctl.dir = 0; ctl.brake = 0; nextLegN();
+  AP_GOAL = { t, d, goal }; SIG_WAIT = null; ctl.ap = { legs: r.legs, k: -1, sgn: r.legs[0].sgn, left: 0, pend: [], tw: 0 }; ctl.dir = 0; ctl.brake = 0; nextLegN();
   const rv = r.legs.length - 1;
   if (goal.cut && goal.end && rv) toast(`Auto-route: running around ${cutName(goal.cut)}, ${rv} reversing move${rv === 1 ? '' : 's'}.`);
   else if (rv || throws.length) toast(`Auto-route: ${throws.length ? `lining switch${throws.length > 1 ? 'es' : ''} ${throws.map(k => SWITCHES[k].name).join(', ')}` : 'switches already lined'}${rv ? `, ${rv} reversing move${rv > 1 ? 's' : ''}` : ''}.`);
@@ -2075,6 +2079,7 @@ function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l
     ap.tw = ap.pend.length ? 0.45 : 0.3; return; }
   if (ap.tw > 0) { ap.tw -= dt; return; }
   const L = ap.legs[ap.k], approach = !!L.couple && ap.k === ap.legs.length - 1; let limit = ap.left;
+  const edgeRun = !!(S.crossT && S.crossT.edge && (S.mode || 'drive') === 'tap' && ap.k === ap.legs.length - 1 && !approach); if (edgeRun) { if (ap.left <= 20) { crossLeave(); return; } limit = ap.left + 400; } // Nov 13: roll on into the next town
   { const a = bfAheadN(c, ap.sgn); if (a.K) { const room = a.t - 12; if (room <= 0.3 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; ctl.sv = 0; toast(BFNX.stopMsg(a.K), 'bad'); return; } if (room < limit) limit = Math.max(0, room); } } // Mattoon's stop short of an up blue flag
   { const room = ylRoomN(c, ap.sgn) - 5; if (room < limit) { if (room <= 0.3 && ctl.v < 0.6 * FTS) { ctl.ap = null; ctl.v = 0; ctl.sv = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } limit = Math.max(0, room); } } // Nov 4: Mattoon's stop at the yard limit
   if (!approach && limit <= 0.05) return apArriveN();
@@ -2084,7 +2089,7 @@ function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l
   const r = SH.apAccel(ctl.v, vdes, dt); ctl.v = r.sp; eq = r.eq; if (l) { const u = SH.consume(l, ctl, eq, dt); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); }
   let dx = ctl.v * dt; if (!approach && dx > limit) dx = limit; ctl.sv = ctl.v * ap.sgn;
   moveStep(c, ap.sgn, dx);
-  if (ctl.ap === ap && !approach && ap.left <= 0.05) { apArriveN(); return; }
+  if (ctl.ap === ap && edgeRun && ap.left <= 20) { crossLeave(); return; } if (ctl.ap === ap && !approach && ap.left <= 0.05) { apArriveN(); return; }
   if (ctl.ap === ap && SH.AP_MOVES > 1) { let x2 = ctl.v * dt * (SH.AP_MOVES - 1); if (!approach) x2 = Math.min(x2, Math.max(0, ap.left)); moveStep(c, ap.sgn, x2); } } // Mattoon's second move (see shared.js AP_MOVES)
 let TAP_FLASH = null, TAGS_DRAWN = [];
 // one switch throw, every way in (scene stand or the Map): Mattoon's rules and words
@@ -2106,7 +2111,7 @@ function pullOut(c, i) { const pre = c.veh.slice(0, i).reduce((a, v) => a + vL(v
 function stripStrays(c) { const out = []; if (!c) return 0;
   for (let k = 0; k < 60 && c.veh.length > 1; k++) { const i = c.veh.findIndex(strayCar); if (i < 0) break; out.push(pullOut(c, i)); }
   if (out.length) { for (const v of out) { if (v.ngDest) { v.dest = v.ngDest; } delete v.ngDest; } S.pendIC = (S.pendIC || []).concat(out); dropIC(); toast(`${out.length} car${out.length > 1 ? 's' : ''} you never coupled came off your train and went to the interchange track.`); } return out.length; }
-function arrive() { const tr = E.trainIn; if (!tr) return; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
+function arrive() { const tr = E.trainIn; if (!tr) return; ARRIVED_FROM = (E.travel && E.travel.from) || null; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
   stripStrays(c); clearNorth(c); dropIC(); save(); }
@@ -2117,11 +2122,12 @@ function clearNorth(c) { const on = x => x.path.filter(g => g.t === 'M1'), lo = 
   for (const o of others) { const need = end + 4 - lo(o); if (need > 0) { const b = lo(o); let r = moveCut(o, need); if (lo(o) < b) { moveCut(o, -r.moved); r = moveCut(o, -need); } n++; }
     if (on(o).length) end = Math.max(end, hi(o)); }
   if (n) toast('Cars left at the north end were shoved down the main, clear of your train.'); return n; }
-function askNorth() { showModal(`<h2>Head north to Mattoon?</h2><p>11.5 miles at 25 mph, about 28 minutes. Cars you leave in Effingham stay here.</p><div class="btns"><button data-a="goN">Go to Mattoon</button><button data-a="close" class="alt">Stay in Effingham</button></div>`); }
-function go() { const c = liveCut(); let train = [];
+function askNorth() { showModal(`<h2>Head north to Neoga?</h2><p>18 miles at 25 mph, about 43 minutes. Cars you leave in Effingham stay here.</p><div class="btns"><button data-a="goN">Go to Neoga</button><button data-a="close" class="alt">Stay in Effingham</button></div>`); }
+function go(to) { to = to || 'neoga'; if (window.NII_CALLSHEET && NII_CALLSHEET.leaveGuard && NII_CALLSHEET.leaveGuard(() => goNow(to))) return; goNow(to); }
+function goNow(to) { to = to || 'neoga'; const c = liveCut(); let train = [];
   if (c) { const q = vehPos(c).map(q => { const xa = ptAt((q.aT ? q.p0 : q.p1).t, (q.aT ? q.p0 : q.p1).d)[0], xb = ptAt((q.aT ? q.p1 : q.p0).t, (q.aT ? q.p1 : q.p0).d)[0]; return { v: q.v, x: (xa + xb) / 2, aN: xa < xb }; }).sort((a, b) => a.x - b.x);
     train = q.map(o => { const v = JSON.parse(JSON.stringify(o.v)); delete v.wb; if (DEST[v.dest] || v.dest === 'PC-INT') { v.ngDest = v.dest; v.dest = 'YARD 1'; } v.aFrontN = o.aN; return v; }); S.cuts.splice(S.cuts.indexOf(c), 1); }
-  ctl.dir = 0; ctl.v = 0; save(); NII.travel('effingham', 'mattoon', train); }
+  ctl.dir = 0; ctl.v = 0; { const pc = PEND_CROSS; PEND_CROSS = null; if (pc) { E.cross = pc.cross; if (pc.v > 0) E.crossV = pc.v; else delete E.crossV; } } save(); NII.travel('effingham', to, train); } // Nov 13: north out of Effingham is Neoga (it used to jump straight to Mattoon)
 // ================================================================= DRAW
 const wrap = $('scenewrap'), cv = $('scene'), g = cv.getContext('2d'), IM = {};
 const img = src => { if (!src) return null; if (IM[src]) return IM[src]; const i = new Image(); i.src = src; return (IM[src] = i); };
@@ -3635,7 +3641,14 @@ function drawEFCoreOnly() {
 }
 
 
-function draw() { NII.quiet(draw0); }
+function draw() { NII.quiet(draw0); if (NAMES_ON) { try { drawNames(); } catch (e) { } } }
+// Nov 13: Mattoon's menu extras in every town. Track names on the scene (same setting as Mattoon), a waybill list, blue flags, restart.
+let NAMES_ON = (() => { try { return localStorage.getItem('nii-mattoon-tracknames') !== '0'; } catch (e) { return true; } })();
+function drawNames() { const seen = {}, NM = typeof EF_TRACK_NAME !== 'undefined' ? EF_TRACK_NAME : { HT: 'House track', NWI: 'N&W interchange', RA: 'Runaround', FL: 'Miller & Sons track' }; for (const t of Object.keys(T)) { const tr = T[t], nm = NM[t]; if (!nm || !tr.len || tr.cls === 'main') continue; if (!seen[nm] || T[seen[nm]].len < tr.len) seen[nm] = t; }
+  g.save(); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.font = '700 11px Arial'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.85)'; g.fillStyle = '#1c2b50';
+  for (const [nm, t] of Object.entries(seen)) { let best = null; for (let d = 0; d <= T[t].len; d += 20) { const p = ptAt(t, d), X = sx(p[0]), Y = sy(p[1]) - 12; if (X < 70 || X > W - 70 || Y < 20 || Y > H - 10) continue; const k = Math.abs(X - W * 0.4); if (!best || k < best.k) best = { X, Y, k }; } if (best) { g.strokeText(nm, best.X, best.Y); g.fillText(nm, best.X, best.Y); } } g.restore(); } // label on the part of the track that is on screen
+function showWaybillsN() { const qs = standingCars().filter(q => q.v && !isLoco(q.v) && q.v.type !== 'caboose').sort((a, b) => (roadOf(a.v) + a.v.num).localeCompare(roadOf(b.v) + b.v.num));
+  showModal(`<h2>Waybills</h2>${qs.length ? `<ul style="list-style:none;padding:0;margin:0">${qs.map(q => `<li><button class="alt wbrow" data-a="wb" data-id="${q.v.id}"><b>${roadOf(q.v)} ${q.v.num}</b> ${q.v.loaded ? 'loaded' : 'empty'} → ${esc((DEST[q.v.dest] || {}).name || q.v.dest || 'no orders')}</button></li>`).join('')}</ul>` : '<p>No cars here.</p>'}<div class="btns"><button data-a="close">Back</button></div>`); }
 // Native facility art at feet-based scale; camera K is applied exactly once to flat art.
 // The west engine-house elevation is intentionally NOT stretched into a south facade.
 function drawEFFacilityFlat(r) {
@@ -3884,7 +3897,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   g.font = '700 12px Arial'; g.fillStyle = '#222'; g.textAlign = 'left'; g.fillText('◀ N to Neoga', Math.max(6, sx(XN) + 6), sy(0) + 26); g.textAlign = 'right'; g.fillText('End of track ▶', Math.min(W - 6, sx(XS) - 6), sy(0) + 26);
   g.textAlign = 'center'; g.fillStyle = '#333'; g.fillText('PC', sx(NWX) + 18, Math.min(H - 8, sy(600))); {const ix=ptAt('IX1',T.IX1.len/2),yard=ptAt('Y1',T.Y1.len/2);g.fillText('PC Interchange',sx(ix[0]),sy(ix[1]-25));g.fillText('Yard',sx(yard[0]),sy(yard[1]-25));}if(cam.z<1.3)for(const z of Object.values(BFN))g.fillText(z.short,sx((z.bx[0]+z.bx[1])/2),sy(Math.min(...z.corners.map(p=>p[1]))-16));
   if (cam.z < 1.3) g.fillText('Effingham tower (PC)', sx(TWX + 18), sy(-60)); if (!globalThis.EF_PHASE1_REVIEW && cam.z < 1.3) { g.fillText('House track', sx(HX0 + 200), sy(HOUSE_OFF) + 20); g.fillText('Crossroads Propane', sx(FY.x0 + 80), sy(FY.y0 + 40) + 22); }
-  hud();const tw=S.tower;$('rtBtn').textContent=!tw?'Request individual crossing':tw.st==='hold'?'Holding for PC':tw.st==='waiting'?'Waiting for clear crossings':tw.crossing+' route lined';
+  hud();const tw=S.tower;if($('rtBtn'))$('rtBtn').textContent=!tw?'Request individual crossing':tw.st==='hold'?'Holding for PC':tw.st==='waiting'?'Waiting for clear crossings':tw.crossing+' route lined';
   $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; ngCheckUnlock(); $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Effingham';
 }
 function hud() { const c = liveCut(), l = locoV(c) || {}, mph = ctl.v / FTS, mode = S.mode || 'drive'; $('speedBtn').textContent = (S.speedX || 1) + 'x';
@@ -3930,15 +3943,38 @@ function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITC
 function openMap() { NII.mapTabs.show('effingham', { liveSnap: mapSnap, liveTap: mapLiveTap, crossTap: VISIT ? null : crossStart }); }
 // cross-town taps (Oct 30): S.crossT = where autopilot is headed for a cross-town trip ({ t, d, label, edge: true } = the north end, then the travel prompt)
 let crossAsk = null;
-function crossStart(o) { S.crossT = null; crossAsk = null; if (!liveCut()) return; S.crossT = { t: 'M1', d: 2, edge: true, to: o.to, x: o.x, y: o.y, label: o.label };
+// ---- Nov 13 (Stephen, TAP MODE ONLY): a run to the town edge keeps rolling into the next town (no stop, no prompt), and the tower is asked ahead
+// for the route; the train only stops at the home signal if the route is refused or not lined yet, and goes on by itself once it is. Drive mode is untouched.
+let AP_GOAL = null, SIG_WAIT = null, PEND_CROSS = null, ARRIVED_FROM = null, AUTO_REQ = null; const HERE = 'effingham';
+function edgeEnd(kind) { const k = Object.keys(ENDS).find(k => ENDS[k] === kind); if (!k) return null; const t = k.slice(0, -1), e = k.slice(-1); return T[t] ? { t, e, d: e === 'a' ? 2 : T[t].len - 2 } : null; }
+function effOK() { try { return !!(NII.TEST || !(NII.TOWNS.effingham && NII.TOWNS.effingham.locked)); } catch (e) { return false; } } // Effingham is still unpublished: test games only
+function edgeFor(to) { if (to === 'neoga' || to === 'mattoon') { const e = edgeEnd('north'); return e && { ...e, via: 'neoga' }; } return null; }
+function edgeTap(t, d) { if ((S.mode || 'drive') !== 'tap') return false;
+  for (const kind of ['north', 'south']) { const ed = edgeEnd(kind); if (!ed || ed.t !== t || Math.abs(d - ed.d) > 80) continue; const to = (NII.TOWNS[HERE] || {})[kind]; if (!to || !edgeFor(to)) return false;
+    crossStart({ to, name: NII.TOWNS[to].name, label: 'the main', run: true }); return !!S.crossT; } return false; }
+function sigHold(sgn) { if ((S.mode || 'drive') !== 'tap') return false; SIG_WAIT = S.crossT ? { cross: true, sgn } : AP_GOAL ? { ...AP_GOAL, sgn } : null; if (!SIG_WAIT) return false; toast('Holding at the home signal until the tower lines the route.', 'bad'); return true; }
+function crossLeave() { const x = S.crossT; S.crossT = null; S.crossWait = false; SIG_WAIT = null; if (!x) return;
+  PEND_CROSS = { cross: { to: x.to, x: x.x, y: x.y, label: x.label, run: x.run }, v: ctl.v };
+  go(x.via); if (NII.env().travel) return; ctl.ap = null; ctl.v = 0; ctl.sv = 0; ctl.dir = 0; if (PEND_CROSS) PEND_CROSS.v = 0; } // a leave warning holds the train here
+function carrySpeed(v) { if (v > 0 && ctl.ap) { ctl.v = Math.min(v, 40 * FTS); ctl.sv = ctl.v * ctl.ap.sgn; } }
+function runInTarget() { const c = liveCut(); if (!c) return null; const xs = vehPos(c).map(q => ptAt(q.pm.t, q.pm.d)[0]), fromS = !!ARRIVED_FROM && ARRIVED_FROM === (NII.TOWNS[HERE] || {}).south;
+  const tx = fromS ? Math.min(...xs) - 350 : Math.max(...xs) + 350; let best = null;
+  for (const t of Object.keys(T)) { if (!(T[t].cls === 'main' || /^M\d/.test(t))) continue; for (let d = 0; d <= T[t].len; d += 4) { const p = ptAt(t, d), e = Math.abs(p[0] - tx) + Math.abs(p[1]) * 3; if (!best || e < best.e) best = { t, d, e }; } } return best; }
+function crossStart(o) { S.crossT = null; crossAsk = null; PEND_CROSS = null; if (!liveCut()) return; const ed = edgeFor(o.to); if (!ed) { toast(`No way to ${NII.TOWNS[o.to] ? NII.TOWNS[o.to].name : o.to} from here yet.`, 'bad'); return; } S.mode = 'tap'; S.crossT = { t: ed.t, d: ed.d, edge: true, to: o.to, via: ed.via, x: o.x, y: o.y, label: o.label, run: o.run };
   if (!crossGo()) return; toast(`Heading to ${o.name} – ${o.label}.`); save(); }
 function crossGo() { const x = S.crossT; S.crossWait = false; if (!x) return false; if (!apTo(x.t, x.d)) { S.crossT = null; toast(x.edge ? "Can't get to the north end on the route as lined. Stopped." : `Can't reach the ${x.label} from here as lined. Throw the switches, then tap it again. Stopped at the edge.`, 'bad'); return false; } return true; }
 function crossDone() { const x = S.crossT; if (!x) return; S.crossT = null; if (x.edge) { crossAsk = { to: x.to, x: x.x, y: x.y, label: x.label }; askNorth(); } else toast('Arrived.'); }
-function crossTick() { const x = S.crossT; if (!x || ctl.ap) return; if (S.crossWait) { if (S.tower && S.tower.st === 'clear') crossGo(); return; } S.crossT = null; }
-function crossArrive() { const x = E.cross; if (!x || x.to !== 'effingham') return; delete E.cross; let best = null;
+function crossTick() { const c = liveCut();
+  if (SIG_WAIT && !ctl.ap && c) { if ((S.mode || 'drive') !== 'tap') SIG_WAIT = null; else if (signalAhead(c, SIG_WAIT.sgn) === Infinity) { const g = SIG_WAIT; SIG_WAIT = null; if (g.cross) { if (S.crossT) crossGo(); } else apTo(g.t, g.d, g.goal); return; } }
+  const x = S.crossT; if (!x || ctl.ap) return; if (S.crossWait) { if (SIG_WAIT && SIG_WAIT.cross) return; if (S.tower && S.tower.st === 'clear') crossGo(); return; } S.crossT = null; }
+function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV || 0; delete E.crossV;
+  if (x.to !== HERE) { delete E.cross; save(); if (ARRIVED_FROM && ARRIVED_FROM !== x.to && edgeFor(x.to) && liveCut()) { crossStart({ ...x, name: NII.TOWNS[x.to] ? NII.TOWNS[x.to].name : x.to, label: x.label || 'the main' }); if (S.crossT && crossGo()) carrySpeed(v0); } return; } // passing through to the next town
+  delete E.cross;
+  if (x.run || x.x == null) { if ((S.mode || 'drive') !== 'tap') { const mb = document.querySelector('[data-mode="tap"]'); if (mb && mb.onclick) mb.onclick(); else S.mode = 'tap'; } const t = runInTarget(); S.crossT = null; if (t && apTo(t.t, t.d)) { carrySpeed(v0); toast(`Rolling into ${NII.TOWNS[HERE].name}.`); } save(); return; }
+  let best = null;
   for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const p = ptAt(t, d), e = Math.hypot(p[0] - x.x, p[1] - x.y); if (!best || e < best.e) best = { t, d, e }; }
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Effingham map. Stopped at the edge.", 'bad'); return; }
-  S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) toast(`Continuing to ${x.label}.`); save(); }
+  S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('effingham', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
   <p style="font-size:13px">Customers: <b>Illini Grain</b>, <b>Burgess Building Supply</b>, <b>Effingham Iron &amp; Metal</b>, <b>Crossroads Propane</b>, <b>Midstate Glass</b>, and the <b>freight house</b> (house track). Cars come by the IC (down from Neoga) or the PC (set on the PC Interchange; leave PC cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
@@ -4028,10 +4064,85 @@ function crewSwapMidstate() {
   return notes;
 }
 
+// ================================================================= HIRED CREW WORK (Nov 13, clock sim)
+// A hired crew's finished piece of work, applied at once (no train is drawn). Called by the call sheet when the
+// piece finishes while you are in Effingham, and on load for work finished while you were away (pendingCrewWork / pendingIx).
+const EF_TRACK_NAME = { Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', PCX: 'PC Interchange', IX1: 'PC Interchange', IX2: 'PC Interchange', HT: 'House track', GLD: 'Illini Grain track', B1: 'Burgess lumber track', B2: 'Burgess materials track', IM: 'Iron & Metal track', PR: 'Propane rack', GS: 'Midstate sand track', GL: 'Midstate limestone track', GA: 'Midstate soda-ash track', GAC: 'Midstate soda-ash rack', GLC: 'Midstate limestone spots', GW: 'Midstate warehouse' };
+const efTrackName = t => EF_TRACK_NAME[t] || t;
+function efCrewTracks(key) { return [...new Set(SPOTS.filter(sp => sp.dest === key && T[sp.t]).map(sp => sp.t))]; }
+function efFreeSlot(tracks, L) { // first clear place (head end) for a car of length L
+  for (const t of tracks) { if (!T[t]) continue; for (let d = T[t].len - 6; d >= L + 6; d -= 12) { const probe = placeCut([{ type: 'boxcar50', L, dest: 'TMP' }], [true], t, d, 1); if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d }; } }
+  return null; }
+const carName = v => roadOf(v) + ' ' + v.num;
+const byAge = (a, b) => ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
+function efCrewCustomer(key) {
+  const notes = [], cars = () => standingCars(), name = DEST[key] ? DEST[key].name : key;
+  if (!ngOpen()) return [name + ': Effingham customers are closed until 100 reputation'];
+  const spots = SPOTS.filter(sp => sp.dest === key && T[sp.t] && sp.workActive !== false);
+  const spotTs = efCrewTracks(key);
+  if (key === 'EF GLASS') notes.push(...crewSwapMidstate()); // soda ash + limestone (the existing Midstate swap)
+  // pull released cars (work done, now billed out by the IC or PC) off the customer's tracks
+  for (const v of cars().filter(o => !o.live && spotTs.includes(o.pm.t) && o.v.doneAt && !DEST[o.v.dest]).map(o => o.v)) {
+    const o = cars().find(q => q.v === v); if (!o || o.live) continue; // fresh each time: an earlier move may have split its cut
+    const slot = efFreeSlot(YARD_TS, vL(o.v)) || yardOrLeadSlot();
+    if (!slot) { notes.push('no room in the yard to pull ' + carName(o.v)); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) notes.push(carName(o.v) + ' pulled from ' + name + ' to ' + efTrackName(slot.t));
+  }
+  // spot cars waiting in the yard, on the interchange, or on the customer's own tracks
+  const src = t => YARD_TS.includes(t) || EF_IX_TS.includes(t) || spotTs.includes(t) || GLASS_LEAD.includes(t);
+  const tried = new Set();
+  for (const sp of spots) {
+    for (let n = 0; n < (sp.cap || 1); n++) {
+      if (!spotHasRoom(sp, cars())) break;
+      const next = cars().filter(o => !o.live && !tried.has(o.v) && o.v.dest === key && !o.v.work && !o.v.doneAt && (!o.v.spotT || o.v.spotT === sp.t) && src(o.pm.t) && !carAtSpot(o.v, o.pm)).sort(byAge)[0];
+      if (!next) break;
+      tried.add(next.v);
+      const L = vL(next.v), len = T[sp.t].len, heads = [];
+      if ((sp.cap || 1) > 1 && sp.L) for (let h = Math.min(len - 0.5, sp.d + sp.L / 2); h - L >= sp.d - sp.L / 2 - 0.1; h -= L + 1) heads.push(h); // long spot (Burgess): fill from the far end
+      for (const off of [0, 3, -3, Math.max(0, (sp.tol || 4) - 0.3), -Math.max(0, (sp.tol || 4) - 0.3)]) heads.push(Math.min(len - 0.5, sp.d + off + L / 2)); // on the spot (within its tolerance), clear of a neighbour
+      let ok = false;
+      for (const h of heads) { if (moveStandingCar(next, sp.t, h)) { const q = cars().find(o => o.v === next.v); if (q && carAtSpot(next.v, q.pm)) { ok = true; break; } } }
+      const q = cars().find(o => o.v === next.v);
+      if (ok && q) { startWorkN(next.v, sp); notes.push(carName(next.v) + ' spotted at the ' + sp.name); }
+      else if (q && q.pm.t === sp.t) notes.push(carName(next.v) + ' set on the ' + efTrackName(sp.t) + ' (not on a spot)');
+      else notes.push('could not spot ' + carName(next.v) + ' at the ' + sp.name);
+    }
+  }
+  if (!notes.length) notes.push(name + ': nothing to switch');
+  return notes; }
+const EF_IX_TS = ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'];
+const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g.t));
+function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars for Effingham customers (or Mattoon) come off to the yard
+  const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
+  const fresh = v => standingCars().find(q => q.v === v && !q.live); // re-read each time: an earlier move may have split the cut
+  for (const v of standingCars().filter(o => !o.live && o.v.dest === 'PC-INT' && !onPcIx(o.c)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
+    const slot = efFreeSlot(ixTs, vL(o.v)); if (!slot) { notes.push('the PC Interchange is full: ' + carName(o.v) + ' stays'); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) nOut++; }
+  for (const v of standingCars().filter(o => !o.live && onPcIx(o.c) && (DEST[o.v.dest] || o.v.mattoonN)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
+    const slot = efFreeSlot(YARD_TS, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) nIn++; }
+  if (nOut) notes.unshift(`set ${nOut} car${nOut > 1 ? 's' : ''} out on the PC Interchange`);
+  if (nIn) notes.unshift(`pulled ${nIn} inbound car${nIn > 1 ? 's' : ''} off the PC Interchange to the yard`);
+  if (!nOut && !nIn && !notes.length) notes.push('PC Interchange: nothing to move');
+  return notes; }
+function efCrewWork(w) {
+  if (!w) return []; let r = [];
+  if (w.kind === 'industry') r = efCrewCustomer(w.customer);
+  else if (w.kind === 'localInterchange') r = efCrewPC();
+  else r = ['switched the Effingham yard'];
+  save(); return r; }
+function efApplyPendingCrew() { // work finished while you were away (queued by the call sheet), oldest first
+  if (VISIT || !S) return; const out = [];
+  const ix = (S.pendingIx || []).splice(0), cw = (S.pendingCrewWork || []).splice(0); delete S.pendingIx; delete S.pendingCrewWork;
+  if (ix.length) out.push(...efCrewPC());
+  for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...efCrewCustomer(k));
+  if (S.pendingCrewSwap && !cw.includes('EF GLASS')) { out.push(...crewSwapMidstate()); } S.pendingCrewSwap = 0; delete S.pendingYard;
+  if (out.length) { note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.'); save(); } }
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x));
   // Assigned-crew Midstate swap runs after overnight work so a released empty can come off and the next load can go on. No auto-move if no crew was sent.
   if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
+  try { if (window.NII_CALLSHEET) { bindCrewBoard(); const r = NII_CALLSHEET.runHired(Math.floor(t / 86400) + 1, next); if (r && r.lines) r.lines.forEach(m => note(m + '.')); } } catch (e) { }
   newDay(); save(); hideModal(); }
 function bindCrewBoard() {
   if (!window.NII_CALLSHEET) return;
@@ -4043,15 +4154,17 @@ function bindCrewBoard() {
     locoCons: () => null, locoOf: c => c && (c.veh || []).find(isLoco), cicDay: () => false, cicNext: () => 0,
     roadOf, TYPES: { gp9: { kind: 'loco', name: 'GP9' }, caboose: { kind: 'car' } },
     SI: {}, SEG: {}, YARD: {}, SPOTS: {}, ECON, FH: {}, NY: 6, ICI_N: 0, ICI_ROOM: 0,
-    env: () => NII.env(), myEngineId, claimEngine
+    env: () => NII.env(), myEngineId, claimEngine,
+    town: 'effingham', now: () => E.time, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); const cf = SH.crewFuel(d, 0, !!(locoV(liveCut()) && locoV(liveCut()).fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); left -= d; } },
+    applyWork: w => efCrewWork(w), tracksFor: k => efCrewTracks(k), yardTracks: () => YARD_TS.filter(t => T[t]), trackName: efTrackName
   });
 }
 function build() {
   for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
-  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div>`); } // Menu (Nov 1): Full screen, Industries, other towns
+  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div><div class="btns"><button data-a="namesToggle" class="${NAMES_ON ? 'red' : 'alt'}">Track names: ${NAMES_ON ? 'ON' : 'OFF'}</button><button data-a="waybills" class="alt">Waybills</button></div><div class="btns">${Object.keys(BFN).map(K => `<button data-a="bfOpen" data-k="${K}" class="alt">${BFNX.up(K) ? '&#9873; ' : ''}${BFN[K].short}</button>`).join('')}</div><div class="btns"><button data-a="resetAsk" class="red">&#8634; Restart from the beginning</button></div>`); } // Nov 13 (Stephen: every town's menu matches): Mattoon's track names, waybills, blue flags and restart // Menu (Nov 1): Full screen, Industries, other towns
   // Nov 3 (Stephen: "the screen should look the same as mattoon"): Mattoon's top bar, job bar, scene buttons and cab panel drive Effingham too
-  const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="route" id="rtBtn">Request route</button><button class="act" data-a="north">To Neoga</button><button class="act" data-a="endday">End day</button>');
-  { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
+  const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="endday">End day</button>'); // Nov 13 (Stephen): Request route and To Neoga removed; tap the tower, drive off the map edge, or use the map tabs
+  { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Go to another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
   $('restartBtn').onclick = () => { if (VISIT) { toast(NII.visitNote(), 'bad'); return; } showModal(SH.RESTART_HTML + '<div class="btns"><button data-a="close" class="alt">Cancel</button><button data-a="ngReset" class="red">Yes, restart</button></div>'); }; // same Restart as Mattoon: whole game back to day 1 in Mattoon
   $('jobbar').onclick = () => { if (!VISIT) showJobs(); }; $('mapBtn').onclick = () => openMap(); $('followBtn').onclick = () => { cam.follow = true; cam.z = zBase(); };
   $('tagsBtn').onclick = () => { S.tags = !S.tags; try { localStorage.setItem('nii-mattoon-tags', S.tags ? '1' : '0'); } catch (e) { } save(); }; $('uncBtn').onclick = () => setUncouple(!UNC_ON);
@@ -4063,7 +4176,7 @@ function build() {
   $('thrUp').onclick = () => { if (live()) { ctl.notch = Math.min(8, ctl.notch + 1); ctl.ap = null; cam.follow = true; } }; $('thrDn').onclick = () => { ctl.notch = Math.max(0, ctl.notch - 1); }; $('thrIdle').onclick = () => { ctl.notch = 0; };
   document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { ctl.brake = +b.dataset.brk; });
   $('sandBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; if (!ctl.sand && (l.sand ?? 60) <= 0) { toast('Sand boxes are empty.', 'bad'); return; } ctl.sand = !ctl.sand; };
-  $('stopBtn').onclick = () => { ctl.ap = null; if ((S.mode || 'drive') === 'tap') ctl.stopping = true; toast('Stopping.'); };
+  $('stopBtn').onclick = () => { ctl.ap = null; SIG_WAIT = null; PEND_CROSS = null; AP_GOAL = null; if ((S.mode || 'drive') === 'tap') ctl.stopping = true; toast('Stopping.'); };
   $('truckBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; book('fuel', TRUCK_COST); l.fuel = FUEL_CAP * 0.25; toast('Fuel truck came out: 200 gal.'); save(); };
   // pinch zoom on phones (Effingham's +/- buttons are gone with its old bar)
   { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
@@ -4071,7 +4184,7 @@ function build() {
     for (const t of ['pointerup', 'pointercancel']) cv.addEventListener(t, e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; }); }
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); bindCrewBoard(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); return; } const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'bfReq') { BFNX.request(b.dataset.k); bfPanelN(b.dataset.k); return; } if (a === 'bfOpen') { bfPanelN(b.dataset.k); return; }
-    if (a === 'close') hideModal(); else if (a === 'twReq') { requestNamedRoute(b.dataset.key, +b.dataset.dir); } else if (a === 'goN') { hideModal(); if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go(); }
+    if (a === 'close') hideModal(); else if (a === 'twReq') { requestNamedRoute(b.dataset.key, +b.dataset.dir); } else if (a === 'goN') { hideModal(); PEND_CROSS = null; if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go('neoga'); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
     else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'spotsToggle') { spotsOn = !spotsOn; try { localStorage.setItem('nii-mattoon-spots', spotsOn ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the interchange, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
@@ -4079,7 +4192,7 @@ function build() {
     else if (a === 'endGo') endDay(); else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
     else if (a === 'wb') { const v = standingCars().find(q => q.v.id === b.dataset.id); if (v) carModal(v); }
-    else if (a === 'makeEngine') { hideModal(); if (carModal.q) claimEngine(carModal.q.v.id); }
+    else if (a === 'namesToggle') { NAMES_ON = !NAMES_ON; try { localStorage.setItem('nii-mattoon-tracknames', NAMES_ON ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'waybills') showWaybillsN(); else if (a === 'resetAsk') { hideModal(); $('restartBtn').onclick(); } else if (a === 'makeEngine') { hideModal(); if (carModal.q) claimEngine(carModal.q.v.id); }
     else if (a === 'uncL' || a === 'uncR') { hideModal(); uncouple(carModal.q, a === 'uncL' ? 'L' : 'R'); }
     else if (a === 'apCar') { hideModal(); const q = carModal.q, e = (q.p0.d < q.p1.d) ? q.p0 : q.p1; apTo(q.pm.t, q.pm.d); } });
   // canvas: drag to pan, tap a stand to throw it, tap a car for its waybill, tap the track to run the engine there
@@ -4101,12 +4214,12 @@ function tap(X, Y) { if (VISIT) { if (HIT.stands.find(s => Math.hypot(s.x - X, s
   const car = HIT.cars.slice().reverse().find(h => X >= h.x0 && X <= h.x1 && Y >= h.y0 && Y <= h.y1); if (car) { const q = { ...car.q, c: S.cuts.find(c => c.veh.includes(car.q.v)) }; if (UNC_ON) { if (uncTap(q)) setUncouple(false); return; } carModal(q); return; }
   // track: nearest point within 12 px -> autopilot there
   let best = null; { const bk = ngOpen() && bfAtN(X, Y); if (bk) { let near = false; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len && !near; d += 2) { const [x, y] = ptAt(t, d); if (Math.hypot(sx(x) - X, sy(y) - Y) < (MOUSE ? 7 : 14)) near = true; } if (!near) { bfPanelN(bk); return; } } } for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const [x, y] = ptAt(t, d), e = Math.hypot(sx(x) - X, sy(y) - Y); if (e < (MOUSE ? 7 : 14) && (!best || e < best.e)) best = { t, d, e }; }
-  if (best && liveCut()) { if ((S.mode || 'drive') !== 'tap') { toast('Switch to Tap mode to send the engine by tapping. Tap a switch stand to throw it.'); return; } apTo(best.t, best.d); } }
+  if (best && liveCut()) { if ((S.mode || 'drive') !== 'tap') { toast('Switch to Tap mode to send the engine by tapping. Tap a switch stand to throw it.'); return; } if (edgeTap(best.t, best.d)) return; apTo(best.t, best.d); } }
 // ================================================================= LOOP
-let last = performance.now(), saveT = 0, mapT = 0, bfT = 0;
+let last = performance.now(), saveT = 0, mapT = 0, bfT = 0, csT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
-  for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
+  for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } if ((csT += dt) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
 build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
@@ -4136,5 +4249,6 @@ function migrateIndustrySpots() {
 }
 
 migrateIndustrySpots();
-window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efRequestNamed,requestNamedRoute,openTowerRequest,efXingLabel,twMenuState,twMenuPaint,twArt,ROUTE_CLEAR_ODDS,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+if (!VISIT) { try { bindCrewBoard(); } catch (e) { } try { efApplyPendingCrew(); } catch (e) { } }
+window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efRequestNamed,requestNamedRoute,openTowerRequest,efXingLabel,twMenuState,twMenuPaint,twArt,ROUTE_CLEAR_ODDS,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, efCrewWork, efCrewCustomer, efCrewPC, efApplyPendingCrew, efCrewTracks, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
