@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef107";</script>
+<script>window.NII_BUILD = "mw59ef108";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -296,7 +296,8 @@ function env() {
 // ---- Look around (Nov 1): a view-only visit to another town. The flag lives in sessionStorage, never in the save; during a visit nothing is written.
 const VKEY = 'nii-visit', XKEY = 'nii-visit-cross';
 let VISIT = null; try { const v = JSON.parse(sessionStorage.getItem(VKEY) || 'null'); if (v && TOWNS[v.town]) VISIT = v; } catch (e) { }
-function write() { if (VISIT) return; try { localStorage.setItem(KEY, JSON.stringify(ENV)); } catch (e) { } }
+let ENG_SEEN; // Nov 13 (Stephen): the town where the player last picked an engine, for the 'your engine is in' note
+function write() { if (VISIT) return; try { if (ENV && ENG_SEEN !== undefined && ENV.myEngine !== ENG_SEEN) { ENV.myEngineTown = ENV.myEngine ? ENV.town : null; } if (ENV) ENG_SEEN = ENV.myEngine || null; localStorage.setItem(KEY, JSON.stringify(ENV)); } catch (e) { } }
 function runInfo(from, to) { const T = TOWNS[from], mi = T.south === to ? T.southMi : T.northMi, sec = Math.round(mi / RUN_MPH * 3600); return { mi, mph: RUN_MPH, sec, min: Math.round(sec / 60) }; }
 // ---- loading screen
 let prog = 0, progTo = 0, progAnim = null;
@@ -307,7 +308,8 @@ function showLoading(title, sub, info) { const L = $('loading'); L.classList.add
 function hideLoading() { setProg(1, 250); setTimeout(() => $('loading').classList.remove('show'), 320); }
 function fail(msg) { $('ldSub').textContent = ''; $('ldInfo').innerHTML = msg; $('loading').classList.add('fail'); }
 const travelText = (from, to) => { const r = runInfo(from, to); return `${TOWNS[from].name} to ${TOWNS[to].name}: ${r.mi} mi at ${r.mph} mph, ${r.min} min`; };
-function travel(from, to, train) { if (VISIT) return; const e = env(), mt = e.towns.mattoon; e.town = to; e.trainIn = train; e.travel = { from, to };
+function travel(from, to, train) { if (VISIT) return; const e = env(), mt = e.towns.mattoon; e.town = to; e.trainIn = train; e.travel = { from, to }; delete e.jump;
+  if (e.myEngine && (train || []).some(v => v && v.id === e.myEngine)) { e.myEngineTown = to; ENG_SEEN = e.myEngine; }
   if (from === 'mattoon') e.time = mt.time; else e.time = (e.time || mt.time) + runInfo(from, to).sec;
   write(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
   setTimeout(() => location.reload(), 1700); }
@@ -342,7 +344,7 @@ function industries() { const m = document.getElementById('modal'), bg = documen
 document.addEventListener('click', e => { if (e.target.closest('[data-nm="close"],[data-act="close"],[data-a="close"]')) { const m = document.getElementById('modal'); if (m) m.classList.remove('ind'); } }, true);
 // shared Menu (Neoga + visit mode); Mattoon's own Menu carries the same entries
 function sharedMenu(extra) { const m = document.getElementById('modal'), bg = document.getElementById('modalBg'); if (!m || !bg) return;
-  m.innerHTML = `<h2>Menu</h2>${extra || ''}<div class="btns"><button data-nm="fs" data-fs>${FS.label()}</button><button data-nm="ind" class="alt">Industries</button></div><div class="btns">${VISIT ? '' : '<button data-nm="towns" class="alt">Look at another town</button>'}<button data-nm="close">Back to game</button></div>`; bg.classList.add('show'); }
+  m.innerHTML = `<h2>Menu</h2>${extra || ''}<div class="btns"><button data-nm="fs" data-fs>${FS.label()}</button><button data-nm="ind" class="alt">Industries</button></div><div class="btns">${VISIT ? '' : '<button data-nm="towns" class="alt">Go to another town</button>'}<button data-nm="close">Back to game</button></div>`; bg.classList.add('show'); }
 document.addEventListener('click', e => { const b = e.target.closest('[data-nm]'); if (!b) return; const a = b.dataset.nm, bg = document.getElementById('modalBg');
   if (a === 'fs') FS.toggle(); else if (a === 'ind') industries(); else if (a === 'towns') { bg.classList.remove('show'); pickTown(); } else if (a === 'close') bg.classList.remove('show'); });
 // perf (Nov 1): the HUD is rewritten every frame; inside NII.quiet() a write of the same text/markup/class/title is skipped,
@@ -424,25 +426,47 @@ function selectTab(id) { if (!TOWNS[id]) return; if (MT.sel !== id) MT.vw = { k:
 const mapTabs = { show: showTabs, hide: hideTabs, select: selectTab, repaint: paintTab, get sel() { return MT.sel; }, put: putSnap, snap: snapOf, draw: drawSnap };
 // town picker + visit banner
 let onLeave = null; // the running town's save, called before a visit starts
-function goVisit(id) { if (VISIT) { if (id === VISIT.home) return backToTrain(); sessionStorage.setItem(VKEY, JSON.stringify({ town: id, home: VISIT.home })); }
-  else { if (id === env().town) return closePick(); try { onLeave && onLeave(); } catch (e) { } sessionStorage.setItem(VKEY, JSON.stringify({ town: id, home: env().town })); }
-  showLoading(TOWNS[id].name, 'Looking around', `Just looking: your train stays in ${TOWNS[VISIT ? VISIT.home : env().town].name}`); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 350); }
+// Nov 13 (Stephen): the Towns button takes you to that town for a full session (call its crews, tags, pick an engine there), not a view-only look
+function goVisit(id) { sessionStorage.removeItem(VKEY); const e = env(), from = e.town; if (!TOWNS[id] || id === from) return closePick(); try { onLeave && onLeave(); } catch (er) { }
+  const e2 = env(); e2.town = id; delete e2.trainIn; delete e2.travel; e2.jump = { from, to: id }; write(); closePick(); try { const u = new URL(location.href); if (u.searchParams.has('town')) { u.searchParams.delete('town'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (er) { } // a test ?town= would pin the old town
+  showLoading(TOWNS[id].name, `Going to ${TOWNS[id].name}`, ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 350); }
 function backToTrain(cross) { sessionStorage.removeItem(VKEY); if (cross) sessionStorage.setItem(XKEY, JSON.stringify(cross)); const h = TOWNS[env().town];
   showLoading(h.name, 'Back to your train', ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 250); }
 function takeCross() { try { const x = JSON.parse(sessionStorage.getItem(XKEY) || 'null'); sessionStorage.removeItem(XKEY); return VISIT ? null : x; } catch (e) { return null; } }
 function closePick() { const p = $('townPick'); if (p) p.remove(); }
 function pickTown() { closePick(); const home = VISIT ? VISIT.home : env().town, here = VISIT ? VISIT.town : home, el = document.createElement('div'); el.id = 'townPick';
-  el.innerHTML = `<div class="tpBox"><h2>Look around</h2><p>Look at another town without taking the train there. Nothing changes while you look.</p>${Object.entries(TOWNS).filter(([, t]) => !t.hidden).map(([k, t]) =>
-    `<button data-tp="${k}" class="${k === here ? 'here' : ''}">${k === home ? `${t.name}: your train${k === here ? ' (here)' : ''}` : `Look at ${t.name}${k === here ? ' (here)' : ''}`}</button>`).join('')}<button data-tp="" class="alt">Close</button></div>`;
+  el.innerHTML = `<div class="tpBox"><h2>Towns</h2><p>Go to another town. You can run its engines (tap one to make it yours), call the crews based there, and use car tags. Your train stays where you left it.</p>${Object.entries(TOWNS).filter(([k, t]) => !t.hidden || k === here).map(([k, t]) =>
+    `<button data-tp="${k}" class="${k === here ? 'here' : ''}">${k === here ? `${t.name} (you are here)` : `Go to ${t.name}`}${env().myEngine && env().myEngineTown === k ? ' · your engine' : ''}</button>`).join('')}<button data-tp="" class="alt">Close</button></div>`;
   document.body.appendChild(el); el.addEventListener('click', ev => { const b = ev.target.closest('[data-tp]'); if (ev.target === el) return closePick(); if (!b) return; const id = b.dataset.tp; if (!id || id === here) return closePick(); goVisit(id); }); }
-function visitBanner() { if (!VISIT) return; document.body.classList.add('visit'); const b = document.createElement('div'); b.id = 'visitBar';
+function engineNote() { const e = env(), w = e.myEngine && e.myEngineTown; if (!w || w === e.town || !TOWNS[w] || $('engNote')) return; const b = document.createElement('div'); b.id = 'engNote';
+  b.style.cssText = 'position:fixed;left:8px;bottom:26px;z-index:48;background:rgba(27,42,74,.92);color:#fff;font:600 12px/1.2 sans-serif;padding:5px 6px 5px 10px;border-radius:14px;display:flex;gap:8px;align-items:center;box-shadow:0 2px 6px rgba(0,0,0,.25)';
+  b.innerHTML = `<span>Your engine is in ${TOWNS[w].name}</span><button data-en="go" style="font:600 11px sans-serif;padding:3px 8px;border-radius:10px;border:0;background:#f0a030;color:#1b2a4a">Go there</button><button data-en="x" aria-label="Hide" style="font:700 12px sans-serif;padding:2px 7px;border-radius:10px;border:0;background:rgba(255,255,255,.2);color:#fff">×</button>`;
+  document.body.appendChild(b); b.addEventListener('click', ev => { const t = ev.target.closest('[data-en]'); if (!t) return; b.remove(); if (t.dataset.en === 'go') goVisit(w); }); }
+function visitBanner() { engineNote(); if (!VISIT) return; document.body.classList.add('visit'); const b = document.createElement('div'); b.id = 'visitBar';
   b.innerHTML = `<span>Looking at ${TOWNS[VISIT.town].name}, your train is in ${TOWNS[VISIT.home].name}</span><button data-vb="towns" class="alt">Towns</button><button data-vb="menu" class="alt">Menu</button><button data-vb="back">Back to my train</button>`;
   document.body.appendChild(b); b.addEventListener('click', e => { const t = e.target.closest('[data-vb]'); if (!t) return; if (t.dataset.vb === 'back') backToTrain(); else if (t.dataset.vb === 'menu') sharedMenu(); else pickTown(); }); }
 const visitNote = () => `View only. Your train is in ${TOWNS[VISIT.home].name}.`;
+// Nov 13 (Stephen): "no way to tuck the menu" on a phone in full screen. A small tab on the left edge hides the top bar, job bar, scene buttons and
+// cab panel so the scene fills the screen; tap it again to bring them back. Popups (#modalBg, z 50) sit above it and still show. Remembered for this browser session.
+const TUCK_KEY = 'nii-tucked';
+function setTuck(on) { document.body.classList.toggle('tucked', !!on); try { sessionStorage.setItem(TUCK_KEY, on ? '1' : '0'); } catch (e) { }
+  const t = $('tuckTab'); if (t) { t.textContent = on ? '›' : '‹'; t.setAttribute('aria-label', on ? 'Show the menus' : 'Hide the menus'); t.title = on ? 'Show the menus' : 'Hide the menus'; t.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 30); }
+function tuckTab() { if ($('tuckTab')) return;
+  const st = document.createElement('style'); st.id = 'tuckCss';
+  st.textContent = 'body.tucked #app{grid-template-columns:100%!important;grid-template-rows:1fr!important;grid-template-areas:"scene"!important}'
+    + 'body.tucked #top,body.tucked #jobbar,body.tucked #panel,body.tucked #sceneBtns,body.tucked #townTabs{display:none!important}'
+    + '#tuckTab{position:fixed;left:env(safe-area-inset-left);top:50%;transform:translateY(-50%);z-index:45;width:20px;height:46px;padding:0;border:1px solid rgba(28,43,80,.35);border-left:0;border-radius:0 10px 10px 0;background:rgba(255,255,255,.72);color:#1c2b50;font:700 18px/1 sans-serif;opacity:.8;box-shadow:0 1px 4px rgba(0,0,0,.2)}'
+    + '#tuckTab:active{opacity:1}body.tucked #tuckTab{background:rgba(28,43,80,.75);color:#fff}';
+  document.head.appendChild(st);
+  const b = document.createElement('button'); b.id = 'tuckTab'; b.type = 'button'; document.body.appendChild(b);
+  b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); setTuck(!document.body.classList.contains('tucked')); });
+  let on = false; try { on = sessionStorage.getItem(TUCK_KEY) === '1'; } catch (e) { } setTuck(on); }
 // ---- boot
 (function boot() {
   const bg = new Image(); bg.onload = () => { $('loading').style.backgroundImage = `url(${bg.src})`; $('loading').classList.add('pic'); }; bg.src = 'loading/loading-scene.png'; // Danny's picture when it's there; plain screen otherwise
-  if (VISIT && VISIT.town === env().town) { sessionStorage.removeItem(VKEY); VISIT = null; } // the train is here: not a visit
+  if (VISIT) { sessionStorage.removeItem(VKEY); VISIT = null; } // Nov 13: no view-only visits any more (Towns = a full session)
+  ENG_SEEN = env().myEngine || null;
   if (VISIT) VISIT.home = env().town;
   const e = env(), TID = VISIT ? VISIT.town : e.town, T = TOWNS[TID];
   if (VISIT) { showLoading(T.name, 'Looking around', `Your train is in ${TOWNS[VISIT.home].name}`); setProg(0.5, 600); }
@@ -450,7 +474,7 @@ const visitNote = () => `View only. Your train is in ${TOWNS[VISIT.home].name}.`
   else { showLoading(T.name, 'NI&I short line, 1975', 'Loading the railroad…'); setProg(0.5, 900); }
   const t0 = Date.now(), minMs = e.travel ? 900 : 300;
   loadScript('core.js').then(() => { setProg(0.85, 400); return loadScript(T.pack); }).then(() => {
-    setTimeout(() => { try { if (TID === 'mattoon') window.NII_ENGINE(); else (window.NII_TOWNS && window.NII_TOWNS[TID] || window.NII_TOWN_STUB)(window.NII); visitBanner(); hideLoading(); } catch (err) { fail('The game hit an error while starting: ' + String(err && err.message || err).replace(/</g, '&lt;')); throw err; } }, Math.max(0, minMs - (Date.now() - t0)));
+    setTimeout(() => { try { if (TID === 'mattoon') window.NII_ENGINE(); else (window.NII_TOWNS && window.NII_TOWNS[TID] || window.NII_TOWN_STUB)(window.NII); visitBanner(); try { tuckTab(); } catch (e) { } hideLoading(); } catch (err) { fail('The game hit an error while starting: ' + String(err && err.message || err).replace(/</g, '&lt;')); throw err; } }, Math.max(0, minMs - (Date.now() - t0)));
   }).catch(err => fail(`Couldn't load <b>${err.message}</b>.` + (location.protocol === 'file:' ? '<br>Opened as a file: keep core.js and the towns folder next to index.html, or play at <a href="https://stevo3107.github.io/mattoon-game/">stevo3107.github.io/mattoon-game</a>.' : '<br>Check the connection and reload the page.')));
 })();
 if (TEST) { const mark = () => { if (!document.body) return setTimeout(mark, 200); if (document.getElementById('testMark')) return; // Nov 5 fix: a corner overlay, outside the top bar (it used to push the Menu button off a phone screen)

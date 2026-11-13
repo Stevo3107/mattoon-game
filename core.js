@@ -1515,17 +1515,20 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function firstAvailable(start) {
     const C = R();
     return (st().crews || []).filter(function (c) {
-      return !busyToday(c.id, null) && !C.callBlockReason(c, { start: start || 'mattoon', tieUp: start || 'mattoon', work: [] }, st().time, 1);
+      return !busyToday(c.id, null) && !C.callBlockReason(c, { start: start || 'mattoon', tieUp: start || 'mattoon', work: [] }, nowT(), 1);
     })[0] || null;
   }
   function blankDraft() {
-    const locos0 = locos(), crew = firstAvailable('mattoon');
+    // Nov 13 (Stephen): the sheet opens on the town you are in when a crew based there can take it (crews are only called where they are based)
+    const h0 = hereTown(), here0 = h0 !== 'mattoon' && firstAvailable(h0) ? h0 : 'mattoon';
+    const locos0 = locos(), crew = firstAvailable(here0);
     return {
-      symbol: '', type: 'local', start: 'mattoon', tieUp: 'mattoon',
+      symbol: '', type: 'local', start: here0, tieUp: here0,
       crewId: crew ? crew.id : null,
       engines: locos0[0] ? [locos0[0].id] : [],
       interchanges: [], industries: [], classify: [], buildTrack: 'YARD 5', buildOrder: [],
-      stops: [], stopAct: 'setout', stopTrack: '', yardTab: 'classify', crewOpen: false
+      stops: [], stopAct: 'setout', stopTrack: '', yardTab: 'classify', crewOpen: false,
+      startAt: dutySlots()[0]
     };
   }
   function defaultSymbol(d) {
@@ -1563,7 +1566,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     return {
       type: d.type, symbol: (d.symbol || '').trim() || defaultSymbol(d),
-      start: d.start, tieUp: d.tieUp, work: work, engines: (d.engines || []).slice(), mode: 'hire'
+      start: d.start, tieUp: d.tieUp, work: work, engines: (d.engines || []).slice(), mode: 'hire',
+      startAt: d.startAt != null ? +d.startAt : dutySlots()[0]
     };
   }
 
@@ -1615,7 +1619,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!crew) return 'No crew assigned.';
     if (pendingTie(crew.id)) return crew.name + ' has to tie up first (bunkhouse or taxi).';
     if (busyToday(crew.id, exceptCallId)) return crew.name + ' is already called for another job today.';
-    return R().callBlockReason(crew, job, st().time, freeCabooses(exceptCallId));
+    return R().callBlockReason(crew, job, nowT(), freeCabooses(exceptCallId));
   }
   function crewStatus(crew, job, exceptCallId) {
     if (crew.status === 'off') return { state: 'off', label: 'Off' };
@@ -1623,7 +1627,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (pendingTie(crew.id)) return { state: 'busy', label: 'Tying up' };
     if (busyToday(crew.id, exceptCallId)) return { state: 'busy', label: 'On a call' };
     if (job && crew.location && job.start && crew.location !== job.start) return { state: 'busy', label: 'At ' + townName(crew.location) };
-    const r = R().callBlockReason(crew, { start: crew.location, tieUp: crew.location, work: [] }, st().time, 1);
+    const r = R().callBlockReason(crew, { start: crew.location, tieUp: crew.location, work: [] }, nowT(), 1);
     if (r) return { state: 'busy', label: 'Resting' };
     return { state: 'available', label: 'Available' };
   }
@@ -1952,7 +1956,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '<div class="cs-jp">' + esc(jobPlaces(c)) + '</div>';
       if (crew) {
         h += '<div class="cs-jcrew"><span data-cs="roster" data-crew="' + esc(crew.id) + '">' + face(leadOf(crew), 'thumb', 'cs-th') + '</span><span class="cs-rt"><b>' + esc(crew.name) + '</b> called · ' + esc(crewSub(crew)) +
-          '<small>' + esc((c.est && c.est.label) || '') + (c.est && c.est.hogRisk ? ' · past the 12-hour mark' : '') + ' · works when you end the day</small></span></div>';
+          '<small>' + esc((c.est && c.est.label) || '') + (c.est && c.est.hogRisk ? ' · past the 12-hour mark' : '') + '</small></span></div>' + simCardHtml(c);
       } else if (mine) {
         h += '<div class="cs-jcrew"><span class="cs-rt"><b>You took this job.</b><small>Run it yourself — no hired crew will move these cars.</small></span></div>';
       }
@@ -1961,7 +1965,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '</div>';
       if (open) h += dropHtml(c, c.crewId, 'pick-call', c.id, false) + '<div style="height:8px"></div>';
     });
-    h += '<p class="cs-note">Hired work is done when you end the day — you won\'t see them switch. Tap a face to see the whole crew.</p>';
+    h += '<p class="cs-note">A hired crew goes on duty at its call time and works on the game clock. You won\'t see them switch: their cars show up as each piece of work finishes. Tap a face to see the whole crew.</p>';
     h += '<div class="cs-foot"><button data-act="close" class="alt">Back to game</button></div>';
     render(h, keep);
   }
@@ -2095,6 +2099,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const Ls = locos();
     h += Ls.length ? '<div class="cs-chips">' + Ls.map(function (v) { return '<button class="cs-chip' + (d.engines.indexOf(v.id) >= 0 ? ' on' : '') + '" data-cs="tog-eng" data-id="' + esc(v.id) + '">' + esc(locoName(v)) + '</button>'; }).join('') + '</div>' : '<p class="cs-note">No engine on the roster.</p>';
     h += '<div class="cs-2"><div>' + lab('On-duty / start') + selectHtml('start', d.start, bases()) + '</div><div>' + lab('Tie-up / stop') + selectHtml('tieUp', d.tieUp, bases()) + '</div></div>';
+    h += lab('On-duty time', 'game clock') + '<select class="cs-f" data-cs-field="startAt">' + dutySlots().map(function (t) { return '<option value="' + t + '"' + (+d.startAt === t ? ' selected' : '') + '>' + esc(clockStr(t)) + '</option>'; }).join('') + '</select>' +
+      '<p class="cs-hint">The crew goes on duty at this time and works on the game clock. Their cars show up as each piece of work finishes.</p>';
     h += lab('Work type') + seg('type', d.type, [['yard', 'Yard'], ['local', 'Local'], ['road', 'Road']]);
     if (d.type === 'yard') h += yardHtml(d);
     else if (d.type === 'local') {
@@ -2126,6 +2132,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (reason) { G.toast(reason, 'bad'); paintEst(); return; }
     }
     job.day = G.dayNo();
+    if (job.startAt == null || job.startAt < nowT()) job.startAt = Math.max(nowT(), dutySlots()[0] || nowT());
     job.order = (st().calls.filter(function (c) { return c.day === job.day; }).length) + 1;
     job.id = 'call' + (st().crewSeq++);
     job.mode = crew ? 'hire' : 'posted';
@@ -2149,9 +2156,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function callCrewOnJob(callId, crewId) {
     const C = R(), c = callFor(callId);
     if (!c) return;
+    if (onDuty(c)) { G.toast(c.symbol + ' is already on duty. Change it after they tie up.', 'bad'); return; }
     if (!crewId) { delete c.crewId; delete c.est; c.mode = 'posted'; G.save(); dropFor = null; showList(true); return; }
     const crew = crewById(crewId);
     if (crew && c.crewId === crew.id) { dropFor = null; showList(true); return; }
+    if (c.startAt == null || c.startAt < nowT()) c.startAt = nowT();
     const reason = crewBlock(crew, c, c.id);
     if (reason) { G.toast(reason, 'bad'); return; }
     c.crewId = crew.id;
@@ -2164,6 +2173,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function takeJob(callId) {
     const c = callFor(callId); if (!c) return;
+    if (onDuty(c)) { G.toast(c.symbol + ' is already on duty.', 'bad'); return; }
     if (c.mode === 'player') c.mode = 'posted';
     else { c.mode = 'player'; delete c.crewId; delete c.est; }
     G.save();
@@ -2173,6 +2183,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
 
   function delCall(id) {
     const s = st();
+    if (onDuty(callFor(id))) { G.toast('That crew is on duty. You can remove the job after they tie up.', 'bad'); return; }
     s.calls = (s.calls || []).filter(function (c) { return c.id !== id; });
     if (dropFor === id) dropFor = null;
     G.save();
@@ -2428,13 +2439,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return { finished: true, location: job.tieUp, done: done, remaining: [] };
   }
 
-  function runOne(job, day) {
-    const C = R(), crew = crewById(job.crewId), notes = [];
-    if (!crew) return { notes: ['No crew on ' + (job.symbol || 'a call') + '.'], pay: 0 };
-    const est = C.estimateJob(job, crew, { yardJobRan: yardJobCalled(day) });
-    const prog = progressFor(job, est, crew);
-    const hog = C.hogOut(job, prog, Math.max(est.hours, prog.finished ? est.hours : C.HOS.ON_DUTY_H));
-    const doneSet = prog.done || [];
+  // the car moves for a set of finished work (road pickups / setouts carry cars between pieces)
+  function applyDoneSet(job, doneSet, day) {
+    const C = R(), notes = [];
     let lifted = [];
     const pickDone = doneSet.some(function (w) { return w.kind === 'pickup' && (w.track === 'NWI' || w.track === 'NW-INT'); });
     const setoutMattoon = doneSet.filter(function (w) {
@@ -2466,6 +2473,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       notes.push('set out ' + r.placed.length + ' car' + (r.placed.length === 1 ? '' : 's') + ' on ' + dest + (land.autoSpotInterchange ? '' : ' (not spotted to an interchange)'));
       if (r.left.length) notes.push(r.left.length + ' car' + (r.left.length === 1 ? '' : 's') + ' could not fit');
     }
+    return { notes: notes, lifted: lifted };
+  }
+  function runOne(job, day) {
+    const C = R(), crew = crewById(job.crewId);
+    if (!crew) return { notes: ['No crew on ' + (job.symbol || 'a call') + '.'], pay: 0 };
+    const est = C.estimateJob(job, crew, { yardJobRan: yardJobCalled(day) });
+    const prog = progressFor(job, est, crew);
+    const hog = C.hogOut(job, prog, Math.max(est.hours, prog.finished ? est.hours : C.HOS.ON_DUTY_H));
+    const doneSet = prog.done || [];
+    const notes = applyDoneSet(job, doneSet, day).notes;
     if (hog.hoggedOut) notes.push(crew.name + ' hogged out at ' + townName(hog.trainStaysAt) + ' — ' + hog.note);
     const hours = Math.min(est.hours, C.HOS.ON_DUTY_H);
     const pay = C.payForCall(crew, hours, G.ECON && G.ECON.CREW_HR);
@@ -2483,26 +2500,385 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return { notes: notes, pay: pay, assigned: doneSet.filter(function (w) { return w.kind === 'industry'; }).map(function (w) { return w.customer; }) };
   }
 
-  function runHired(day) {
+  // ================================================================ CLOCK SIM (Nov 13, Stephen)
+  // Each hired call has an on-duty time (c.startAt, game seconds). At that time the crew goes on duty and claims the
+  // tracks its work will use. It works its pieces in order (each customer, yard job, interchange), each with an
+  // estimate from Cassie's estimateJob (road + switching). When a piece finishes its cars move at once and its tracks
+  // are released. No train is drawn: the work just shows up. At 12 hours on duty the crew ties up with the rest
+  // unfinished. Work in a town you are not in is queued and applied when that town is loaded.
+  let simBusy = false, blk = null, pendingLeave = null, chipT = 0;
+  function nowT() { try { if (G && G.now) { const t = G.now(); if (t != null && isFinite(t)) return t; } } catch (e) { } return (st() && st().time) || 0; }
+  function hereTown() { return (G && G.town) || 'mattoon'; }
+  function visiting() { try { return !!(typeof window !== 'undefined' && window.NII && NII.visit); } catch (e) { return false; } }
+  function clockStr(t) { const m = Math.floor((((t || 0) % 86400) + 86400) % 86400 / 60); return (Math.floor(m / 60) % 12 || 12) + ':' + String(m % 60).padStart(2, '0') + ' ' + (m < 720 ? 'AM' : 'PM'); }
+  function dutySlots() {
+    const now = nowT(), first = Math.ceil((now + 60) / 1800) * 1800, end = (Math.floor(now / 86400) + 1) * 86400 - 1800, out = [];
+    for (let t = first; t <= end; t += 1800) out.push(t);
+    if (!out.length) out.push(first);
+    return out;
+  }
+  function onDuty(c) { return !!(c && c.sim && !c.sim.finished); }
+  function activeSims() { return (st().calls || []).filter(function (c) { return onDuty(c); }); }
+  const EF_TRACKS = { 'EF HOUSE': ['HT'], 'EF GRAIN': ['GLD'], 'EF BURGESS': ['B1', 'B2'], 'EF SCRAP': ['IM'], 'EF PROPANE': ['PR'], 'EF GLASS': ['GS', 'GL', 'GA', 'GAC', 'GLC', 'GW'] };
+  const NG_TRACKS = { 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] }; // Nov 13: Neoga claims, same rules as the other towns
+  function efYard() { try { if (G && G.yardTracks) return G.yardTracks(); } catch (e) { } return ['Y1', 'Y2', 'Y3', 'Y4']; }
+  function efTracks(key) { try { if (G && G.tracksFor) { const t = G.tracksFor(key); if (t && t.length) return t; } } catch (e) { } return (EF_TRACKS[key] || []).slice(); }
+  function applyCtx(p) { return p.town === 'effingham' ? 'effingham' : p.town === 'neoga' ? 'any' : 'mattoon'; }
+  function placeOf(w, town) {
+    if (!w) return 'the run to ' + townName(town);
+    if (w.kind === 'industry') return custName(w.customer);
+    if (w.kind === 'localInterchange') { const ix = ixOfWork(w); return (ix ? ix.name : 'the interchange') + ' at ' + townName(ix ? ix.town : town); }
+    if (w.kind === 'classify' || w.kind === 'buildLocal') return 'the ' + townName(town) + ' yard';
+    if (w.kind === 'pickup' || w.kind === 'setout') return trackLabel(w.track);
+    return townName(town);
+  }
+  function planPieces(job, crew) {
+    const C = R(), out = [], ctx = { yardJobRan: yardJobCalled(job.day, job) };
+    if (job.type === 'road') {
+      const e = C.estimateJob(job, crew, ctx);
+      out.push({ kind: 'road', town: job.start, dur: Math.max(600, e.seconds), place: 'its road run (' + routeText(job) + ')' });
+      return out;
+    }
+    let loc = job.start;
+    (job.work || []).forEach(function (w, i) {
+      const town = C.workTown(w) || loc;
+      const e = C.estimateJob({ type: job.type, start: loc, tieUp: town, work: [w] }, crew, ctx);
+      out.push({ i: i, town: town, dur: Math.max(300, e.seconds), place: placeOf(w, town) });
+      loc = town;
+    });
+    if (job.tieUp && job.tieUp !== loc) {
+      const e = C.estimateJob({ type: job.type, start: loc, tieUp: job.tieUp, work: [] }, crew, ctx);
+      out.push({ travel: true, town: job.tieUp, dur: Math.max(300, e.seconds), place: 'the run to ' + townName(job.tieUp) });
+    }
+    if (!out.length) out.push({ travel: true, town: job.start, dur: 900, place: 'the job briefing' });
+    return out;
+  }
+  function yardClaim(w) {
+    const out = [w.track];
+    if (hereTown() !== 'mattoon') return out;
+    yardTracks().forEach(function (t) {
+      if (out.indexOf(t) >= 0) return;
+      const has = Object.values(st().veh).some(function (v) {
+        if (!isFreight(v) || onPlayer(v) || !atTrack(v, t)) return false;
+        if (w.kind === 'classify') return (!w.dest || v.dest === w.dest) && (!w.carType || matchType(v, w.carType));
+        return (w.order || []).indexOf(v.dest) >= 0;
+      });
+      if (has) out.push(t);
+    });
+    return out;
+  }
+  function pieceTracks(c, p) {
+    if (p.tracks) return p.tracks;
+    const w = p.i != null ? (c.work || [])[p.i] : null;
+    let t = [], cache = false;
+    if (p.kind === 'road') t = (c.work || []).map(function (x) { return x.track; }).filter(function (x) { return x && trackSeg && (R().trackInfo(x) || {}).town === 'mattoon'; });
+    else if (!w) t = [];
+    else if (w.kind === 'industry') { t = p.town === 'effingham' ? efTracks(w.customer) : p.town === 'neoga' ? (NG_TRACKS[w.customer] || [w.customer]).slice() : [w.customer]; cache = p.town === hereTown(); }
+    else if (w.kind === 'localInterchange') { const ix = ixOfWork(w); t = !ix ? [] : ix.id === 'mattoon-ic' ? ['IC Inbound', 'IC Outbound'] : (ix.tracks || []).slice(); }
+    else if (w.kind === 'classify' || w.kind === 'buildLocal') { t = p.town === 'effingham' ? efYard() : yardClaim(w); cache = p.town === hereTown(); }
+    if (cache) p.tracks = t;
+    return t;
+  }
+  function keyMatch(tk, key) {
+    if (typeof key === 'number') { const g = trackSeg(tk); return !!(g && g.s === key); }
+    return tk === key;
+  }
+  // { c, k, p } for the crew that holds this track in this town, or null
+  function claimOf(town, key) {
+    const list = activeSims();
+    for (let n = 0; n < list.length; n++) {
+      const c = list[n], s = c.sim;
+      if (s.paused) continue;
+      for (let k = s.k; k < s.pieces.length; k++) {
+        const p = s.pieces[k];
+        if (p.town !== town || p.travel) continue;
+        const ts = pieceTracks(c, p);
+        for (let j = 0; j < ts.length; j++) if (keyMatch(ts[j], key)) return { c: c, k: k, p: p, track: ts[j] };
+      }
+    }
+    return null;
+  }
+  function claimedKeys(town) {
+    const out = [];
+    activeSims().forEach(function (c) {
+      if (c.sim.paused) return;
+      for (let k = c.sim.k; k < c.sim.pieces.length; k++) { const p = c.sim.pieces[k]; if (p.town === town && !p.travel) pieceTracks(c, p).forEach(function (t) { if (out.indexOf(t) < 0) out.push(t); }); }
+    });
+    return out;
+  }
+  function tName(town, t) { if (town !== 'mattoon') { try { if (G && G.trackName) return G.trackName(t); } catch (e) { } return t; } return trackLabel(t) === 'HOUSE' ? 'Freight house track' : (R().trackInfo(t) || {}).label || trackLabel(t); }
+  function leftUntil(c, k) { const s = c.sim; let sec = s.left; for (let j = s.k + 1; j <= k && j < s.pieces.length; j++) sec += s.pieces[j].dur; return sec; }
+
+  function goOnDuty(c, t) {
+    const crew = crewById(c.crewId);
+    if (!crew) { c.sim = { finished: true, on: t, endAt: t, pieces: [], done: [], notes: ['no crew'] }; return; }
+    const pieces = planPieces(c, crew);
+    c.sim = { on: t, last: t, k: 0, left: pieces[0].dur, pieces: pieces, paused: false, pausedSec: 0, done: [], notes: [], loc: c.start, finished: false };
+    crew.status = 'onDuty';
+    pieces.forEach(function (p) { if (p.town === hereTown()) pieceTracks(c, p); });
+    if (!visiting()) G.toast(c.symbol + ' (' + crew.name + ') on duty at ' + clockStr(t) + '.', 'good');
+  }
+  // the actual car moves for one finished piece, in the town that is loaded
+  function doWork(c, w, day) {
+    if (w.kind === 'localInterchange') return runLocalIx(day, w);
+    if (w.kind === 'classify') return [runClassify(w)];
+    if (w.kind === 'buildLocal') return [runBuild(w)];
+    if (w.kind === 'industry') return runIndustry(w.customer, day);
+    return [];
+  }
+  function efWork(w) {
+    try { if (G && G.applyWork) return G.applyWork(w) || []; } catch (e) { return ['could not finish: ' + (e && e.message)]; }
+    return [];
+  }
+  function queueEf(w, day) {
+    try {
+      const E = G.env && G.env(); if (!E || !E.towns) return;
+      const ef = E.towns.effingham || (E.towns.effingham = {});
+      if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(w.customer); }
+      else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push({ interchange: migrateIxId(w.interchange), day: day }); }
+      else { ef.pendingYard = (ef.pendingYard || 0) + 1; }
+    } catch (e) { }
+  }
+  function applyPiece(c, p, t) {
+    const s = c.sim, here = hereTown(), day = c.day || G.dayNo();
+    let notes = [];
+    const w = p.i != null ? (c.work || [])[p.i] : null;
+    if (p.kind === 'road') {
+      if (here === 'mattoon') notes = applyDoneSet(c, c.work || [], day).notes;
+      else { (st().simQueue = st().simQueue || []).push({ road: true, job: { symbol: c.symbol, start: c.start, tieUp: c.tieUp, work: c.work, type: c.type }, day: day, at: t }); notes = ['road work done; cars move when you are next in Mattoon'] }
+    } else if (w) {
+      const ctx = applyCtx(p);
+      if (ctx === 'effingham') {
+        if (here === 'effingham') notes = (w.kind === 'classify' || w.kind === 'buildLocal') ? ['switched the Effingham yard'] : efWork(w);
+        else { queueEf(w, day); notes = [p.place + ' done; cars move when you are next in Effingham']; }
+      } else if ((ctx === 'mattoon' || ctx === 'any') && here !== 'mattoon') { // Nov 13: Neoga customer work is kept in Mattoon's save: it lands when you are next in Mattoon
+        (st().simQueue = st().simQueue || []).push({ w: w, day: day, at: t, symbol: c.symbol });
+        notes = [p.place + ' done; cars move when you are next in Mattoon'];
+      } else notes = doWork(c, w, day);
+      if (w.kind === 'industry') { st().crewAssigned[day] = (st().crewAssigned[day] || []); if (st().crewAssigned[day].indexOf(w.customer) < 0) st().crewAssigned[day].push(w.customer); }
+    }
+    if (!p.travel) s.done.push(p.place + ' (' + clockStr(t) + ')');
+    s.notes = s.notes.concat(notes || []);
+    s.loc = p.town;
+    if (G.reindex) try { G.reindex(); } catch (e) { }
+    if (!p.travel && !visiting()) G.toast(c.symbol + ' finished ' + p.place + ' at ' + clockStr(t) + (p.town === here ? '. Its tracks are open.' : '.'), 'good');
+  }
+  function finishJob(c, t, hog) {
+    const C = R(), s = c.sim, crew = crewById(c.crewId);
+    s.finished = true; s.endAt = t; s.hog = !!hog;
+    const H = C.HOS.ON_DUTY_H, hours = Math.round(Math.min(H, Math.max(0, (t - s.on) / 3600)) * 100) / 100;
+    s.notDone = s.pieces.slice(s.k).filter(function (p) { return !p.travel; }).map(function (p) { return p.place; });
+    s.hours = hours;
+    if (!crew) return;
+    const pay = C.payForCall(crew, hours, G.ECON && G.ECON.CREW_HR);
+    s.pay = pay;
+    G.book('crew', pay);
+    C.grantExperience(crew, c, hours);
+    const finalLoc = hog ? (s.loc || c.start) : c.tieUp;
+    const opt = C.tieUpOptions({ start: c.start, tieUp: finalLoc });
+    if (opt.needed) {
+      st().crewTieUps.push({ crewId: crew.id, start: c.start, tieUp: finalLoc, planned: c.tieUp, hoggedOut: !!hog, tourHours: hours, symbol: c.symbol });
+      s.tie = crew.name + ' tied up at ' + townName(finalLoc) + ' (bunkhouse or taxi)';
+    } else {
+      C.applyTieUp(crew, { start: c.start, tieUp: finalLoc }, 'sign-off', t, { tourHours: hours });
+      s.tie = crew.name + ' signed off at ' + townName(finalLoc);
+    }
+    if (crew.status === 'onDuty' && !opt.needed) crew.status = 'available';
+    if (!visiting()) G.toast(c.symbol + (hog ? ' hit 12 hours and tied up' : ' tied up') + ' at ' + clockStr(t) + (s.notDone.length ? ': ' + s.notDone.length + ' piece' + (s.notDone.length > 1 ? 's' : '') + ' not done.' : '. All work done.'), hog ? 'bad' : 'good');
+  }
+  function reportLine(c) {
+    const s = c.sim, crew = crewById(c.crewId);
+    let t = (c.symbol || 'A job') + (crew ? ' (' + crew.name + ')' : '') + ': on duty ' + clockStr(s.on) + ', ' + (s.hog ? 'hogged out' : 'tied up') + ' ' + clockStr(s.endAt) + ' after ' + (s.hours != null ? s.hours : 0) + ' hr';
+    t += '. Done: ' + (s.done.length ? s.done.join(', ') : 'nothing');
+    if (s.notDone && s.notDone.length) t += '. Not done: ' + s.notDone.join(', ');
+    if (s.pausedSec > 59) t += '. Stood aside for you ' + Math.round(s.pausedSec / 60) + ' min';
+    if (s.notes && s.notes.length) t += '. ' + s.notes.join('; ');
+    if (s.tie) t += '. ' + s.tie;
+    return t;
+  }
+  function stepSim(c, now) {
+    const s = c.sim, HOG = R().HOS.ON_DUTY_H * 3600;
+    let t = s.last, g = 0;
+    while (t < now - 1e-6 && !s.finished && g++ < 200) {
+      const hogAt = s.on + HOG;
+      if (s.paused) { const u = Math.min(now, hogAt); s.pausedSec += u - t; t = u; if (t >= hogAt - 1e-6) finishJob(c, t, true); continue; }
+      const p = s.pieces[s.k];
+      if (!p) { finishJob(c, t, false); break; }
+      const u = Math.min(now, t + s.left, hogAt);
+      s.left -= (u - t); t = u;
+      if (s.left <= 0.5) {
+        applyPiece(c, p, t); s.k++;
+        if (s.k >= s.pieces.length) { finishJob(c, t, false); break; }
+        s.left = s.pieces[s.k].dur;
+      } else if (t >= hogAt - 1e-6) finishJob(c, t, true);
+    }
+    s.last = Math.max(s.last, Math.min(now, s.endAt != null ? s.endAt : now));
+    return g > 0;
+  }
+  function stepAll(now) {
+    let changed = false;
+    (st().calls || []).slice().sort(function (a, b) { return (a.startAt || 0) - (b.startAt || 0); }).forEach(function (c) {
+      if (!c.crewId || c.mode !== 'hire' || (c.sim && c.sim.finished)) return;
+      if (c.startAt == null) c.startAt = ((c.day || 1) - 1) * 86400 + 7 * 3600; // calls saved before the clock sim
+      if (!c.sim) { if (now < c.startAt) return; goOnDuty(c, c.startAt); changed = true; }
+      if (stepSim(c, now)) changed = true;
+    });
+    return changed;
+  }
+  // called a couple of times a second by the town loops (Mattoon, Effingham)
+  function tick(force) {
+    if (!G || !R() || visiting() || (simBusy && !force)) return;
+    try {
+      ensure();
+      const changed = stepAll(nowT());
+      if (changed) { try { G.save(); } catch (e) { } }
+      if (changed || (chipT++ % 4) === 0) paintChip();
+    } catch (e) { if (typeof console !== 'undefined') console.warn('clock sim', e); }
+  }
+  // Mattoon work finished while you were in another town: applied when Mattoon is loaded
+  function applyQueued() {
+    if (!G || hereTown() !== 'mattoon' || visiting()) return 0;
+    const q = st().simQueue || []; if (!q.length) return 0;
+    st().simQueue = [];
+    let n = 0;
+    q.sort(function (a, b) { return (a.at || 0) - (b.at || 0); }).forEach(function (e) {
+      try { if (e.road) applyDoneSet(e.job, e.job.work || [], e.day); else doWork(null, e.w, e.day); n++; } catch (x) { }
+    });
+    if (G.reindex) G.reindex();
+    G.save();
+    if (n) G.toast('Hired crews finished ' + n + ' piece' + (n > 1 ? 's' : '') + ' of work here while you were away. Their cars are in place.', 'good');
+    return n;
+  }
+
+  // ---- player blocking: called by the towns' movement code. key = Effingham track id, or Mattoon segment number
+  function guard(town, key, peek) {
+    if (!G || visiting()) return false;
+    if (!activeSims().length) return false;
+    const hit = claimOf(town, key);
+    if (!hit) return false;
+    if (!peek) showBlock(hit, town);
+    return true;
+  }
+  function showBlock(hit, town) {
+    const m = typeof document !== 'undefined' ? document.getElementById('modalBg') : null;
+    if (blk && blk.c === hit.c.id && m && m.classList.contains('show')) return;
+    blk = { c: hit.c.id, k: hit.k, town: town };
+    const c = hit.c, crew = crewById(c.crewId), claimed = claimedKeys(town);
+    const yard = town === 'mattoon' ? yardTracks() : efYard();
+    const open = yard.filter(function (t) { return claimed.indexOf(t) < 0; }).map(function (t) { return tName(town, t); });
+    const uniq = function (a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); };
+    const mine = uniq(claimed.map(function (t) { return tName(town, t); }));
+    const left = leftUntil(c, hit.k);
+    let h = '<h2>Job ' + esc(c.symbol) + ' is working ' + esc(hit.p.place) + '.</h2>';
+    h += '<p>You must wait until they\'re finished.' + (crew ? ' ' + esc(crew.name) + ' crew' : '') + ' · done about <b>' + esc(clockStr(nowT() + left)) + '</b> (about ' + Math.max(1, Math.round(left / 60)) + ' min).</p>';
+    h += '<p style="font-size:13px"><b>In use by the crew:</b> ' + esc(mine.join(', ') || hit.track) + '.<br><b>You may still use:</b> ' + esc((open.length ? open.join(', ') + ', ' : '') + 'the main, and every track not in use') + '.</p>';
+    h += '<p style="font-size:12.5px;color:#666">Asking them to clear up lifts their claim so you can go in. Their clock keeps running while they wait, and that time counts toward their 12 hours.</p>';
+    h += '<div class="btns"><button data-cs="blk-sim">Sim until they finish</button><button data-cs="blk-clear" class="alt">Ask them to clear up</button><button data-cs="blk-cancel" class="alt">Cancel</button></div>';
+    G.showModal(h);
+  }
+  function simUntil() {
+    if (!blk) { G.hideModal(); return; }
+    const c = callFor(blk.c), k = blk.k; blk = null;
+    if (!c || !c.sim) { G.hideModal(); return; }
+    if (!G.skip) { G.hideModal(); G.toast('Fast-forward is not available here.', 'bad'); return; }
+    const place = c.sim.pieces[k] ? c.sim.pieces[k].place : 'the work', t0 = nowT();
+    simBusy = true;
+    try {
+      for (let g = 0; g < 400 && c.sim && !c.sim.finished && c.sim.k <= k; g++) {
+        const step = c.sim.paused ? 600 : Math.max(20, Math.min(600, Math.ceil(c.sim.left + 1)));
+        G.skip(step); stepAll(nowT());
+      }
+    } finally { simBusy = false; }
+    G.hideModal(); G.save(); paintChip();
+    G.toast('Clock ran ' + Math.max(1, Math.round((nowT() - t0) / 60)) + ' min. ' + c.symbol + (c.sim.finished && c.sim.k <= k ? ' tied up before finishing ' + place + '.' : ' finished ' + place + ' at ' + clockStr(nowT()) + '. The track is yours.'), 'good');
+  }
+  function askClear() {
+    const c = blk && callFor(blk.c); blk = null; G.hideModal();
+    if (!onDuty(c)) return;
+    c.sim.paused = true; c.sim.pausedAt = nowT(); G.save(); paintChip();
+    G.toast(c.symbol + ' is clearing up and waiting. Tap "Give permission back" when you are done.', 'good');
+  }
+  function givePermission(id) {
+    const list = id ? [callFor(id)] : activeSims().filter(function (c) { return c.sim.paused; });
+    list.forEach(function (c) { if (onDuty(c) && c.sim.paused) { c.sim.paused = false; delete c.sim.pausedAt; G.toast(c.symbol + ' has permission and is working again.', 'good'); } });
+    G.save(); paintChip();
+  }
+  // leaving town (map edge, the map tabs, Towns) while a crew is still stood aside: returns true if it asked first
+  function leaveGuard(proceed) {
+    if (!G || visiting()) return false;
+    const waiting = activeSims().filter(function (c) { return c.sim.paused; });
+    if (!waiting.length) return false;
+    pendingLeave = proceed;
+    const sym = waiting.map(function (c) { return c.symbol; }).join(', ');
+    G.showModal('<h2>Job ' + esc(sym) + ' is still waiting for permission to work.</h2><p>Give it back before you leave? If you leave without it, the crew keeps waiting and its 12-hour clock keeps running.</p>' +
+      '<div class="btns"><button data-cs="leave-give">Give permission and leave</button><button data-cs="leave-go" class="alt">Leave anyway</button><button data-cs="leave-stay" class="alt">Stay</button></div>');
+    return true;
+  }
+  function doLeave(give) {
+    const f = pendingLeave; pendingLeave = null;
+    if (give) givePermission(null);
+    G.hideModal();
+    if (f) try { f(); } catch (e) { }
+  }
+  // ---- status chip (small, top of the scene) while a crew works here or waits for permission
+  const CHIP_CSS = '#csChip{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 50px);z-index:48;display:flex;flex-direction:column;gap:4px;align-items:center;pointer-events:none;max-width:92vw}' +
+    '#csChip .ci{pointer-events:auto;display:flex;align-items:center;gap:8px;background:rgba(27,42,74,.92);color:#f6f1e6;border-radius:999px;padding:4px 6px 4px 12px;font:600 12px/1.2 Arial,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.25);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+    '#csChip .ci.w{background:rgba(196,96,36,.95)}#csChip .ci b{font-family:"Courier Prime","Courier New",monospace}' +
+    '#csChip .ci button{border:0;border-radius:999px;background:#f6f1e6;color:#1b2a4a;font:700 12px Arial,sans-serif;height:26px;padding:0 10px;cursor:pointer}' +
+    '#csChip .ci.only{padding-right:12px}';
+  function paintChip() {
+    if (typeof document === 'undefined' || !document.body || !G) return;
+    let el = document.getElementById('csChip');
+    const here = hereTown(), now = nowT(), items = [];
+    if (!visiting()) activeSims().forEach(function (c) {
+      const s = c.sim, p = s.pieces[s.k];
+      if (s.paused) items.push('<div class="ci w"><span><b>' + esc(c.symbol) + '</b> stood aside for you</span><button data-csc="perm" data-id="' + esc(c.id) + '">Give permission back</button></div>');
+      else if (p && p.town === here && !p.travel) items.push('<div class="ci only"><span><b>' + esc(c.symbol) + '</b> working ' + esc(p.place) + ' · done ~' + esc(clockStr(now + s.left)) + '</span></div>');
+    });
+    const html = items.join('');
+    if (!html) { if (el) el.style.display = 'none'; return; }
+    if (!el) {
+      if (!document.getElementById('csChipCss')) { const st0 = document.createElement('style'); st0.id = 'csChipCss'; st0.textContent = CHIP_CSS; document.head.appendChild(st0); }
+      el = document.createElement('div'); el.id = 'csChip'; document.body.appendChild(el);
+      el.addEventListener('click', function (e) { const b = e.target.closest && e.target.closest('[data-csc="perm"]'); if (b) { e.stopPropagation(); givePermission(b.getAttribute('data-id')); } });
+    }
+    if (el._h !== html) { el.innerHTML = html; el._h = html; }
+    el.style.display = '';
+  }
+  function simCardHtml(c) {
+    if (!c || !c.crewId) return '';
+    const s = c.sim, now = nowT();
+    let line = '', extra = '';
+    if (!s) line = 'On duty at <b>' + esc(clockStr(c.startAt != null ? c.startAt : now)) + '</b>' + (c.startAt != null && c.startAt > now ? ' · not on duty yet' : '');
+    else if (s.finished) { line = (s.hog ? 'Hogged out ' : 'Tied up ') + esc(clockStr(s.endAt)) + ' · ' + (s.hours || 0) + ' hr'; extra = '<div class="cs-box ' + (s.notDone && s.notDone.length ? 'o' : '') + '" style="font-size:12px"><b>End report</b>Done: ' + esc(s.done.join(', ') || 'nothing') + (s.notDone && s.notDone.length ? '<br>Not done: ' + esc(s.notDone.join(', ')) : '') + (s.notes && s.notes.length ? '<br>' + esc(s.notes.join('; ')) : '') + '</div>'; }
+    else {
+      const p = s.pieces[s.k], hrs = ((now - s.on) / 3600);
+      line = 'On duty ' + esc(clockStr(s.on)) + ' · ' + hrs.toFixed(1) + ' of 12 hr · ' + (s.paused ? '<b>standing aside for you</b>' : 'working ' + esc(p ? p.place : '') + ', done ~' + esc(clockStr(now + s.left)));
+      if (s.paused) extra = '<div class="cs-jb"><button class="p" data-cs="perm-back" data-id="' + esc(c.id) + '">Give permission back</button></div>';
+    }
+    return '<div class="cs-jp" style="margin-top:4px">' + line + '</div>' + extra;
+  }
+
+  // End of day (Mattoon's End Day, Effingham's End day): the clock sim runs every hired crew on to the morning,
+  // then the board is cleared of that day's finished calls. A crew still on duty stays on the board.
+  function runHired(day, untilT) {
     if (!G || !R()) return { lines: [], pay: 0, tieUps: [], none: true };
     ensure();
-    const C = R();
-    // Only posted jobs with a called crew run; 'player' (Take it) and crew-less postings move nothing.
-    const calls = C.resolveCalls((st().calls || []).filter(function (c) { return c.day === day && c.crewId && c.mode === 'hire' && C.hiredMovesCars(c); }));
-    const lines = [], assigned = [];
-    (st().calls || []).forEach(function (c) { if (c.day === day && !c.crewId && c.mode !== 'player') lines.push((c.symbol || 'A job') + ': posted, but no crew was called — nobody worked it'); });
+    const until = untilT != null ? untilT : day * 86400 + 6 * 3600;
+    simBusy = true;
+    try { stepAll(Math.max(until, nowT())); } finally { simBusy = false; }
+    const lines = [];
     let pay = 0;
-    if (!calls.length) { st().calls = (st().calls || []).filter(function (c) { return c.day !== day; }); lastRun = { lines: lines, pay: 0, tieUps: st().crewTieUps || [], none: !lines.length }; return lastRun; }
-    calls.forEach(function (job) {
-      const r = runOne(job, day);
-      pay += r.pay || 0;
-      lines.push((job.symbol || 'A job') + (crewById(job.crewId) ? ' (' + crewById(job.crewId).name + ')' : '') + ': ' + (r.notes.join('; ') || 'worked'));
-      (r.assigned || []).forEach(function (k) { if (assigned.indexOf(k) < 0) assigned.push(k); });
+    (st().calls || []).forEach(function (c) {
+      if (c.day > day) return;
+      if (!c.crewId && c.mode !== 'player') { lines.push((c.symbol || 'A job') + ': posted, but no crew was called, so nobody worked it'); return; }
+      if (c.sim && c.sim.finished) { lines.push(reportLine(c)); pay += c.sim.pay || 0; }
+      else if (onDuty(c)) lines.push((c.symbol || 'A job') + ': still on duty, working ' + (c.sim.pieces[c.sim.k] || {}).place);
     });
-    st().crewAssigned[day] = (st().crewAssigned[day] || []).concat(assigned).filter(function (k, i, a) { return a.indexOf(k) === i; });
-    st().calls = (st().calls || []).filter(function (c) { return c.day !== day; });
+    st().calls = (st().calls || []).filter(function (c) { return c.day > day || onDuty(c); });
     if (G.reindex) G.reindex();
-    lastRun = { lines: lines, pay: pay, tieUps: st().crewTieUps || [], none: false };
+    paintChip();
+    lastRun = { lines: lines, pay: Math.round(pay * 100) / 100, tieUps: st().crewTieUps || [], none: !lines.length };
     return lastRun;
   }
 
@@ -2625,7 +3001,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     else if (a === 'drop') { const id = b.getAttribute('data-id'); dropFor = dropFor === id ? null : id; showList(true); }
     else if (a === 'pick-call') {
       const c = crewById(b.getAttribute('data-crew'));
-      if (c && (c.status === 'off' || c.status === 'vacation')) { G.toast(R().callBlockReason(c, null, st().time), 'bad'); return; }
+      if (c && (c.status === 'off' || c.status === 'vacation')) { G.toast(R().callBlockReason(c, null, nowT()), 'bad'); return; }
       callCrewOnJob(b.getAttribute('data-id'), b.getAttribute('data-crew'));
     }
     else if (a === 'roster') { e.stopPropagation(); rosterBack = view; rosterId = b.getAttribute('data-crew'); showRoster(rosterId); }
@@ -2669,12 +3045,20 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     else if (a === 'tie-go') { const id = b.getAttribute('data-id'); applyOneTie(id, tieChoice[id] || 'bunkhouse'); }
     else if (a === 'tie-later') { G.hideModal(); G.toast('Tie-up still open — finish it from Call a crew.'); }
     else if (a === 'tie') applyOneTie(b.getAttribute('data-id'), b.getAttribute('data-choice')); // older button shape
+    else if (a === 'blk-sim') simUntil();
+    else if (a === 'blk-clear') askClear();
+    else if (a === 'blk-cancel') { blk = null; G.hideModal(); }
+    else if (a === 'perm-back') { givePermission(b.getAttribute('data-id')); showList(true); }
+    else if (a === 'leave-give') doLeave(true);
+    else if (a === 'leave-go') doLeave(false);
+    else if (a === 'leave-stay') { pendingLeave = null; G.hideModal(); if (typeof document !== 'undefined') { const tp = document.getElementById('townPick'); if (tp) tp.remove(); } }
   }
 
   function onField(el) {
     if (!draft) return;
     const f = el.getAttribute('data-cs-field');
     if (f === 'symbol') { draft.symbol = el.value; return; }
+    if (f === 'startAt') { draft.startAt = +el.value; return; }
     if (f === 'start' || f === 'tieUp' || f === 'buildTrack' || f === 'stopAct' || f === 'stopTrack') {
       draft[f] = el.value;
       if (f === 'start' || f === 'tieUp') {
@@ -2727,15 +3111,30 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     showList();
   }
 
+  let pickOk = false;
   function bind(game) {
     G = game;
     listen();
     try { ensure(); } catch (e) { }
+    try { applyQueued(); } catch (e) { }
+    if (!pickHooked && typeof document !== 'undefined') {
+      pickHooked = true;
+      // Towns picker (look at another town): ask first if a crew is still stood aside
+      document.addEventListener('click', function (e) {
+        const b = e.target.closest && e.target.closest('#townPick [data-tp]');
+        if (!b || pickOk || !b.getAttribute('data-tp') || b.classList.contains('here')) { pickOk = false; return; }
+        const tp = document.getElementById('townPick');
+        if (leaveGuard(function () { pickOk = true; if (tp) tp.style.display = ''; b.click(); })) { e.stopPropagation(); e.preventDefault(); if (tp) tp.style.display = 'none'; }
+      }, true);
+    }
     return api;
   }
+  let pickHooked = false;
 
   const api = {
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
+    tick: tick, guard: guard, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
+    _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, reportLine: reportLine },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show
   };
@@ -3369,6 +3768,11 @@ function stepConsist(c, dt) {
 function moveWithContacts(c, dx) {
   if (!dx) return;
   const sign = Math.sign(dx), lead = sign > 0 ? front(c) : rev(rear(c));
+  if (window.NII_CALLSHEET && NII_CALLSHEET.guard && !VISIT && c === locoCons()) { // Nov 13 clock sim: a hired crew's claimed tracks are closed to the player
+    const occ = new Set(); for (const id of c.veh) { const v = V(id); occ.add(v.f.s); occ.add(v.r.s); }
+    let hit = -1; walk(lead, Math.abs(dx) + 0.5, 'follow', s => { if (!occ.has(s) && NII_CALLSHEET.guard('mattoon', s, true)) { hit = s; return { kind: 'claim', t: 0, end: lead }; } });
+    if (hit >= 0) { c.v = 0; state.ap = null; state.stopping = false; state.ctl.notch = 0; NII_CALLSHEET.guard('mattoon', hit); return; }
+  }
   const ob = scan(lead, Math.abs(dx) + 0.05, c.id);
   if (ob && ob.t <= Math.abs(dx)) {
     moveConsist(c, sign * ob.t);
@@ -3472,8 +3876,9 @@ function apStep(c, dt, running) {
     if (near) { apArrive(c); return; } state.ap = null; c.v = 0; toast('Stopped: the route changed (check the switches).', 'bad'); return;
   }
   let limit = rt.t, approach = false;
+  const edgeM = !!(state.crossGo && state.mode === 'tap' && (!ap.legs || ap.k >= ap.legs.length - 1)); if (edgeM) { if (rt.t <= 20) { crossLeave(c); return; } limit = rt.t + 400; } // Nov 13 (tap mode only): roll on into the next town, no stop
   const ob = scan(lead, rt.t + 80, c.id);
-  if (ob) { if (ob.kind === 'veh') { if (ob.t <= limit + 0.5) { limit = ob.t; approach = true; } } else limit = Math.min(limit, Math.max(0, ob.t - 2)); }
+  if (ob) { if (ob.kind === 'veh') { if (ob.t <= limit + 0.5) { limit = ob.t; approach = true; } } else if (!edgeM) limit = Math.min(limit, Math.max(0, ob.t - 2)); }
   if (!approach && limit <= 0.05) { { const a = bfAhead(lead, 30); if (a.K && a.t - 12 <= 0.5) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } } if (ylRoom(c, sign) - 5 <= limit + 0.1) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } apArrive(c); return; }
   { const a = bfAhead(lead, rt.t + 80); if (a.K) { const room = a.t - 12; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast(BFX.stopMsg(a.K), 'bad'); return; } limit = Math.max(0, room); approach = false; } } }
   { const room = ylRoom(c, sign) - 5; if (room < limit) { if (room <= 0.3 && Math.abs(c.v) < 0.6 * FTS) { state.ap = null; c.v = 0; toast('Stopped at the yard limit: your train needs a caboose to go past it.', 'bad'); return; } limit = Math.max(0, room); approach = false; } }
@@ -3940,7 +4345,7 @@ function showWaybills() { const vs = Object.values(state.veh).filter(v => TYPES[
 // ---------------------------------------------------------------- towns: run off the south end of the main -> next town (index loader does the loading screen)
 function askTravel(to) { const T = NII.TOWNS[to], r = NII.runInfo('mattoon', to);
   showModal(`<h2>Head south to ${T.name}?</h2><p>The train leaves Mattoon on the main: ${r.mi} miles at ${r.mph} mph, about ${r.min} minutes on the clock. Cars you left behind stay where they are.</p><div class="btns"><button data-act="travelGo" data-to="${to}">Go to ${T.name}</button><button data-act="close">Stay in Mattoon</button></div>`); }
-function departTo(to) { const c = locoCons(); if (!c) return; hideModal(); { const e = NII.env(); if (crossAsk && crossAsk.to === to) e.cross = crossAsk; else delete e.cross; crossAsk = null; }
+function departTo(to, ok) { const c = locoCons(); if (!c) return; if (!ok && window.NII_CALLSHEET && NII_CALLSHEET.leaveGuard && NII_CALLSHEET.leaveGuard(() => departTo(to, true))) return; hideModal(); { const e = NII.env(); if (crossAsk) e.cross = crossAsk; else delete e.cross; crossAsk = null; }
   const vs = c.veh.map(V).map(v => { const xf = pX(v.f), xr = pX(v.r); return { rec: JSON.parse(JSON.stringify(v)), x: (xf + xr) / 2, fSouth: xf > xr }; }).sort((a, b) => a.x - b.x);
   const train = vs.map(o => { const v = o.rec; delete v.f; delete v.r; delete v.cid; v.aFrontN = v.aFront !== o.fSouth; return v; }); // aFrontN: A end toward the north
   for (const id of c.veh) delete state.veh[id]; delete state.cons[c.id];
@@ -3963,8 +4368,9 @@ function stripStraysM() { const c = locoCons(); if (!c || VISIT) return 0; const
     if (ng) (ng.pendIC = ng.pendIC || []).push(w); }
   reindex(); toast(`${out.length} car${out.length > 1 ? 's' : ''} for Neoga came off your train: the IC way freight takes ${out.length > 1 ? 'them' : 'it'} to the Neoga interchange track.`); return out.length; }
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
-  const env = NII.env(); if (!state.awayTrain || env.town !== 'mattoon') return;
-  const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - state.awayTrain.left); state.time = Math.max(state.time, env.time || 0);
+  const env = NII.env(); if (env.town !== 'mattoon' || !env.travel) return; // Nov 13: only a real train arrival (a Towns jump brings no train)
+  if (!state.awayTrain && !(env.trainIn && env.trainIn.length)) return;
+  const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - (state.awayTrain ? state.awayTrain.left : state.time)); state.time = Math.max(state.time, env.time || 0);
   const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; delete v.mattoonN; state.veh[v.id] = v; }
   if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;
     place(ids, { s, d: Math.max(5, SEG[s].len - 15 - len), dir: -1 }, backA); ids.forEach((id, i) => { V(id).aFront = backA[i]; }); }
@@ -3982,13 +4388,16 @@ function mapSnap() { if (!SNAP_T) SNAP_T = SEG.map(s => flat(s.X.map((x, i) => [
     blds: [[FH.x0, Y_H + 10, FH.x1, Y_H + 40]], labels: [['Freight house', (FH.x0 + FH.x1) / 2, Y_H + 25, 1], ['House track', P.H[0] + 70, Y_H + 9, 1, 'left'], ['Engine track', P.bEng[0] + 10, Y_E, 1, 'left'], ['IC Connection', ICC_X + 230, -90, 1, 'left'], ['◀ N to Champaign', MAP_YARD[0] + 10, box[1] + 12, 0, 'left'], ['to Neoga S ▶', MAP_YARD[1] - 10, box[1] + 12, 0, 'right']] }; }
 // cross-town taps (Oct 30): tap a track on another town's tab -> autopilot to the south main end, the travel prompt, then autopilot on from the next town's edge
 let crossAsk = null;
+function crossLeave(c) { crossAsk = state.crossGo; state.crossGo = null; const e = NII.env(); e.crossV = Math.abs(c.v); departTo('neoga'); if (!e.travel) { c.v = 0; state.ap = null; e.crossV = 0; } } // a leave warning holds the train here
+function carryM(v) { const c = locoCons(); if (c && state.ap && v > 0) c.v = (state.ap.dir || 1) * Math.min(v, 40 * FTS); }
 function crossStart(o) { if (state.mode !== 'tap') setMode('tap'); const g = SEG[SI.MS2]; crossAsk = null; state.crossGo = null;
-  tapTarget({ s: SI.MS2, d: g.len - 12 }); if (!state.ap) return; state.crossGo = { to: o.to, x: o.x, y: o.y, label: o.label }; toast(`Heading to ${o.name} – ${o.label}.`); save(); }
+  tapTarget({ s: SI.MS2, d: g.len - 12 }); if (!state.ap) return; state.crossGo = { to: o.to, x: o.x, y: o.y, label: o.label, run: o.run }; toast(`Heading to ${o.name} – ${o.label}.`); save(); }
 function crossTick() { if (state.crossGo && !state.ap) state.crossGo = null; } // stopped for any other reason (blue flag, yard limit, manual control...): the trip is off
-function crossArrive() { const e = NII.env(), x = e.cross; if (!x || x.to !== 'mattoon') return; delete e.cross; NII.write();
+function crossArrive() { const e = NII.env(), x = e.cross; if (!x || x.to !== 'mattoon') { delete e.crossV; return; } delete e.cross; const v0 = +e.crossV || 0; delete e.crossV; NII.write();
+  if (x.run || x.x == null) { const c = locoCons(); if (!c) return; const len = c.veh.reduce((a, id) => a + V(id).L, 0); if (state.mode !== 'tap') setMode('tap'); tapTarget({ s: SI.MS2, d: Math.max(5, SEG[SI.MS2].len - 15 - len - 350) }); carryM(v0); if (state.ap) toast('Rolling into Mattoon.'); return; }
   let best = null; for (const g of SEG) for (let i = 0; i < g.X.length; i++) { const dd = Math.hypot(g.X[i] - x.x, g.Y[i] - x.y); if (!best || dd < best.dd) best = { dd, s: g.i, d: g.D[i] }; }
   if (!best || best.dd > 40) { toast("Couldn't find that spot on the Mattoon map. Stopped at the edge.", 'bad'); return; }
-  if (state.mode !== 'tap') setMode('tap'); tapTarget({ s: best.s, d: best.d }); if (state.ap) toast(`Continuing to ${x.label}.`); }
+  if (state.mode !== 'tap') setMode('tap'); tapTarget({ s: best.s, d: best.d }); carryM(v0); if (state.ap) toast(`Continuing to ${x.label}.`); }
 function putSnap() { try { NII.mapTabs.put('mattoon', mapSnap()); } catch (e) { } }
 function save() { if (VISIT || (state && state.awayTrain)) return; putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
 function migrateTasks() { // saves from before the checklist: give NII 4412 the standing order its old fixed job had
@@ -4070,7 +4479,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 </ul>
 <div class="btns"><button data-act="close">Let's go</button></div>`;
 function menu() {
-  const T = state.tasks || []; showModal(`<h2>Menu</h2><div class="btns"><button data-act="townsPick">Look at another town</button></div><div class="btns"><button data-nm="fs" data-fs class="alt">${NII.fullscreen.label()}</button><button data-nm="ind" class="alt">Industries</button></div><p>Today's jobs: ${T.filter(t => t.done).length} of ${T.length} done. ${weekday(dayNo())} · Day ${dayNo()}.</p>
+  const T = state.tasks || []; showModal(`<h2>Menu</h2><div class="btns"><button data-act="townsPick">Go to another town</button></div><div class="btns"><button data-nm="fs" data-fs class="alt">${NII.fullscreen.label()}</button><button data-nm="ind" class="alt">Industries</button></div><p>Today's jobs: ${T.filter(t => t.done).length} of ${T.length} done. ${weekday(dayNo())} · Day ${dayNo()}.</p>
   <div class="btns"><button data-act="help" class="alt">How to play</button><button data-act="close">Back to game</button></div>
   <div class="btns"><button data-act="callSheet">Call a crew</button></div>
   <div class="btns"><button data-act="endDayAsk">&#9790; End Day ${dayNo()}</button></div>
@@ -4198,6 +4607,7 @@ function mapTap(sx, sy) {
   const nt = nearestTrack(sx, sy); if (!nt || nt.dd > 30) return;
   if (VISIT) { const [x, y] = xy(nt.s, nt.d); NII.crossFromVisit({ to: 'mattoon', x, y, label: trackName(nt.s).replace(/^the /, ''), name: 'Mattoon' }); return; }
   state.tapMark = { s: nt.s, d: nt.d, t: performance.now() }; TAP_FLASH = { kind: 'track', s: nt.s, d: nt.d, t: performance.now() };
+  if (state.mode === 'tap' && nt.s === SI.MS2 && nt.d > SEG[SI.MS2].len - 80) { crossStart({ to: 'neoga', name: 'Neoga', label: 'the main', run: true }); return; } // Nov 13: tap the south end: run on to Neoga
   tapTarget({ s: nt.s, d: nt.d });
 }
 // ---------------------------------------------------------------- drawing
@@ -5792,7 +6202,9 @@ function updateUI0() {
 }
 
 // ---------------------------------------------------------------- loop
-let paused = false, lastT = 0, saveT = 0;
+let paused = false, lastT = 0, saveT = 0, csT = 0;
+// Nov 13 clock sim: Sim until they finish. The clock jumps in 1-minute steps: car hire, your crew's wages, customer work timers.
+function skipClock(sec) { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(60, left); state.time += d; accrueHire(d); book('crew', ECON.CREW_HR * d / 3600); workTick(); left -= d; } reindex(); }
 function simStep(dt) {
   state.time += dt; const c = locoCons();
   { const th = Math.max(0, Math.min(1, (state.ctl.notch || 0) / 8)), l0 = locoOf(c); book('crew', ECON.CREW_HR * dt / 3600); if (l0 && l0.fuel > 0) book('fuel', (ECON.FUEL_IDLE_HR + (ECON.FUEL_MAX_HR - ECON.FUEL_IDLE_HR) * th) * dt / 3600); accrueHire(dt); }
@@ -5809,6 +6221,7 @@ function frame(t) {
   if (state.awayTrain) return; // the train left for another town: the page is about to reload
   const dtR = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
   if (!paused && !$('modalBg').classList.contains('show')) advanceTime(dtR * state.speed);
+  if ((csT += dtR) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } }
   crossTick(); sceneCam(dtR); drawMap(); drawScene(dtR); updateUI();
   saveT += dtR; if (saveT > 3) { saveT = 0; save(); }
   requestAnimationFrame(frame);
@@ -5853,11 +6266,13 @@ function bindCallSheet() {
   NII_CALLSHEET.bind({
     getState: () => state, dayNo, weekday, showModal, hideModal, toast, save, book, place, reindex,
     carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM,
-    env: () => NII.env(), myEngineId, claimEngine
+    env: () => NII.env(), myEngineId, claimEngine,
+    town: 'mattoon', now: () => state.time, skip: skipClock
   });
 }
 function boot() {
   startState(); load(); reindex();
+  try { const E = NII.env(); if (E.jump && E.jump.to === 'mattoon' && !VISIT) { const gap = (E.time || 0) - state.time; if (gap > 0) { accrueHire(gap); state.time = E.time; } delete E.jump; } } catch (e) { } // Nov 13: came by the Towns button: the clock catches up to the shared game clock
   try { bindCallSheet(); } catch (e) { }
   // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
   for (const v of Object.values(state.veh)) { if (!v.work || !SPOTS[v.dest]) continue; if (carWhere(v).spot(v.dest) || (v.dest === 'HOUSE' && carWhere(v).house)) continue;
@@ -5876,7 +6291,8 @@ function boot() {
   setTimeout(() => { try { fixEnginePG(); } catch (e) { try { const u = new URL(location.href); u.searchParams.delete('fix'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } catch (er) { } } }, 0);
   if (NII.TEST === 'rep100' && !VISIT && !state.testInit) { state.testInit = 1; state.rep = Math.max(state.rep || 0, 100); save(); } // Nov 5: test game starts at 100 rep (checkUnlocks opens Neoga with its message)
   try { NII.setOnLeave(save); } catch (e) { }
-  { const sb = $('sceneBtns'), tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Look at another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); if (sb) sb.insertBefore(tb, $('tagsBtn')); }
+  { const act = $('actions'); if (act && !act.querySelector('[data-act="endDayAsk"]')) act.insertAdjacentHTML('beforeend', '<button class="act" data-act="endDayAsk">End day</button>'); } // Nov 13 (Stephen: same rules on every map): End day on the bottom bar, as in Effingham and Neoga
+  { const sb = $('sceneBtns'), tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Go to another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); if (sb) sb.insertBefore(tb, $('tagsBtn')); }
   if (!VISIT) setTimeout(() => { try { crossArrive(); const x = NII.takeCross(); if (x && x.to !== 'mattoon') crossStart(x); } catch (e) { } }, 300);
   { const pn = $('panel'); if (pn) pn.addEventListener('pointerdown', () => { state.crossGo = null; crossAsk = null; }, true); } // any cab control cancels a cross-town trip
   requestAnimationFrame(frame);
