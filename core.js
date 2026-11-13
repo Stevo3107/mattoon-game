@@ -284,11 +284,11 @@ window.NII_SHARED = (() => {
   // Nov 11: PS-2 (kind ps2, 35 ft) are Midstate Glass only — never grain. Center Flows (kind cf, 54.5 ft) take soda ash at EF GLASS;
   // the five grain-capable CFs may also run at EF GRAIN / GRAIN. UP 21457 and SP 496076 are soda ash only.
   const VIEW_CARS = {
-    tank_natx_32136: { road: 'NATX', painted: '32136', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE' },
-    tank_natx_32022: { road: 'NATX', painted: '32022', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE' },
-    tank_sunx_74300: { road: 'SUNX', painted: '74300', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE' },
-    gondola_prr_387855: { road: 'PRR', painted: '387855', type: 'gondola', kind: 'gon', dest: 'EF SCRAP' },
-    gondola_pc_576058: { road: 'PC', painted: '576058', type: 'gondola', kind: 'gon', dest: 'EF SCRAP' },
+    tank_natx_32136: { road: 'NATX', painted: '32136', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE', L: 67 },
+    tank_natx_32022: { road: 'NATX', painted: '32022', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE', L: 67 },
+    tank_sunx_74300: { road: 'SUNX', painted: '74300', type: 'tank_lpg', kind: 'lpg', dest: 'EF PROPANE', L: 67 },
+    gondola_prr_387855: { road: 'PRR', painted: '387855', type: 'gondola', kind: 'gon', dest: 'EF SCRAP', L: 57 },
+    gondola_pc_576058: { road: 'PC', painted: '576058', type: 'gondola', kind: 'gon', dest: 'EF SCRAP', L: 57 },
     // Nov 12 (Stephen): PC 74204 has the yellow S sand-service stencil (confirmed on the @2x side art) -- Glass Sand / GSC only.
     hopper_ps2_pc_74204: { road: 'PC', painted: '74204', type: 'hopper_ps2', kind: 'ps2', dest: 'EF GLASS', commodities: ['Glass Sand'], L: 35, capy: 154000, ldlmt: 168000, ltWt: 52000 },
     // PC 74214 has no S stencil and may carry Glass Sand (GSC) or Ground Limestone (GLC).
@@ -1225,10 +1225,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function townName(id) { return ({ mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' })[id] || id || ''; }
   function placeName(id) { return id === 'mattoon' ? 'Mattoon Yard' : townName(id); }
   function neogaOpen() { const s = st(); return !!(s.unlocks && s.unlocks.neoga); }
-  function effinghamOpen() { const s = st(); return !!(s.unlocks && (s.unlocks.effingham || (s.towns && s.towns.mattoon && s.towns.mattoon.unlocks && s.towns.mattoon.unlocks.effingham))); }
+  function effinghamOpen() { const s = st(); let e = null; try { e = (G && G.env && G.env()) || (typeof window !== 'undefined' && window.NII && NII.env && NII.env()); } catch (x) { } return !!((e && e.towns && e.towns.effingham) || (s.towns && s.towns.effingham) || (s.unlocks && (s.unlocks.effingham || (s.towns && s.towns.mattoon && s.towns.mattoon.unlocks && s.towns.mattoon.unlocks.effingham)))); } // Nov 13: a played Effingham counts as open
   function bases() {
     const o = [{ id: 'mattoon', name: 'Mattoon Yard' }];
     if (neogaOpen()) o.push({ id: 'neoga', name: 'Neoga' });
+    if (effinghamOpen()) o.push({ id: 'effingham', name: 'Effingham' }); // Nov 13 (Stephen): Effingham is a start point
     return o;
   }
   function customers() {
@@ -1423,6 +1424,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const s = st();
     if (!s.veh) s.veh = {};
     if (!s.crews || !s.crews.length) s.crews = R().starterRoster();
+    // Nov 13 (Stephen): two crews at each base, a veteran at both. Mattoon keeps Jenkins + Morelli; Palladino + Hale move to Effingham once.
+    if (!s.crewBases1113) {
+      s.crewBases1113 = 1;
+      s.crews.forEach(function (c) { if ((c.id === 'palladino' || c.id === 'hale') && c.location === 'mattoon') { c.location = 'effingham'; c.homeYard = 'effingham'; } });
+    }
     if (!s.calls) s.calls = [];
     if (!s.crewSeq) s.crewSeq = 1;
     if (!s.crewAssigned) s.crewAssigned = {};
@@ -5858,7 +5864,7 @@ boot();
       const key = m.road + ' ' + m.painted;
       if (seen.has(key)) return null;
       const tons = m.ldlmt ? Math.floor(m.ldlmt / 2000) : 70;
-      const v = Object.assign({ id: 'efsp-' + art, type: m.type, art, road: m.road, num: m.painted, L: m.L || 50 }, extra || {});
+      const v = Object.assign({ id: 'efsp-' + art, type: m.type, art, road: m.road, num: m.painted, L: m.L || (window.NII_CORE && NII_CORE.ART && NII_CORE.ART[art] && NII_CORE.ART[art].L) || ({ tank_lpg: 67, gondola: 57, hopper_ps2: 35, hopper_cf: 54.5, hopper_cf2: 40.3 }[m.type]) || 50 }, extra || {});
       if (v.load && v.load.c && v.load.t == null) v.load = { c: v.load.c, t: tons };
       if (v.forLoad && v.forLoad.c && v.forLoad.t == null) v.forLoad = { c: v.forLoad.c, t: tons };
       return finishCar(v, dest, via);
