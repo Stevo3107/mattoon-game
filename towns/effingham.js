@@ -1851,10 +1851,10 @@ function advance(dt,operationalTime=true) { // game time passes in Effingham: ca
     const due = demurrage(v.doneAt, E.time, v.from) - (v.demPaid || 0); if (due > 0) { book('dem', due); IND(v.from, 'inc', due); v.demPaid = (v.demPaid || 0) + due; } }
 }
 function onWyeInterchange(c) { return c.path.every(g => g.t === 'PCX') && !c.veh.some(isLoco); } // PC Interchange (one track, in + out)
-// Nov 2: Effingham's customers are locked until the railroad's reputation reaches 100 (one-time, permanent flag in Mattoon's record)
-const NG_MSG = '<h2>Effingham is open for business!</h2><p>Your reputation reached 100. <b>Effingham Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>';
+// Nov 2 / Nov 13 (Stephen): Effingham's customers are locked until the railroad's reputation reaches 200 (one-time, permanent flag in Mattoon's record)
+const NG_MSG = '<h2>Effingham is open for business!</h2><p>Your reputation reached 200. <b>Effingham Freight House</b>, <b>Burgess Building Supply</b>, <b>Midstate Glass Container Co.</b>, <b>Illini Grain Corp</b>, <b>Crossroads Propane</b>, and <b>Effingham Iron &amp; Metal</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; Penn Central cars are set on the PC Interchange.</p>';
 function ngOpen() { return !!(M.unlocks && M.unlocks.effingham); }
-function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 100) return; (M.unlocks || (M.unlocks = {})).effingham = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
+function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 200) return; (M.unlocks || (M.unlocks = {})).effingham = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
 function newDay() { // PC works the interchange; tomorrow's IC cars for Effingham wait at Mattoon; customers order cars
   const d = dayNo(); if (S.day === d) return; const d0 = S.day < 0 ? d - 1 : S.day; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
   { const r = SH.nwPickup(S, ECON, d); S.nwPick = Math.max(S.nwPick || 0, d); // Nov 5: shared rule (shared.js), also run from Mattoon's End Day
@@ -1961,7 +1961,7 @@ function moveStep(c, sgn, s) {
 }
 // ---- Nov 4 (Stephen): BLUE FLAGS at the house track and Miller & Sons, Prairie Grain's rules (shared.js blueFlags). Flag 110 ft in from the switch,
 // raised once the crew has spotted cars and left the area: off the customer's tracks and more than BLUE_FLAG.near ft from its switch.
-// Locked Effingham (under 100 rep): no customer work, so no flags (never raised, not drawn).
+// Locked Effingham (under 200 rep): no customer work, so no flags (never raised, not drawn).
 const BFN = efPlanBlueFlags(); // six unchanged keys/timers; all connectors + both grain entries
 const inBFN = (K,p) => BFN[K].ranges.some(([t,a,b])=>p.t===t&&p.d>=a&&p.d<=b);
 const cutInBFN = (K,c) => !!c && efRangesHit(c,BFN[K].ranges);
@@ -3919,7 +3919,7 @@ function hud() { const c = liveCut(), l = locoV(c) || {}, has = !!(c && locoV(c)
   $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`; $('tagsBtn').classList.toggle('on', !!S.tags);
   let w = ''; if (!has) w = ''; else if (l.fuel != null && l.fuel <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (ctl.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (ctl.slide) w = 'WHEELS SLIDING! Sand helps you stop.'; else if (mph > lim + 0.5) w = `Over the ${lim} mph track speed.`;
   else if (mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.'; else if (S.crossWait) w = 'Request the route from the tower to continue.'; $('warn').textContent = w;
-  const L = jobs(), nd = L.filter(j => j.done).length, nx = L.find(j => !j.done); $('jobText').innerHTML = (nx ? '📋 ' + esc(nx.text) : L.length ? '✅ All Effingham cars worked' : ngOpen() ? '📋 No cars to work. End the day for new cars.' : '📋 Effingham customers open at 100 reputation');
+  const L = jobs(), nd = L.filter(j => j.done).length, nx = L.find(j => !j.done); $('jobText').innerHTML = (nx ? '📋 ' + esc(nx.text) : L.length ? '✅ All Effingham cars worked' : ngOpen() ? '📋 No cars to work. End the day for new cars.' : '📋 Effingham customers open at 200 reputation');
   const eng = l && l.num ? ' · GP9 ' + l.num : '';
   $('jobStatus').className = ''; $('jobStatus').textContent = `Effingham · Day ${dayNo()} · ${nd} of ${L.length} jobs done · tap for the list${eng}`; }
 const clock = t => { const h = Math.floor(t % 86400 / 3600), m = Math.floor(t / 60) % 60; return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
@@ -3984,7 +3984,7 @@ function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Effingham map. Stopped at the edge.", 'bad'); return; }
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('effingham', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
-function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
+function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 200 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
   <p style="font-size:13px">Customers: <b>Illini Grain</b>, <b>Burgess Building Supply</b>, <b>Effingham Iron &amp; Metal</b>, <b>Crossroads Propane</b>, <b>Midstate Glass</b>, and the <b>freight house</b> (house track). Cars come by the IC (down from Neoga) or the PC (set on the PC Interchange; leave PC cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length, mine = isLoco(v) && myEngineId() === v.id;
@@ -4085,7 +4085,7 @@ const carName = v => roadOf(v) + ' ' + v.num;
 const byAge = (a, b) => ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
 function efCrewCustomer(key) {
   const notes = [], cars = () => standingCars(), name = DEST[key] ? DEST[key].name : key;
-  if (!ngOpen()) return [name + ': Effingham customers are closed until 100 reputation'];
+  if (!ngOpen()) return [name + ': Effingham customers are closed until 200 reputation'];
   const spots = SPOTS.filter(sp => sp.dest === key && T[sp.t] && sp.workActive !== false);
   const spotTs = efCrewTracks(key);
   if (key === 'EF GLASS') notes.push(...crewSwapMidstate()); // soda ash + limestone (the existing Midstate swap)
@@ -4121,6 +4121,7 @@ function efCrewCustomer(key) {
 const EF_IX_TS = ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'];
 const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g.t));
 function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars for Effingham customers (or Mattoon) come off to the yard
+  if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
   const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
   const fresh = v => standingCars().find(q => q.v === v && !q.live); // re-read each time: an earlier move may have split the cut
   for (const v of standingCars().filter(o => !o.live && o.v.dest === 'PC-INT' && !onPcIx(o.c)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
@@ -4133,24 +4134,77 @@ function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars
   if (nIn) notes.unshift(`pulled ${nIn} inbound car${nIn > 1 ? 's' : ''} off the PC Interchange to the yard`);
   if (!nOut && !nIn && !notes.length) notes.push('PC Interchange: nothing to move');
   return notes; }
+function efCrewClassify(w) {
+  const notes = [], destTrack = w && w.track && T[w.track] && /^Y[1-4]$/.test(w.track) ? w.track : null;
+  if (!destTrack) return ['classify: no Effingham yard track chosen'];
+  const wantDest = (w.dest || '').trim(), wantType = (w.carType || '').trim();
+  const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
+  const match = o => {
+    if (o.live || isLoco(o.v) || o.v.type === 'caboose') return false;
+    if (!onYard(o.pm) && !(typeof EF_IX_TS !== 'undefined' && EF_IX_TS.includes(o.pm.t)) && !onGlassLead(o.pm)) return false;
+    if (wantDest && o.v.dest !== wantDest) return false;
+    if (wantType && o.v.type !== wantType && kindOf(o.v) !== wantType) return false;
+    if (o.pm.t === destTrack) return false;
+    return true;
+  };
+  let n = 0;
+  for (const v of standingCars().filter(match).sort(byAge).map(o => o.v)) {
+    const o = standingCars().find(q => q.v === v && !q.live); if (!o) continue;
+    const slot = efFreeSlot([destTrack], vL(o.v));
+    if (!slot) { notes.push(efTrackName(destTrack) + ' is full; the rest stay'); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) { n++; notes.push(carName(o.v) + ' classified to ' + efTrackName(slot.t)); }
+  }
+  if (!n && !notes.length) notes.push('nothing to classify onto ' + efTrackName(destTrack));
+  return notes;
+}
+function efCrewBuild(w) {
+  const notes = [], destTrack = w && w.track && T[w.track] ? w.track : 'Y1', order = w.order || [];
+  let n = 0;
+  for (const cust of order) {
+    for (const v of standingCars().filter(o => !o.live && o.v.dest === cust && onYard(o.pm) && o.pm.t !== destTrack).sort(byAge).map(o => o.v)) {
+      const o = standingCars().find(q => q.v === v && !q.live); if (!o) continue;
+      const slot = efFreeSlot([destTrack], vL(o.v));
+      if (!slot) { notes.push(efTrackName(destTrack) + ' is full'); return notes; }
+      if (moveStandingCar(o, slot.t, slot.d)) { n++; notes.push(carName(o.v) + ' added to the ' + cust + ' block on ' + efTrackName(destTrack)); }
+    }
+  }
+  if (!n && !notes.length) notes.push('nothing to build on ' + efTrackName(destTrack));
+  return notes;
+}
 function efCrewWork(w) {
   if (!w) return []; let r = [];
   if (w.kind === 'industry') r = efCrewCustomer(w.customer);
   else if (w.kind === 'localInterchange') r = efCrewPC();
+  else if (w.kind === 'classify') r = efCrewClassify(w);
+  else if (w.kind === 'buildLocal') r = efCrewBuild(w);
   else r = ['switched the Effingham yard'];
   save(); return r; }
 function efApplyPendingCrew() { // work finished while you were away (queued by the call sheet), oldest first
   if (VISIT || !S) return; const out = [];
-  const ix = (S.pendingIx || []).splice(0), cw = (S.pendingCrewWork || []).splice(0); delete S.pendingIx; delete S.pendingCrewWork;
+  const ix = (S.pendingIx || []).splice(0), cw = (S.pendingCrewWork || []).splice(0), yw = (S.pendingYardWork || []).splice(0), nwIn = (S.pendingNwIn || []).splice(0);
+  delete S.pendingIx; delete S.pendingCrewWork; delete S.pendingYardWork; delete S.pendingYard; delete S.pendingNwIn;
   if (ix.length) out.push(...efCrewPC());
   for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...efCrewCustomer(k));
-  if (S.pendingCrewSwap && !cw.includes('EF GLASS')) { out.push(...crewSwapMidstate()); } S.pendingCrewSwap = 0; delete S.pendingYard;
+  for (const w of yw) out.push(...efCrewWork(w));
+  if (nwIn.length) {
+    let n = 0;
+    for (const v of nwIn) {
+      const L = vL(v);
+      const slot = efFreeSlot(YARD_TS, L);
+      if (!slot) { out.push('no room in the yard for the rest of the N&W inbound cars'); break; }
+      S.cuts.push(placeCut([v], [true], slot.t, slot.d, 1));
+      n++;
+    }
+    if (n) out.push('set ' + n + ' inbound car' + (n > 1 ? 's' : '') + ' from the N&W Interchange in the Effingham yard');
+  }
+  if (S.pendingCrewSwap && !cw.includes('EF GLASS')) { out.push(...crewSwapMidstate()); } S.pendingCrewSwap = 0;
   if (out.length) { note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.'); save(); } }
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x));
   // Assigned-crew Midstate swap runs after overnight work so a released empty can come off and the next load can go on. No auto-move if no crew was sent.
   if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
   try { if (window.NII_CALLSHEET) { bindCrewBoard(); const r = NII_CALLSHEET.runHired(Math.floor(t / 86400) + 1, next); if (r && r.lines) r.lines.forEach(m => note(m + '.')); } } catch (e) { }
+  try { efApplyPendingCrew(); } catch (e) { }
   newDay(); save(); hideModal(); }
 function bindCrewBoard() {
   if (!window.NII_CALLSHEET) return;
@@ -4195,7 +4249,7 @@ function build() {
     if (a === 'close') hideModal(); else if (a === 'twReq') { requestNamedRoute(b.dataset.key, +b.dataset.dir); } else if (a === 'goN') { hideModal(); PEND_CROSS = null; if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go('neoga'); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
-    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'spotsToggle') { spotsOn = !spotsOn; try { localStorage.setItem('nii-mattoon-spots', spotsOn ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the interchange, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
+    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'spotsToggle') { spotsOn = !spotsOn; try { localStorage.setItem('nii-mattoon-spots', spotsOn ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, ' + ((ngOpen() || (M.rep || 0) >= 200) ? 'the PC works the interchange, ' : '') + 'car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
     else if (a === 'ngReset') { hideModal(); NII.clearSave(); location.reload(); }
     else if (a === 'endGo') { if (NII.runEndDay) NII.runEndDay(() => endDay()).catch(() => {}); else endDay(); } else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
@@ -4258,5 +4312,5 @@ function migrateIndustrySpots() {
 
 migrateIndustrySpots();
 if (!VISIT) { try { bindCrewBoard(); } catch (e) { } try { efApplyPendingCrew(); } catch (e) { } }
-window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efRequestNamed,requestNamedRoute,openTowerRequest,efXingLabel,twMenuState,twMenuPaint,twArt,ROUTE_CLEAR_ODDS,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, efCrewWork, efCrewCustomer, efCrewPC, efApplyPendingCrew, efCrewTracks, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__effingham = { efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efRequestNamed,requestNamedRoute,openTowerRequest,efXingLabel,twMenuState,twMenuPaint,twArt,ROUTE_CLEAR_ODDS,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, efCrewWork, efCrewCustomer, efCrewPC, efCrewClassify, efCrewBuild, efApplyPendingCrew, efCrewTracks, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

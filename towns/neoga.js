@@ -5,6 +5,11 @@ window.NII_TOWN_ART = {"car-1975-pickup-front":"data:image/png;base64,iVBORw0KGg
 // N&W crosses at grade (bottom to top) at the diamond, N&W tower beside it, home signals on our main both sides.
 // N&W interchange = one stub track (N&W Interchange) off S2 on the farm side (above the main); run-around south of the diamond. Town side (below): house track + freight house, Miller & Sons Fuel (coal + fuel oil).
 // Self-contained town engine: its own track, switches, cuts, customers and jobs. Money/rep stay in the railroad's books (Mattoon's record).
+// ---------------------------------------------------------------- Neoga, IL (Oct 30): Stephen's design.
+// Small town. Main runs north (screen left, from Mattoon) to south (screen right, toward Effingham).
+// N&W crosses at grade (bottom to top) at the diamond, N&W tower beside it, home signals on our main both sides.
+// N&W interchange = one stub track (N&W Interchange) off S2 on the farm side (above the main); run-around south of the diamond. Town side (below): house track + freight house, Miller & Sons Fuel (coal + fuel oil).
+// Self-contained town engine: its own track, switches, cuts, customers and jobs. Money/rep stay in the railroad's books (Mattoon's record).
 window.NII_TOWNS = window.NII_TOWNS || {};
 window.NII_TOWNS.neoga = function (NII) {
 'use strict';
@@ -372,15 +377,17 @@ function onWyeInterchange(c) { return c.path.every(g => g.t === 'NWI') && !c.veh
 // Nov 2: Neoga's customers are locked until the railroad's reputation reaches 100 (one-time, permanent flag in Mattoon's record)
 const NG_MSG = '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>';
 function ngOpen() { return !!(M.unlocks && M.unlocks.neoga); }
+function ngNwOpen() { return ngOpen() || (M.rep || 0) >= 100; } // Nov 13 (Stephen): N&W stays idle until 100 reputation
 function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 100) return; (M.unlocks || (M.unlocks = {})).neoga = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
 function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga wait at Mattoon; customers order cars
   const d = dayNo(); if (S.day === d) return; const d0 = S.day < 0 ? d - 1 : S.day; S.day = d; R = seeded((d * 7919 + 17) ^ NII.gameSeed(d));
-  { const r = SH.nwPickup(S, ECON, d); S.nwPick = Math.max(S.nwPick || 0, d); // Nov 5: shared rule (shared.js), also run from Mattoon's End Day
+  ngCheckUnlock();
+  if (ngNwOpen()) { const r = SH.nwPickup(S, ECON, d); S.nwPick = Math.max(S.nwPick || 0, d); // Nov 5: shared rule (shared.js), also run from Mattoon's End Day
     if (r.cars.length) { book('earn', r.pay); IND('NW', 'inc', r.pay); IND('NW', 'out', r.cars.length); M.rep = (M.rep || 0) + r.rep; }
     if (r.fee) { book('crew', r.fee); IND('NW', 'cost', r.fee); }
     if (r.cuts) note(SH.nwMsg(r, v => roadOf(v) + ' ' + v.num).replace(/^./, x => x.toUpperCase()) + '.'); }
   if (ngOpen()) { const bl = BFNX.newDay(d); if (bl.length) note(bl.join('. ') + '.'); }
-  ngCheckUnlock(); const nw = (S.nwPend || []).splice(0); delete S.nwPend; // Nov 4: N&W cars for Mattoon customers (from Mattoon's set-out plan)
+  if (ngNwOpen()) { const nw = (S.nwPend || []).splice(0); delete S.nwPend; // Nov 13: do not add N&W cars to NWI before 100 reputation; leftover cars already on the track stay put
   { const specs = (S.awayIn || []).splice(0); delete S.awayIn; // Nov 4: days rolled by Mattoon while the crew was away (shared.js ngAway), then any left
     if (ngOpen()) for (let dd = Math.max(d0 + 1, (S.rollDay || 0) + 1, d - 13); dd <= d; dd++) specs.push(...SH.ngRoll(dd, NII.gameSeed(dd)));
     S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; (o.via === 'NW' ? nw : S.pendIC).push(v); } }
@@ -388,7 +395,7 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
       note(`The N&W brought back ${due.length} car${due.length > 1 ? 's' : ''} it took by mistake (${due.map(b => roadOf(b.v) + ' ' + b.v.num + ', ' + (b.back - b.out) + ' day' + (b.back - b.out > 1 ? 's' : '')).join('; ')}): car hire $${hire.toFixed(2)}.`); } } // set out below, waiting for room like any N&W car
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
   if (nw.length) { let k = nw.length; while (k > 0 && !setOutNWI(nw.slice(0, k))) k--; // Nov 4: as many as fit; the rest wait (was all-or-nothing, so a big batch never came)
-    if (k) { IND('NW', 'in', k); note(`N&W left ${k} car${k > 1 ? 's' : ''} on the N&W Interchange.`); } if (k < nw.length) { S.nwPend = nw.slice(k); note(`The N&W Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } }
+    if (k) { IND('NW', 'in', k); note(`N&W left ${k} car${k > 1 ? 's' : ''} on the N&W Interchange.`); } if (k < nw.length) { S.nwPend = nw.slice(k); note(`The N&W Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } } }
   dropIC();
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
@@ -1121,7 +1128,10 @@ function uncAt(c, k) { if (k <= 0 || k >= c.veh.length) return false; if (c.veh.
   const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s), a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
   S.cuts.splice(S.cuts.indexOf(c), 1, a, b); toast('Uncoupled.'); save(); return true; }
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
-  for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
+  for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x));
+  try { if (window.NII_CALLSHEET) { bindCrewBoardN(); const r = NII_CALLSHEET.runHired(Math.floor(t / 86400) + 1, next); if (r && r.lines) r.lines.forEach(m => note(m + '.')); } } catch (e) { }
+  try { ngApplyPendingCrew(); } catch (e) { }
+  newDay(); save(); hideModal(); }
 function build() {
   for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
   { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div><div class="btns"><button data-act="simTime">Sim time</button></div><div class="btns"><button data-a="namesToggle" class="${NAMES_ON ? 'red' : 'alt'}">Track names: ${NAMES_ON ? 'ON' : 'OFF'}</button><button data-a="waybills" class="alt">Waybills</button></div><div class="btns"><button data-a="resetAsk" class="red">&#8634; Restart from the beginning</button></div>`); } // Nov 13 (Stephen: every town's menu matches): Mattoon's track names, waybills and restart. Blue flags are set by tapping the industry, not from the menu. // Menu (Nov 1): Full screen, Industries, other towns; Nov 13: Call a crew
@@ -1151,7 +1161,7 @@ function build() {
     else if (a === 'goN') { hideModal(); PEND_CROSS = null; if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go('mattoon'); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
-    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'spotsToggle') { spotsOn = !spotsOn; try { localStorage.setItem('nii-mattoon-spots', spotsOn ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, the N&amp;W works the interchange, car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
+    else if (a === 'map') openMap(); else if (a === 'route') requestRoute(); else if (a === 'jobs') showJobs(); else if (a === 'spotsToggle') { spotsOn = !spotsOn; try { localStorage.setItem('nii-mattoon-spots', spotsOn ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'endday') showModal('<h2>End the day?</h2><p>The clock runs to 7:00 tomorrow. Customers work spotted cars, ' + ((ngOpen() || (M.rep || 0) >= 100) ? 'the N&amp;W works the interchange, ' : '') + 'car hire and demurrage add up.</p><div class="btns"><button data-a="endGo">End day</button><button data-a="close" class="alt">Not yet</button></div>');
     else if (a === 'ngReset') { hideModal(); NII.clearSave(); location.reload(); }
     else if (a === 'endGo') { if (NII.runEndDay) NII.runEndDay(() => endDay()).catch(() => {}); else endDay(); } else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
@@ -1186,6 +1196,93 @@ build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 // Nov 13 (Stephen): the call board works from Neoga too (crews are still only called where they are based); the crews' clock runs while you are here
+
+// Hired crew work (Nov 13): pull released cars off Neoga spots first, then spot new ones. Same idea as Effingham's efCrewCustomer.
+const NG_YARD_TS = ['RA'];
+const carNameN = v => roadOf(v) + ' ' + v.num;
+function splitCutSilent(c, k) {
+  if (k <= 0 || k >= c.veh.length) return false;
+  const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s);
+  const a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
+  S.cuts.splice(S.cuts.indexOf(c), 1, a, b); return true;
+}
+function isolateStandingCar(q) {
+  if (!q || q.live) return null;
+  const c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
+  if (i < 0) return null;
+  if (c.veh.length === 1) return c;
+  if (!splitCutSilent(c, i === 0 ? 1 : i)) return null;
+  const q2 = standingCars().find(o => o.v === q.v);
+  return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
+}
+function ngFreeSlot(tracks, L) {
+  for (const t of tracks) {
+    if (!T[t]) continue;
+    for (let d = T[t].len - 6; d >= L + 6; d -= 12) {
+      const probe = placeCut([{ type: 'boxcar50', L, dest: 'TMP' }], [true], t, d, 1);
+      if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d };
+    }
+  }
+  return null;
+}
+function moveStandingCar(q, t, dHead) {
+  const c0 = isolateStandingCar(q); if (!c0) return false;
+  const aT = c0.aT.slice(), veh = c0.veh.slice();
+  S.cuts.splice(S.cuts.indexOf(c0), 1);
+  const nc = placeCut(veh, aT, t, dHead, 1);
+  if (S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
+  S.cuts.push(nc); return true;
+}
+function spotTaken(sp) {
+  return standingCars().some(o => !isLoco(o.v) && o.v.type !== 'caboose' && o.pm.t === sp.t && Math.abs(o.pm.d - sp.d) <= (sp.tol || 8));
+}
+function ngCrewTracks(key) { return [...new Set(SPOTS.filter(sp => sp.dest === key && T[sp.t]).map(sp => sp.t))]; }
+function ngCrewCustomer(key) {
+  const notes = [], cars = () => standingCars(), name = DEST[key] ? DEST[key].name : key;
+  if (!ngOpen()) return [name + ': Neoga customers are closed until 100 reputation'];
+  const spots = SPOTS.filter(sp => sp.dest === key && T[sp.t]);
+  const spotTs = ngCrewTracks(key);
+  const byAge = (a, b) => ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
+  // pull released cars (work done, billed out) off the customer's tracks first
+  for (const v of cars().filter(o => !o.live && spotTs.includes(o.pm.t) && o.v.doneAt && !DEST[o.v.dest]).map(o => o.v)) {
+    const o = cars().find(q => q.v === v); if (!o || o.live) continue;
+    const slot = ngFreeSlot(NG_YARD_TS.concat(['NWI']), vL(o.v));
+    if (!slot) { notes.push('no room on the run-around to pull ' + carNameN(o.v)); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) notes.push(carNameN(o.v) + ' pulled from ' + name + ' to ' + (T[slot.t] && T[slot.t].name || slot.t));
+  }
+  const srcOk = t => t === 'RA' || t === 'NWI' || /^M\d$/.test(t) || spotTs.includes(t);
+  const tried = new Set();
+  for (const sp of spots) {
+    if (spotTaken(sp)) continue;
+    const next = cars().filter(o => !o.live && !tried.has(o.v) && o.v.dest === key && !o.v.work && !o.v.doneAt && srcOk(o.pm.t) && !carAtSpot(o.v, o.pm)).sort(byAge)[0];
+    if (!next) continue;
+    tried.add(next.v);
+    const L = vL(next.v), len = T[sp.t].len, heads = [Math.min(len - 0.5, sp.d + L / 2), Math.min(len - 0.5, sp.d + 3 + L / 2), Math.min(len - 0.5, Math.max(L, sp.d - 3 + L / 2))];
+    let ok = false;
+    for (const h of heads) { if (moveStandingCar(next, sp.t, h)) { const q = cars().find(o => o.v === next.v); if (q && carAtSpot(next.v, q.pm)) { ok = true; break; } } }
+    const q = cars().find(o => o.v === next.v);
+    if (ok && q) { startWorkN(next.v, sp); notes.push(carNameN(next.v) + ' spotted at the ' + sp.name); }
+    else if (q && q.pm.t === sp.t) notes.push(carNameN(next.v) + ' set on the ' + (T[sp.t] && T[sp.t].name || sp.t) + ' (not on a spot)');
+    else notes.push('could not spot ' + carNameN(next.v) + ' at the ' + sp.name);
+  }
+  if (!notes.length) notes.push(name + ': nothing to switch');
+  return notes;
+}
+function ngCrewWork(w) {
+  if (!w) return [];
+  let r = [];
+  if (w.kind === 'industry') r = ngCrewCustomer(w.customer);
+  else r = ['Neoga has no yard job to switch'];
+  save(); return r;
+}
+function ngApplyPendingCrew() {
+  if (VISIT || !S) return;
+  const out = [], cw = (S.pendingCrewWork || []).splice(0);
+  delete S.pendingCrewWork;
+  for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...ngCrewCustomer(k));
+  if (out.length) { note('Hired crews worked Neoga while you were away: ' + out.join('; ') + '.'); save(); }
+}
+
 function bindCrewBoardN() {
   if (!window.NII_CALLSHEET || VISIT) return;
   const mt = () => { const e = NII.env(); e.towns = e.towns || {}; const m = e.towns.mattoon || (e.towns.mattoon = { time: e.time || 0, money: (M && M.money) || 0, rep: (M && M.rep) || 0 }); if (!m.veh) m.veh = {}; if (!m.cons) m.cons = {}; return m; };
@@ -1198,12 +1295,12 @@ function bindCrewBoardN() {
     SI: {}, SEG: {}, YARD: {}, SPOTS: {}, ECON, FH: {}, NY: 6, ICI_N: 0, ICI_ROOM: 0,
     env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
     town: 'neoga', now: () => E.time, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); left -= d; } }, stopTrain: () => { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; },
-    tracksFor: k => ({ 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] })[k] || [], yardTracks: () => ['RA'], trackName: t => t === 'RA' ? 'the run-around' : (T[t] && T[t].name) || t
+    applyWork: w => ngCrewWork(w), tracksFor: k => ({ 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] })[k] || [], yardTracks: () => ['RA'], trackName: t => t === 'RA' ? 'the run-around' : (T[t] && T[t].name) || t
   });
 }
-if (!VISIT) { try { bindCrewBoardN(); } catch (e) { }
+if (!VISIT) { try { bindCrewBoardN(); } catch (e) { } try { ngApplyPendingCrew(); } catch (e) { }
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); hideModal(); bindCrewBoardN(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); } });
   setInterval(() => { try { if (window.NII_CALLSHEET && NII_CALLSHEET.tick) NII_CALLSHEET.tick(); } catch (e) { } }, 500); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
