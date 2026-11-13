@@ -4625,7 +4625,7 @@ document.addEventListener('click', e => {
   else if (a === 'callSheet') { if (window.NII_CALLSHEET) NII_CALLSHEET.open(); }
   else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); }
   else if (a === 'dayDone') { if (window.NII_CALLSHEET && NII_CALLSHEET.pendingTieUps()) NII_CALLSHEET.showTieUps(); else { hideModal(); state.help = false; save(); } }
-  else if (a === 'endDay') { const r = endDay(); showDaySummary(r); (r.returned || []).forEach(t => toast(t + '.', 'good')); sfx(r.pay ? 'cash' : 'tick'); }
+  else if (a === 'endDay') { const go = () => { const r = endDay(); showDaySummary(r); (r.returned || []).forEach(t => toast(t + '.', 'good')); sfx(r.pay ? 'cash' : 'tick'); }; if (NII.runEndDay) NII.runEndDay(go).catch(() => {}); else go(); }
 });
 function askRestart() { showModal(NII_SHARED.RESTART_HTML + `<div class="btns"><button data-act="close" class="alt">Cancel</button><button data-act="reset" class="red">Yes, restart</button></div>`); }
 $('menuBtn').onclick = menu;
