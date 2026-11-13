@@ -1232,10 +1232,88 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (effinghamOpen()) o.push({ id: 'effingham', name: 'Effingham' }); // Nov 13 (Stephen): Effingham is a start point
     return o;
   }
+  // Nov 13 (Stephen): Effingham industries live in the town pack, not crews.js. Merge them here so workTown / familiarity / estimates see the same ids.
+  const EF_CUSTOMERS = [
+    { id: 'EF HOUSE', town: 'effingham', name: 'Effingham Freight House (house track)' },
+    { id: 'EF GRAIN', town: 'effingham', name: 'Illini Grain Corp' },
+    { id: 'EF BURGESS', town: 'effingham', name: 'Burgess Building Supply' },
+    { id: 'EF SCRAP', town: 'effingham', name: 'Effingham Iron & Metal' },
+    { id: 'EF PROPANE', town: 'effingham', name: 'Crossroads Propane' },
+    { id: 'EF GLASS', town: 'effingham', name: 'Midstate Glass Container Co.' }
+  ];
+  function mergeExtraCustomers() {
+    const C = R();
+    if (!C || !C.CUSTOMERS) return;
+    EF_CUSTOMERS.forEach(function (extra) {
+      if (!C.CUSTOMERS.some(function (c) { return c.id === extra.id; })) C.CUSTOMERS.push(extra);
+    });
+  }
   function customers() {
+    mergeExtraCustomers();
     return R().CUSTOMERS.filter(function (c) { return c.town === 'mattoon' || (c.town === 'neoga' && neogaOpen()) || (c.town === 'effingham' && effinghamOpen()); });
   }
-  function custName(id) { const c = R().CUSTOMERS.filter(function (x) { return x.id === id; })[0]; return c ? c.name : id; }
+  // Nov 13 (Stephen): a local only lists customers at its own yard (start, and tie-up if different). Neoga is an option on either local once it is open.
+  function customersForJob(d) {
+    const all = customers();
+    if (!d || d.type !== 'local') return all;
+    const towns = [];
+    function add(t) { if (t && towns.indexOf(t) < 0) towns.push(t); }
+    add(d.start || 'mattoon');
+    if (d.tieUp && d.tieUp !== d.start) add(d.tieUp);
+    if (neogaOpen()) add('neoga');
+    return all.filter(function (c) { return towns.indexOf(c.town) >= 0; });
+  }
+  function custName(id) {
+    mergeExtraCustomers();
+    const c = (R().CUSTOMERS || []).filter(function (x) { return x.id === id; })[0];
+    if (c) return c.name;
+    const e = EF_CUSTOMERS.filter(function (x) { return x.id === id; })[0];
+    return e ? e.name : id;
+  }
+
+  // Interchange catalog is data-driven so a future map can add rows. Ids are stable on saved calls.
+  const INTERCHANGES = [
+    { id: 'mattoon-ic', town: 'mattoon', name: 'IC interchange', tracks: ['IC Inbound', 'IC Outbound', 'IC-INT'], dest: 'IC-INT' },
+    // Nov 13 (Stephen): Effingham has only a PC interchange. IX1, IX2, and the PCX wye are one place; IC-routed cars can still arrive there (PC/IC interchange at Mattoon). Routing is unchanged.
+    { id: 'effingham-pc', town: 'effingham', name: 'PC Interchange', tracks: ['IX1', 'IX2', 'PCX'], dest: 'PC-INT' },
+    { id: 'neoga-nw', town: 'neoga', name: 'N&W interchange', tracks: ['NWI', 'NW-INT'], dest: 'NW-INT' }
+  ];
+  function migrateIxId(id) { return id === 'effingham-ic' ? 'effingham-pc' : id; }
+  function interchangeById(id) { id = migrateIxId(id); return INTERCHANGES.filter(function (x) { return x.id === id; })[0] || null; }
+  function townIsOpen(id) {
+    if (id === 'mattoon') return true;
+    if (id === 'neoga') return neogaOpen();
+    if (id === 'effingham') return effinghamOpen();
+    return false;
+  }
+  function jobTownsOf(d) {
+    const LINE = ['mattoon', 'neoga', 'effingham'], out = [];
+    function add(t) { if (t && townIsOpen(t) && out.indexOf(t) < 0) out.push(t); }
+    add(d && d.start); add(d && d.tieUp);
+    const i = LINE.indexOf(d && d.start), j = LINE.indexOf(d && d.tieUp);
+    if (i >= 0 && j >= 0) { for (let k = Math.min(i, j); k <= Math.max(i, j); k++) add(LINE[k]); }
+    return out;
+  }
+  function reachableInterchanges(d) {
+    const towns = jobTownsOf(d || {});
+    return INTERCHANGES.filter(function (ix) { return townIsOpen(ix.town) && towns.indexOf(ix.town) >= 0; });
+  }
+  function selectedInterchanges(d) {
+    const reach = reachableInterchanges(d);
+    let ids = (d && d.interchanges) ? d.interchanges.map(migrateIxId) : [];
+    // Older drafts only had a single Local interchange checkbox (Mattoon IC).
+    if (!ids.length && d && d.localIx) {
+      if (reach.some(function (x) { return x.id === 'mattoon-ic'; })) ids = ['mattoon-ic'];
+    }
+    return ids.filter(function (id, i) { return ids.indexOf(id) === i && reach.some(function (x) { return x.id === id; }); });
+  }
+  function trackMatchesIx(trackId, ix) {
+    const t = trackId || '';
+    return (ix.tracks || []).some(function (key) { return t === key || t.indexOf(key) === 0; });
+  }
+  function cutOnIx(c, ix) {
+    return (c && c.path || []).some(function (g) { return trackMatchesIx(g.t, ix); });
+  }
   function roadTracks() {
     const t = [];
     for (let n = 1; n <= (G.NY || 6); n++) t.push('YARD ' + n);
@@ -1334,10 +1412,69 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return v.type === t;
   }
   function isFreight(v) {
-    return v && G.TYPES[v.type] && G.TYPES[v.type].kind === 'car' && v.type !== 'caboose';
+    if (!v || v.type === 'caboose' || v.type === 'gp9') return false;
+    const T = G && G.TYPES && G.TYPES[v.type];
+    if (T) return T.kind === 'car';
+    // Effingham's call-sheet bind only stubs TYPES for gp9/caboose, so still count obvious freight.
+    return !!(v.type || v.dest) && !/^(gp9|sd\d|sw\d|engine|loco)/i.test(v.type || '');
+  }
+  function eachFreight(fn) {
+    const seen = {};
+    function one(v, extra) {
+      if (!v || !isFreight(v) || (v.id && seen[v.id])) return;
+      if (v.id) seen[v.id] = true;
+      fn(v, extra || {});
+    }
+    try {
+      const veh = st().veh;
+      if (veh) Object.values(veh).forEach(function (v) { one(v, { src: 'state' }); });
+    } catch (e) { }
+    try {
+      const towns = (G && G.env && G.env().towns) || {};
+      Object.keys(towns).forEach(function (tid) {
+        (towns[tid] && towns[tid].cuts || []).forEach(function (c) {
+          (c.veh || []).forEach(function (v) { one(v, { town: tid, cut: c }); });
+        });
+        (towns[tid] && towns[tid].nwPend || []).forEach(function (v) { one(v, { town: tid, pend: true }); });
+      });
+    } catch (e) { }
+    // Live Effingham pack keeps cuts on S, which may be newer than the last env snapshot.
+    try {
+      const S = typeof window !== 'undefined' && window.__effingham && window.__effingham.S;
+      if (S && S.cuts) S.cuts.forEach(function (c) {
+        (c.veh || []).forEach(function (v) { one(v, { town: 'effingham', cut: c }); });
+      });
+    } catch (e) { }
   }
   function countIndustry(id) {
-    return Object.values(st().veh).filter(function (v) { return isFreight(v) && v.dest === id; }).length;
+    let n = 0;
+    eachFreight(function (v) { if (v.dest === id) n++; });
+    return n;
+  }
+  function countIxOut(ix) {
+    if (!ix) return 0;
+    if (ix.id === 'mattoon-ic') return countOutYard();
+    if (ix.id === 'neoga-nw') return 0;
+    if (!ix.dest) return 0;
+    let n = 0;
+    eachFreight(function (v, extra) {
+      if (onPlayer(v) || v.dest !== ix.dest) return;
+      if (extra.cut && cutOnIx(extra.cut, ix)) return;
+      n++;
+    });
+    return n;
+  }
+  function countIxIn(ix) {
+    if (!ix) return 0;
+    if (ix.id === 'mattoon-ic') return countInICI();
+    if (ix.id === 'neoga-nw') return countNWI();
+    let n = 0;
+    eachFreight(function (v, extra) {
+      if (onPlayer(v) || !extra.cut || !cutOnIx(extra.cut, ix)) return;
+      if (ix.dest && v.dest === ix.dest) return;
+      n++;
+    });
+    return n;
   }
   function countOnTrack(trackId) {
     if (trackId === 'NWI' || trackId === 'NW-INT') return countNWI();
@@ -1387,19 +1524,26 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       symbol: '', type: 'local', start: 'mattoon', tieUp: 'mattoon',
       crewId: crew ? crew.id : null,
       engines: locos0[0] ? [locos0[0].id] : [],
-      localIx: true, industries: [], classify: [], buildTrack: 'YARD 5', buildOrder: [],
+      interchanges: [], industries: [], classify: [], buildTrack: 'YARD 5', buildOrder: [],
       stops: [], stopAct: 'setout', stopTrack: '', yardTab: 'classify', crewOpen: false
     };
   }
   function defaultSymbol(d) {
     const p = d.type === 'yard' ? 'Y' : d.type === 'local' ? 'L' : 'R';
-    const t = d.start === 'neoga' ? 'NG' : 'MA';
+    const t = d.start === 'neoga' ? 'NG' : d.start === 'effingham' ? 'EF' : 'MA';
     return p + t + ((st().calls || []).filter(function (c) { return c.day === G.dayNo(); }).length + 1);
+  }
+  function pushIxWork(work, d) {
+    selectedInterchanges(d).forEach(function (id) {
+      const ix = interchangeById(id); if (!ix) return;
+      const outCars = countIxOut(ix), inCars = countIxIn(ix);
+      work.push({ kind: 'localInterchange', town: ix.town, interchange: ix.id, dest: ix.dest || undefined, tracks: (ix.tracks || []).slice(), outCars: outCars, inCars: inCars, cars: outCars + inCars });
+    });
   }
   function draftToJob(d) {
     const work = [];
     if (d.type === 'yard') {
-      if (d.localIx) work.push({ kind: 'localInterchange', town: d.start, outCars: countOutYard(), inCars: countInICI() });
+      pushIxWork(work, d);
       (d.classify || []).forEach(function (rule) {
         if (!rule.track) return;
         work.push({ kind: 'classify', town: d.start, dest: rule.dest || undefined, carType: rule.carType || undefined, track: rule.track, cars: countClassify(rule) });
@@ -1407,7 +1551,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if ((d.buildOrder || []).length) work.push({ kind: 'buildLocal', town: d.start, track: d.buildTrack || 'YARD 5', order: d.buildOrder.slice(), cars: countBuild(d.buildOrder) });
       (d.industries || []).forEach(function (id) { work.push({ kind: 'industry', customer: id, cars: countIndustry(id) }); });
     } else if (d.type === 'local') {
-      (d.industries || []).forEach(function (id) { work.push({ kind: 'industry', customer: id, cars: countIndustry(id) }); });
+      pushIxWork(work, d);
+      const allow = {};
+      customersForJob(d).forEach(function (c) { allow[c.id] = true; });
+      (d.industries || []).forEach(function (id) { if (allow[id]) work.push({ kind: 'industry', customer: id, cars: countIndustry(id) }); });
     } else {
       (d.stops || []).forEach(function (s) {
         const town = (R().trackInfo(s.track) || {}).town;
@@ -1434,9 +1581,25 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!s.crewAssigned) s.crewAssigned = {};
     if (!s.crewTieUps) s.crewTieUps = [];
     try {
-      const C = R();
-      if (C && C.CUSTOMERS && !C.CUSTOMERS.some(function (c) { return c.id === 'EF GLASS'; })) {
-        C.CUSTOMERS.push({ id: 'EF GLASS', town: 'effingham', name: 'Midstate Glass Container Co.' });
+      mergeExtraCustomers();
+    } catch (e) {}
+    // Nov 13 (Stephen): the old Effingham IC checkbox is the same PC Interchange.
+    try {
+      const pc = interchangeById('effingham-pc');
+      (s.calls || []).forEach(function (c) {
+        (c.work || []).forEach(function (w) {
+          if (!w || w.kind !== 'localInterchange') return;
+          if (w.interchange === 'effingham-ic' || (w.town === 'effingham' && w.interchange === 'effingham-ic')) {
+            w.interchange = 'effingham-pc';
+            w.town = 'effingham';
+            if (pc) { w.tracks = (pc.tracks || []).slice(); w.dest = pc.dest || w.dest; }
+          }
+        });
+      });
+      const E = G && G.env && G.env();
+      const ef = E && E.towns && E.towns.effingham;
+      if (ef && ef.pendingIx && ef.pendingIx.length) {
+        ef.pendingIx.forEach(function (p) { if (p && p.interchange === 'effingham-ic') p.interchange = 'effingham-pc'; });
       }
     } catch (e) {}
   }
@@ -1501,7 +1664,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     (c.work || []).forEach(function (w) {
       let t = '';
       if (w.kind === 'industry') t = custName(w.customer);
-      else if (w.kind === 'localInterchange') t = 'IC interchange';
+      else if (w.kind === 'localInterchange') t = ((interchangeById(w.interchange) || {}).name || 'IC interchange') + (w.town ? ' · ' + townName(w.town) : '');
       else if (w.kind === 'classify') t = 'Classify → ' + trackLabel(w.track);
       else if (w.kind === 'buildLocal') t = 'Build on ' + trackLabel(w.track);
       else if (w.kind === 'pickup') t = 'Pick up ' + trackLabel(w.track);
@@ -1817,11 +1980,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
 
   // ---- create-a-symbol call sheet
-  function custChecks(selected, act) {
+  function custChecks(selected, act, list) {
     const set = {};
     (selected || []).forEach(function (id) { set[id] = true; });
     let h = '', town = null;
-    customers().forEach(function (c) {
+    (list || customers()).forEach(function (c) {
       if (c.town !== town) { town = c.town; h += '<div class="cs-town">' + esc(townName(town)) + '</div>'; }
       h += '<label class="cs-chk' + (set[c.id] ? '' : ' off') + '"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '"' + (set[c.id] ? ' checked' : '') + '>' + esc(c.name) + '<small>' + countIndustry(c.id) + ' car' + (countIndustry(c.id) === 1 ? '' : 's') + '</small></label>';
     });
@@ -1878,9 +2041,22 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += lab('Yard industry work') + custChecks(d.industries, 'tog-cust');
       h += '<p class="cs-hint">A yard job can also be assigned a customer at an intermediate point, not only industries at the home yard.</p>';
     }
-    h += lab('Local interchange', 'in-town, no caboose');
-    h += '<label class="cs-chk' + (d.localIx ? '' : ' off') + '"><input type="checkbox" data-cs="tog-ix"' + (d.localIx ? ' checked' : '') + '>Local interchange · IC ' + esc(townName(d.start)) + '</label>';
-    h += '<p class="cs-hint">Take outbound IC-INT cars from the yard to IC Outbound, and pull the new inbound cars off IC Inbound. Cars not going to this local interchange stay in the yard for another train.</p>';
+    h += ixHtml(d);
+    return h;
+  }
+  function ixHtml(d) {
+    const ixs = reachableInterchanges(d), on = {};
+    selectedInterchanges(d).forEach(function (id) { on[id] = true; });
+    let h = lab('Serve local interchange', 'in-town, no caboose');
+    if (!ixs.length) {
+      h += '<p class="cs-hint">No railroad interchanges on this job yet.</p>';
+      return h;
+    }
+    ixs.forEach(function (ix) {
+      const n = countIxOut(ix) + countIxIn(ix);
+      h += '<label class="cs-chk' + (on[ix.id] ? '' : ' off') + '"><input type="checkbox" data-cs="tog-ix" data-id="' + esc(ix.id) + '"' + (on[ix.id] ? ' checked' : '') + '>' + esc(ix.name) + ' · ' + esc(townName(ix.town)) + '<small>' + n + ' car' + (n === 1 ? '' : 's') + '</small></label>';
+    });
+    h += '<p class="cs-hint">Check each railroad interchange this crew should serve. Outbound cars go to that interchange, and inbound cars come off it into the yard. Cars for an unchecked interchange stay put for another train.</p>';
     return h;
   }
   function roadHtml(d) {
@@ -1922,8 +2098,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     h += lab('Work type') + seg('type', d.type, [['yard', 'Yard'], ['local', 'Local'], ['road', 'Road']]);
     if (d.type === 'yard') h += yardHtml(d);
     else if (d.type === 'local') {
-      h += lab('Industry work') + custChecks(d.industries, 'tog-cust');
-      h += '<p class="cs-hint">Any customer can be assigned to this local, including intermediate towns. Locals handle some or most of the industry work.</p>';
+      h += lab('Industry work') + custChecks(d.industries, 'tog-cust', customersForJob(d));
+      h += '<p class="cs-hint">This local lists customers at its own yard' + (d.tieUp && d.tieUp !== d.start ? ' and at tie-up' : '') + '. Neoga customers can be added once Neoga is open.</p>';
+      h += ixHtml(d);
     } else h += roadHtml(d);
 
     h += lab('Called crew');
@@ -2133,7 +2310,20 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return ids;
   }
 
-  function runLocalIx(day) {
+  function ixOfWork(w) {
+    if (w && w.interchange) return interchangeById(migrateIxId(w.interchange));
+    return interchangeById('mattoon-ic'); // saved calls from before the checklist
+  }
+  function queueTownIx(ix, day) {
+    try {
+      const E = G.env && G.env();
+      if (!E || !E.towns || !ix) return;
+      const t = E.towns[ix.town] || (E.towns[ix.town] = {});
+      t.pendingIx = t.pendingIx || [];
+      t.pendingIx.push({ interchange: ix.id, day: day });
+    } catch (e) { }
+  }
+  function runMattoonIc(day) {
     const notes = [], C = R();
     const out = Object.values(st().veh).filter(function (v) {
       return isFreight(v) && v.dest === 'IC-INT' && onAnyYard(v) && !onPlayer(v) && C.hiredMayTakeToInterchange(v, day);
@@ -2147,6 +2337,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (i.placed.length) notes.push('pulled ' + i.placed.length + ' inbound car' + (i.placed.length > 1 ? 's' : '') + ' off IC Inbound onto ' + yard);
     if (i.left.length) notes.push('no room in the yard for ' + i.left.length + ' inbound car' + (i.left.length > 1 ? 's' : ''));
     return notes;
+  }
+  function runLocalIx(day, work) {
+    const ix = ixOfWork(work);
+    if (!ix || ix.id === 'mattoon-ic') return runMattoonIc(day);
+    queueTownIx(ix, day);
+    const nOut = countIxOut(ix), nIn = countIxIn(ix);
+    const bits = [];
+    if (nOut) bits.push(nOut + ' outbound');
+    if (nIn) bits.push(nIn + ' inbound');
+    return ['served ' + ix.name + ' at ' + townName(ix.town) + (bits.length ? ' (' + bits.join(', ') + ')' : '') + ' — cars stay until you are in ' + townName(ix.town)];
   }
   function runClassify(rule) {
     const cars = Object.values(st().veh).filter(function (v) {
@@ -2168,18 +2368,20 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function runIndustry(customer, day) {
     const C = R(), notes = [];
-    if (customer === 'EF GLASS') {
-      if (typeof window !== 'undefined' && window.__effingham && window.__effingham.crewSwapMidstate) {
+    if (/^EF /.test(customer || '')) {
+      if (customer === 'EF GLASS' && typeof window !== 'undefined' && window.__effingham && window.__effingham.crewSwapMidstate) {
         return window.__effingham.crewSwapMidstate() || [];
       }
       try {
         const E = G.env && G.env();
         if (E && E.towns) {
           const ng = E.towns.effingham || (E.towns.effingham = {});
-          ng.pendingCrewSwap = 1;
+          if (customer === 'EF GLASS') ng.pendingCrewSwap = 1;
+          ng.pendingCrewWork = ng.pendingCrewWork || [];
+          if (ng.pendingCrewWork.indexOf(customer) < 0) ng.pendingCrewWork.push(customer);
         }
       } catch (e) {}
-      notes.push('Midstate Glass: crew will swap soda-ash cars when you are next in Effingham');
+      notes.push(custName(customer) + ': crew will switch when you are next in Effingham');
       return notes;
     }
     if (customer === 'CIC' && G.cicDay && !G.cicDay(day)) {
@@ -2239,7 +2441,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       return w.kind === 'setout' && w.track && (w.track.indexOf('YARD') === 0 || w.track === 'IC Inbound' || w.track === 'IC Outbound');
     })[0];
     doneSet.forEach(function (w) {
-      if (w.kind === 'localInterchange') notes.push.apply(notes, runLocalIx(day));
+      if (w.kind === 'localInterchange') notes.push.apply(notes, runLocalIx(day, w));
       else if (w.kind === 'classify') notes.push(runClassify(w));
       else if (w.kind === 'buildLocal') notes.push(runBuild(w));
       else if (w.kind === 'industry') notes.push.apply(notes, runIndustry(w.customer, day));
@@ -2437,7 +2639,14 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     else if (a === 'type') { draft.type = b.getAttribute('data-v'); showSheet(true); }
     else if (a === 'ytab') { draft.yardTab = b.getAttribute('data-v'); showSheet(true); }
-    else if (a === 'tog-ix') { draft.localIx = !!b.checked; b.closest('.cs-chk').classList.toggle('off', !b.checked); paintEst(); }
+    else if (a === 'tog-ix') {
+      const id = b.getAttribute('data-id');
+      draft.interchanges = draft.interchanges || [];
+      const i = draft.interchanges.indexOf(id);
+      if (b.checked) { if (id && i < 0) draft.interchanges.push(id); }
+      else if (i >= 0) draft.interchanges.splice(i, 1);
+      showSheet(true);
+    }
     else if (a === 'tog-cust') {
       const id = b.getAttribute('data-id');
       const i = draft.industries.indexOf(id);
@@ -2468,6 +2677,14 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (f === 'symbol') { draft.symbol = el.value; return; }
     if (f === 'start' || f === 'tieUp' || f === 'buildTrack' || f === 'stopAct' || f === 'stopTrack') {
       draft[f] = el.value;
+      if (f === 'start' || f === 'tieUp') {
+        draft.interchanges = selectedInterchanges(draft);
+        if (draft.type === 'local') {
+          const allow = {};
+          customersForJob(draft).forEach(function (c) { allow[c.id] = true; });
+          draft.industries = (draft.industries || []).filter(function (id) { return allow[id]; });
+        }
+      }
       showSheet(true);
       return;
     }
