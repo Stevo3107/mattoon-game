@@ -90,21 +90,41 @@ const WB_PLACES = [
   ['EL', 'Hammond', 'IN', 'Calumet Soap Works', ['box', 'box40'], ['Groceries', 'Paper goods']],
   ['EL', 'Akron', 'OH', 'Rubber City Tire & Supply', ['box', 'box40'], ['Auto parts']],
   ['WP', 'Stockton', 'CA', 'Delta Tomato Packers', ['box'], ['Canned goods']],
+  // Nov 10: LPG / propane shippers (generic 1975 names). Only the NACC whale-belly tanks use these.
+  ['PC', 'Toledo', 'OH', 'Maumee Valley Propane', ['lpg', 'tank'], ['LPG', 'Propane']],
+  ['IC', 'Tuscola', 'IL', 'Prairie State Gas Liquids', ['lpg', 'tank'], ['LPG', 'Propane']],
+  ['MP', 'Borger', 'TX', 'Panhandle LPG Terminal', ['lpg', 'tank'], ['LPG', 'Propane']],
+  // Nov 10 (Stephen): outbound scrap mills. Inbound empty gons still bill to Effingham Iron & Metal.
+  ['IC', 'Granite City', 'IL', 'Granite City Steel Co.', ['gon'], ['Scrap Steel']],
+  ['C&NW', 'Sterling', 'IL', 'Northwestern Steel & Wire Co.', ['gon'], ['Scrap Steel']],
+  ['PC', 'East Chicago', 'IN', 'Inland Steel Co.', ['gon'], ['Scrap Steel']],
+  ['IC', 'McCook', 'IL', 'Reynolds Metals Co. (McCook Sheet & Plate)', ['gon'], ['Scrap Aluminum']],
+  ['N&W', 'Lafayette', 'IN', 'Aluminum Co. of America', ['gon'], ['Scrap Aluminum']],
+  ['RI', 'Riverdale', 'IA', 'Aluminum Co. of America (Davenport Works)', ['gon'], ['Scrap Aluminum']],
 ];
 // where each road hands to the IC (1975 junctions; flavour, not a timetable)
 const WB_JCT = { PC: 'Effingham', 'N&W': 'Decatur', 'C&NW': 'Chicago', GTW: 'Chicago', MILW: 'Chicago', RI: 'Chicago', SLSF: 'Memphis', MP: 'East St. Louis', ATSF: 'Chicago',
   UP: 'Council Bluffs', SP: 'SSW–East St. Louis', BN: 'East St. Louis', SOU: 'Birmingham', 'L&N': 'Louisville', 'B&O': 'East St. Louis', 'C&O': 'Chicago', SCL: 'L&N–Louisville',
-  SOO: 'Chicago', KCS: 'New Orleans', SSW: 'East St. Louis', MKT: 'Kansas City', 'D&RGW': 'MP–Kansas City', RDG: 'PC–Effingham', EL: 'Chicago', WP: 'UP–Council Bluffs', IC: null };
+  SOO: 'Chicago', KCS: 'Shreveport', SSW: 'East St. Louis', MKT: 'Kansas City', 'D&RGW': 'MP–Kansas City', RDG: 'PC–Effingham', EL: 'Chicago', WP: 'UP–Council Bluffs', GN: 'Chicago', IC: null };
 const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH3': ['Illini Farm Supply', 'Mattoon, IL'], 'IFS UAN': ['Illini Farm Supply', 'Mattoon, IL'],
-  'IFS DOCK': ['Illini Farm Supply', 'Mattoon, IL'], GRAIN: ['Prairie Grain Co.', 'Mattoon, IL'], HOUSE: ['NI&I Freight House (team track)', 'Mattoon, IL'] };
+  'IFS DOCK': ['Illini Farm Supply', 'Mattoon, IL'], GRAIN: ['Prairie Grain Co.', 'Mattoon, IL'], HOUSE: ['NI&I Freight House (team track)', 'Mattoon, IL'],
+  'EF PROPANE': ['Crossroads Propane', 'Effingham, IL'],
+  'EF SCRAP': ['Effingham Iron & Metal', 'Effingham, IL'],
+  'EF GLASS': ['Midstate Glass Container Co.', 'Effingham, IL'],
+  'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'] };
 // car owner's home / pool for empty returns
 const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
   ACFX: ['ACF Industries lessee', 'St. Charles, MO'], UTLX: ['Union Tank Car lessee', 'Whiting, IN'], PC: ['PC car distributor', 'Philadelphia, PA'], CNW: ['C&NW car distributor', 'Chicago, IL'],
-  'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'] };
+  'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'],
+  NATX: ['NATX lessee (North American)', 'Chicago, IL'], SUNX: ['Sun Energy', 'Columbus, OH'], PRR: ['PC car distributor (ex-PRR)', 'Philadelphia, PA'],
+  KCS: ['Kansas City Southern', 'Kansas City, MO'],
+  ACY: ['Akron, Canton & Youngstown', 'Akron, OH'],
+  BN: ['Burlington Northern', 'St. Paul, MN'],
+  GN: ['Great Northern', 'St. Paul, MN'] };
 const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'IC–Mattoon–NI&I' : `${road}–${j}–IC–Mattoon–NI&I`; };
 const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–IC' : `NI&I–Mattoon–IC–${j}–${road}`; };
-const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' };
-const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', hopper: 'LO COV HOPPER' };
+const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon' };
+const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', ps2: 'LO PS-2 35FT', cf: 'LO CTR FLOW 54FT', cf2: 'LO CTR FLOW 40FT', gon: 'GB GON 52FT' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
 
 const VISIT = !!NII.visit; // Look around (Nov 1): view-only visit, the train is in another town; nothing here is run or saved
@@ -208,10 +228,24 @@ const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar5
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
 function myEngineId() { try { return NII.env().myEngine || null; } catch (e) { return null; } }
-const liveCut = () => { // Nov 12: drive the engine the player picked (shared myEngine); else first engine found
+function setMyEngine(id) { try { const e = NII.env(); e.myEngine = id || null; NII.write(); } catch (e) { } }
+function locoLabel(v) { if (!v) return 'the engine'; return 'GP9 ' + v.num; }
+function claimEngine(id) {
+  const q = standingCars().find(o => o.v && o.v.id === id && isLoco(o.v)); if (!q) return false;
+  const cur = myEngineId(), oldC = liveCut();
+  if (oldC && cur !== id) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; }
+  setMyEngine(id); toast(locoLabel(q.v) + ' is now your engine.'); save(); return true;
+}
+function releaseEngine() { // Nov 13: Give up engine — stop first so it doesn't roll unattended
+  const id = myEngineId(); if (!id) return false;
+  const q = standingCars().find(o => o.v && o.v.id === id), c = liveCut();
+  if (c) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; }
+  setMyEngine(null); toast(locoLabel(q && q.v) + ' is no longer your engine.'); save(); return true;
+}
+const liveCut = () => { // Nov 13: no fallback — drive and tap do nothing until the player taps an engine
   const id = myEngineId();
   if (id) { const c = S.cuts.find(c => (c.veh || []).some(v => v.id === id && isLoco(v))); if (c) return c; }
-  return S.cuts.find(c => c.veh.some(isLoco));
+  return null;
 };
 function pathPt(c, s) { let acc = 0; for (const g of c.path) { const l = Math.abs(g.d1 - g.d0); if (s <= acc + l + 1e-6) return { t: g.t, d: g.d0 + g.dir * (s - acc) }; acc += l; } const g = c.path[c.path.length - 1]; return { t: g.t, d: g.d1 }; }
 function extendHead(c, s) { let done = 0; while (s - done > 1e-6) { const g = c.path[c.path.length - 1], tr = T[g.t], room = g.dir > 0 ? (g.t === 'NWI' && typeof NWI_CLR === 'number' ? Math.max(0, NWI_CLR - g.d1) : tr.len - g.d1) : g.d1, step = Math.min(room, s - done);
@@ -950,7 +984,7 @@ function drawNWTrain() { const r = NWT.run; if (!r) return; const el = (performa
     y += L + 2; } }
 let flashT = 0;
 function draw() { NII.quiet(draw0); if (NAMES_ON) { try { drawNames(); } catch (e) { } } }
-// Nov 13: Mattoon's menu extras in every town. Track names on the scene (same setting as Mattoon), a waybill list, blue flags, restart.
+// Nov 13: Mattoon's menu extras in every town. Track names on the scene (same setting as Mattoon), a waybill list, restart. Blue flags are set by tapping the industry, not from the menu.
 let NAMES_ON = (() => { try { return localStorage.getItem('nii-mattoon-tracknames') !== '0'; } catch (e) { return true; } })();
 function drawNames() { const seen = {}, NM = typeof EF_TRACK_NAME !== 'undefined' ? EF_TRACK_NAME : { HT: 'House track', NWI: 'N&W interchange', RA: 'Runaround', FL: 'Miller & Sons track' }; for (const t of Object.keys(T)) { const tr = T[t], nm = NM[t]; if (!nm || !tr.len || tr.cls === 'main') continue; if (!seen[nm] || T[seen[nm]].len < tr.len) seen[nm] = t; }
   g.save(); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over'; g.font = '700 11px Arial'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.85)'; g.fillStyle = '#1c2b50';
@@ -991,16 +1025,18 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
   hud(); const tw = S.tower; if ($('rtBtn')) $('rtBtn').textContent = !tw ? 'Request route' : tw.st === 'hold' ? 'Holding for N&W' : 'Route lined';
   $('cash').textContent = '$' + Math.round(M.money || 0).toLocaleString('en-US'); $('rep').textContent = M.rep != null ? M.rep : 0; ngCheckUnlock(); $('clock').textContent = clock(E.time); $('day').textContent = 'Day ' + dayNo() + ' · Neoga';
 }
-function hud() { const c = liveCut(), l = locoV(c) || {}, mph = ctl.v / FTS, mode = S.mode || 'drive'; $('speedBtn').textContent = (S.speedX || 1) + 'x';
-  $('mph').textContent = mph.toFixed(1); const lim = c ? (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) : 10; $('speedo').classList.toggle('fast', mph > lim - 0.5);
-  $('dirArrow').textContent = mph < 0.05 || !c ? '' : (Math.sign(ctl.sv) * fwdSign(c) > 0 ? 'fwd' : 'rev');
-  const fu = l.fuel == null ? 320 : l.fuel, sa = l.sand == null ? 60 : l.sand, fp = fu / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = fu <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(fu) + ' gal';
-  $('sandBar').style.width = sa.toFixed(1) + '%'; $('sandBar').className = sa <= 0 ? 'empty' : sa < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(sa) + '%';
+function hud() { const c = liveCut(), l = locoV(c) || {}, has = !!(c && locoV(c)), mph = has ? ctl.v / FTS : 0, mode = S.mode || 'drive'; $('speedBtn').textContent = (S.speedX || 1) + 'x';
+  $('mph').textContent = has ? mph.toFixed(1) : ''; const lim = has ? (T[leadingEnd(c, 1).t].cls === 'main' && T[pathPt(c, 0).t].cls === 'main' ? SPEED.main : SPEED.other) : 10; $('speedo').classList.toggle('fast', has && mph > lim - 0.5);
+  $('dirArrow').textContent = !has || mph < 0.05 ? '' : (Math.sign(ctl.sv) * fwdSign(c) > 0 ? 'fwd' : 'rev');
+  if (has) { const fu = l.fuel == null ? 320 : l.fuel, sa = l.sand == null ? 60 : l.sand, fp = fu / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = fu <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(fu) + ' gal';
+    $('sandBar').style.width = sa.toFixed(1) + '%'; $('sandBar').className = sa <= 0 ? 'empty' : sa < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(sa) + '%';
+    $('truckBtn').classList.toggle('hide', !(fu <= 0)); }
+  else { $('fuelBar').style.width = '0%'; $('fuelBar').className = ''; $('fuelTxt').textContent = ''; $('sandBar').style.width = '0%'; $('sandBar').className = ''; $('sandTxt').textContent = ''; $('truckBtn').classList.add('hide'); }
   document.body.classList.toggle('tapmode', mode === 'tap'); $('modeDrive').classList.toggle('on', mode === 'drive'); $('modeTap').classList.toggle('on', mode === 'tap');
   ['R', 'N', 'F'].forEach((k, i) => $('rev' + k).classList.toggle('on', ctl.rev === i - 1)); $('notch').textContent = ctl.notch ? 'Notch ' + ctl.notch : 'Idle';
   document.querySelectorAll('[data-brk]').forEach(b => b.classList.toggle('on', Math.abs(+b.dataset.brk - ctl.brake) < 0.01)); $('sandBtn').classList.toggle('on', ctl.sand); $('sandBtn').textContent = ctl.sand ? 'Sanding…' : 'Sand';
-  $('truckBtn').classList.toggle('hide', !(c && fu <= 0)); $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`; $('tagsBtn').classList.toggle('on', !!S.tags);
-  let w = ''; if (c && fu <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (ctl.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (ctl.slide) w = 'WHEELS SLIDING! Sand helps you stop.'; else if (mph > lim + 0.5) w = `Over the ${lim} mph track speed.`;
+  $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`; $('tagsBtn').classList.toggle('on', !!S.tags);
+  let w = ''; if (!has) w = ''; else if (l.fuel != null && l.fuel <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (ctl.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (ctl.slide) w = 'WHEELS SLIDING! Sand helps you stop.'; else if (mph > lim + 0.5) w = `Over the ${lim} mph track speed.`;
   else if (mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.'; else if (S.crossWait) w = 'Request the route from the tower to continue.'; $('warn').textContent = w;
   const L = jobs(), nd = L.filter(j => j.done).length, nx = L.find(j => !j.done); $('jobText').innerHTML = (nx ? '📋 ' + esc(nx.text) : L.length ? '✅ All Neoga cars worked' : ngOpen() ? '📋 No cars to work. End the day for new cars.' : '📋 Neoga customers open at 100 reputation');
   $('jobStatus').className = ''; $('jobStatus').textContent = `Neoga · Day ${dayNo()} · ${nd} of ${L.length} jobs done · tap for the list`; }
@@ -1068,11 +1104,12 @@ function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); 
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Neoga jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Neoga\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
   <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (set on the N&amp;W Interchange; leave N&amp;W cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
-function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length;
+function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length, mine = isLoco(v) && myEngineId() === v.id;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · '}${v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it to Mattoon.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: leave it on the N&amp;W Interchange.' : 'Tag: ' + esc(carTag(v).code)}${v.work ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
-  <div class="btns">${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live ? '<button data-a="apCar">Run engine here</button>' : ''}${isLoco(v) && myEngineId() !== v.id ? '<button data-a="makeEngine">Make this my engine</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
+  const locoNote = isLoco(v) ? (mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.') : '';
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it to Mattoon.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: leave it on the N&amp;W Interchange.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && !isLoco(v) ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
+  <div class="btns">${isLoco(v) && !mine ? '<button data-a="makeEngine">Make this my engine</button>' : ''}${mine ? '<button data-a="giveUpEngine">Give up engine</button>' : ''}${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live && !isLoco(v) ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
 function setUncouple(on) { UNC_ON = on; const b = $('uncBtn'); if (b) { b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); } if (on) toast('Uncouple: tap the car to cut off (it and the cars beyond it stay).'); }
@@ -1087,7 +1124,7 @@ function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400
   for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x)); newDay(); save(); hideModal(); }
 function build() {
   for (const id of ['mapwrap']) { const el = $(id); if (el) el.style.display = 'none'; }
-  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div><div class="btns"><button data-a="namesToggle" class="${NAMES_ON ? 'red' : 'alt'}">Track names: ${NAMES_ON ? 'ON' : 'OFF'}</button><button data-a="waybills" class="alt">Waybills</button></div><div class="btns">${Object.keys(BFN).map(K => `<button data-a="bfOpen" data-k="${K}" class="alt">${BFNX.up(K) ? '&#9873; ' : ''}${BFN[K].short}</button>`).join('')}</div><div class="btns"><button data-a="resetAsk" class="red">&#8634; Restart from the beginning</button></div>`); } // Nov 13 (Stephen: every town's menu matches): Mattoon's track names, waybills, blue flags and restart // Menu (Nov 1): Full screen, Industries, other towns; Nov 13: Call a crew
+  { const mb = $('menuBtn'); if (mb) mb.onclick = () => NII.sharedMenu(VISIT ? '' : `<div class="btns"><button data-a="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-a="jobs" class="alt">Today's jobs</button></div><div class="btns"><button data-act="callSheet">Call a crew</button></div><div class="btns"><button data-act="simTime">Sim time</button></div><div class="btns"><button data-a="namesToggle" class="${NAMES_ON ? 'red' : 'alt'}">Track names: ${NAMES_ON ? 'ON' : 'OFF'}</button><button data-a="waybills" class="alt">Waybills</button></div><div class="btns"><button data-a="resetAsk" class="red">&#8634; Restart from the beginning</button></div>`); } // Nov 13 (Stephen: every town's menu matches): Mattoon's track names, waybills and restart. Blue flags are set by tapping the industry, not from the menu. // Menu (Nov 1): Full screen, Industries, other towns; Nov 13: Call a crew
   // Nov 3 (Stephen: "the screen should look the same as mattoon"): Mattoon's top bar, job bar, scene buttons and cab panel drive Neoga too
   const act = $('actions'); act.insertAdjacentHTML('beforeend', '<button class="act" data-a="endday">End day</button>'); // Nov 13 (Stephen: same rules on every map): To Mattoon removed; drive off the north end or use the map tabs
   { const sb = $('sceneBtns'); if (sb && !$('townsBtn')) { const tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Go to another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); sb.insertBefore(tb, $('tagsBtn')); } }
@@ -1102,7 +1139,7 @@ function build() {
   $('thrUp').onclick = () => { if (live()) { ctl.notch = Math.min(8, ctl.notch + 1); ctl.ap = null; cam.follow = true; } }; $('thrDn').onclick = () => { ctl.notch = Math.max(0, ctl.notch - 1); }; $('thrIdle').onclick = () => { ctl.notch = 0; };
   document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { ctl.brake = +b.dataset.brk; });
   $('sandBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; if (!ctl.sand && (l.sand ?? 60) <= 0) { toast('Sand boxes are empty.', 'bad'); return; } ctl.sand = !ctl.sand; };
-  $('stopBtn').onclick = () => { ctl.ap = null; SIG_WAIT = null; PEND_CROSS = null; AP_GOAL = null; if ((S.mode || 'drive') === 'tap') ctl.stopping = true; toast('Stopping.'); };
+  $('stopBtn').onclick = () => { if (!liveCut()) return; ctl.ap = null; SIG_WAIT = null; PEND_CROSS = null; AP_GOAL = null; if ((S.mode || 'drive') === 'tap') ctl.stopping = true; toast('Stopping.'); };
   $('truckBtn').onclick = () => { const l = locoV(liveCut()); if (!l) return; book('fuel', TRUCK_COST); l.fuel = FUEL_CAP * 0.25; toast('Fuel truck came out: 200 gal.'); save(); };
   // pinch zoom on phones (Neoga's +/- buttons are gone with its old bar)
   { const pts = new Map(); let d0 = 0, z0 = 1; cv.addEventListener('pointerdown', e => { pts.set(e.pointerId, e); if (pts.size === 2) { const [a, b] = [...pts.values()]; d0 = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); z0 = cam.z; } });
@@ -1110,7 +1147,7 @@ function build() {
     for (const t of ['pointerup', 'pointercancel']) cv.addEventListener(t, e => { pts.delete(e.pointerId); if (pts.size < 2) d0 = 0; }); }
   document.addEventListener('click', e => { const b = e.target.closest('[data-a]'); if (!b) return; const a = b.dataset.a, c = liveCut(); if (VISIT && !['close', 'zin', 'zout', 'map', 'towns'].includes(a)) { toast(NII.visitNote(), 'bad'); return; } if (a === 'towns') { NII.pickTown(); return; } if (['dirL', 'dirR', 'stop', 'apCar', 'mph'].includes(a)) { S.crossT = null; S.crossWait = false; crossAsk = null; }
     if (a === 'bfReq') { BFNX.request(b.dataset.k); bfPanelN(b.dataset.k); return; } if (a === 'bfOpen') { bfPanelN(b.dataset.k); return; }
-    if (a === 'close') hideModal(); else if (a === 'goS') { hideModal(); PEND_CROSS = null; delete E.cross; go('effingham'); } else if (a === 'namesToggle') { NAMES_ON = !NAMES_ON; try { localStorage.setItem('nii-mattoon-tracknames', NAMES_ON ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'waybills') showWaybillsN(); else if (a === 'resetAsk') { hideModal(); $('restartBtn').onclick(); } else if (a === 'makeEngine') { hideModal(); const q = carModal.q; if (q && isLoco(q.v)) { const oc = liveCut(); if (oc && !oc.veh.some(v => v.id === q.v.id)) { ctl.v = 0; ctl.dir = 0; ctl.ap = null; } NII.env().myEngine = q.v.id; toast('GP9 ' + q.v.num + ' is now your engine.'); save(); } } // Nov 13: tap an engine to make it yours, as in Mattoon and Effingham
+    if (a === 'close') hideModal(); else if (a === 'goS') { hideModal(); PEND_CROSS = null; delete E.cross; go('effingham'); } else if (a === 'namesToggle') { NAMES_ON = !NAMES_ON; try { localStorage.setItem('nii-mattoon-tracknames', NAMES_ON ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'waybills') showWaybillsN(); else if (a === 'resetAsk') { hideModal(); $('restartBtn').onclick(); } else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); } else if (a === 'makeEngine') { hideModal(); if (carModal.q) claimEngine(carModal.q.v.id); } else if (a === 'giveUpEngine') { hideModal(); releaseEngine(); } // Nov 13: tap an engine to make it yours, or give it up, as in Mattoon and Effingham
     else if (a === 'goN') { hideModal(); PEND_CROSS = null; if (crossAsk) E.cross = crossAsk; else delete E.cross; crossAsk = null; go('mattoon'); }
     else if (a === 'dirL' || a === 'dirR') { if (!c) return; ctl.ap = null; const want = a === 'dirR' ? 1 : -1, sg = sideOfHead(c) * want; if (ctl.dir && ctl.dir !== sg && ctl.v > 0.3) { toast('Stop first.'); return; } ctl.dir = sg; cam.follow = true; }
     else if (a === 'stop') { ctl.dir = 0; ctl.ap = null; } else if (a === 'mph') { ctl.mph = ctl.mph === 4 ? 10 : ctl.mph === 10 ? 25 : 4; $('ngMph').textContent = ctl.mph + ' mph'; }
@@ -1159,8 +1196,8 @@ function bindCrewBoardN() {
     locoCons: () => null, locoOf: c => c && (c.veh || []).find(isLoco), cicDay: () => false, cicNext: () => 0,
     roadOf, TYPES: { gp9: { kind: 'loco', name: 'GP9' }, caboose: { kind: 'car' } },
     SI: {}, SEG: {}, YARD: {}, SPOTS: {}, ECON, FH: {}, NY: 6, ICI_N: 0, ICI_ROOM: 0,
-    env: () => NII.env(), myEngineId, claimEngine: id => { NII.env().myEngine = id; save(); return true; },
-    town: 'neoga', now: () => E.time, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); left -= d; } },
+    env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
+    town: 'neoga', now: () => E.time, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); left -= d; } }, stopTrain: () => { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; },
     tracksFor: k => ({ 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] })[k] || [], yardTracks: () => ['RA'], trackName: t => t === 'RA' ? 'the run-around' : (T[t] && T[t].name) || t
   });
 }
@@ -1168,5 +1205,5 @@ if (!VISIT) { try { bindCrewBoardN(); } catch (e) { }
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); hideModal(); bindCrewBoardN(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); } });
   setInterval(() => { try { if (window.NII_CALLSHEET && NII_CALLSHEET.tick) NII_CALLSHEET.tick(); } catch (e) { } }, 500); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

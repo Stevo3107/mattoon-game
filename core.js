@@ -1966,7 +1966,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (open) h += dropHtml(c, c.crewId, 'pick-call', c.id, false) + '<div style="height:8px"></div>';
     });
     h += '<p class="cs-note">A hired crew goes on duty at its call time and works on the game clock. You won\'t see them switch: their cars show up as each piece of work finishes. Tap a face to see the whole crew.</p>';
-    h += '<div class="cs-foot"><button data-act="close" class="alt">Back to game</button></div>';
+    h += '<div class="cs-foot"><button data-cs="close" class="alt">Back to game</button></div>'; // Nov 13: same data-cs as the × — Mattoon's data-act=close hook does not run in Effingham or Neoga
     render(h, keep);
   }
 
@@ -2792,6 +2792,101 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     G.hideModal(); G.save(); paintChip();
     G.toast('Clock ran ' + Math.max(1, Math.round((nowT() - t0) / 60)) + ' min. ' + c.symbol + (c.sim.finished && c.sim.k <= k ? ' tied up before finishing ' + place + '.' : ' finished ' + place + ' at ' + clockStr(nowT()) + '. The track is yours.'), 'good');
   }
+
+  // Nov 13 (Stephen): Sim time from the Menu in every town. Same skip + stepAll path as "Sim until they finish."
+  function dayEndT(t) { return (Math.floor((t || 0) / 86400) + 1) * 86400; }
+  function parseSimInput(text, now) {
+    const s = String(text == null ? '' : text).trim();
+    now = now == null ? nowT() : now;
+    if (!s) return { error: 'Type how long to sim, or a clock time.' };
+    const clock = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(s);
+    if (clock) {
+      let h = +clock[1], m = clock[2] != null ? +clock[2] : 0;
+      if (h < 1 || h > 12 || m > 59) return { error: "That time doesn't look right." };
+      if (/pm/i.test(clock[3])) { if (h !== 12) h += 12; } else if (h === 12) h = 0;
+      const target = Math.floor(now / 86400) * 86400 + h * 3600 + m * 60;
+      if (target <= now + 0.5) return { error: "That's already passed today." };
+      return { seconds: target - now, until: target };
+    }
+    const dur = /^(\d{1,2}):(\d{2})$/.exec(s);
+    if (dur) {
+      const h = +dur[1], m = +dur[2];
+      if (m > 59) return { error: "That time doesn't look right." };
+      const sec = h * 3600 + m * 60;
+      if (sec < 1) return { error: 'Enter a time longer than 0.' };
+      return { seconds: sec };
+    }
+    if (/^\d+(\.\d+)?$/.test(s)) {
+      const min = +s;
+      if (!isFinite(min) || min <= 0) return { error: 'Enter a time longer than 0.' };
+      return { seconds: Math.round(min * 60) };
+    }
+    return { error: 'Use minutes (45), a length of time (1:30), or a clock time (3:15 PM).' };
+  }
+  function simAhead(sec) {
+    if (!G || !G.skip) return { ok: false, error: 'Fast-forward is not available here.' };
+    const t0 = nowT();
+    const cap = dayEndT(t0);
+    let want = Math.max(0, Math.round(Number(sec) || 0));
+    let capped = false;
+    if (t0 + want > cap + 0.5) { want = Math.max(0, Math.round(cap - t0)); capped = true; }
+    if (want < 1) return { ok: true, seconds: 0, capped: true, from: t0, to: t0 };
+    try { if (G.stopTrain) G.stopTrain(); } catch (e) { }
+    simBusy = true;
+    try {
+      let left = want;
+      while (left > 1e-6) {
+        const step = Math.max(1, Math.min(60, Math.ceil(left)));
+        G.skip(step); stepAll(nowT());
+        left -= step;
+      }
+    } finally { simBusy = false; }
+    try { G.save(); } catch (e) { }
+    paintChip();
+    return { ok: true, seconds: nowT() - t0, capped: capped, from: t0, to: nowT() };
+  }
+  function simTimeHtml() {
+    return '<h2>Sim time</h2>' +
+      '<p style="font-size:13px">The clock jumps ahead. Your train stays put. Hired crews go on duty and finish work as time passes.</p>' +
+      '<div class="btns"><button data-cs="sim-preset" data-sec="300">5 min</button><button data-cs="sim-preset" data-sec="900">15 min</button><button data-cs="sim-preset" data-sec="3600">1 hour</button></div>' +
+      '<p style="margin:12px 0 4px"><label for="simTimeInput">Or type a time</label></p>' +
+      '<input id="simTimeInput" type="text" autocomplete="off" placeholder="45, 1:30, or 3:15 PM" style="width:100%;box-sizing:border-box;font:16px sans-serif;padding:8px 10px;border-radius:8px;border:1px solid #c5c0b6">' +
+      '<p id="simTimeHint" style="font-size:12px;color:#666;margin:6px 0 0">Minutes (45), a length of time (1:30), or a clock time (3:15 PM).</p>' +
+      '<p id="simTimeErr" style="font-size:12.5px;color:#b3261e;margin:6px 0 0;display:none"></p>' +
+      '<div class="btns"><button data-cs="sim-go">Sim</button><button data-cs="close" class="alt">Back</button></div>';
+  }
+  function showSimErr(msg) {
+    const el = typeof document !== 'undefined' ? document.getElementById('simTimeErr') : null;
+    if (!el) { if (G && G.toast) G.toast(msg, 'bad'); return; }
+    el.style.display = '';
+    el.textContent = msg;
+  }
+  function finishSimTime(r) {
+    if (!r || !r.ok) { showSimErr((r && r.error) || 'Could not sim time.'); return; }
+    G.hideModal();
+    if (r.seconds < 1 && r.capped) { G.toast("It's already the end of the day. Use End day to start the next day."); return; }
+    const mins = Math.max(1, Math.round(r.seconds / 60));
+    if (r.capped) G.toast('Clock ran ' + mins + ' min and stopped at midnight. Use End day to start the next day.');
+    else G.toast('Clock ran ' + mins + ' min. It is ' + clockStr(nowT()) + '.', 'good');
+  }
+  function runSimTime(sec) { finishSimTime(simAhead(sec)); }
+  function runTypedSim() {
+    const inp = typeof document !== 'undefined' ? document.getElementById('simTimeInput') : null;
+    const p = parseSimInput(inp && inp.value, nowT());
+    if (p.error) { showSimErr(p.error); return; }
+    finishSimTime(simAhead(p.seconds));
+  }
+  function openSimTime() {
+    if (!G) return;
+    if (!G.skip) { G.toast('Fast-forward is not available here.', 'bad'); return; }
+    G.showModal(simTimeHtml());
+    const inp = typeof document !== 'undefined' ? document.getElementById('simTimeInput') : null;
+    if (inp) {
+      inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); runTypedSim(); } });
+      setTimeout(function () { try { inp.focus(); } catch (e) { } }, 40);
+    }
+  }
+
   function askClear() {
     const c = blk && callFor(blk.c); blk = null; G.hideModal();
     if (!onDuty(c)) return;
@@ -3045,6 +3140,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     else if (a === 'tie-go') { const id = b.getAttribute('data-id'); applyOneTie(id, tieChoice[id] || 'bunkhouse'); }
     else if (a === 'tie-later') { G.hideModal(); G.toast('Tie-up still open — finish it from Call a crew.'); }
     else if (a === 'tie') applyOneTie(b.getAttribute('data-id'), b.getAttribute('data-choice')); // older button shape
+    else if (a === 'sim-preset') runSimTime(+b.getAttribute('data-sec'));
+    else if (a === 'sim-go') runTypedSim();
     else if (a === 'blk-sim') simUntil();
     else if (a === 'blk-clear') askClear();
     else if (a === 'blk-cancel') { blk = null; G.hideModal(); }
@@ -3094,6 +3191,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (listening || typeof document === 'undefined') return;
     listening = true;
     document.addEventListener('click', onClick);
+    // Nov 13: Sim time lives in every town's Menu. The Mattoon engine is not running in Effingham or Neoga, so this opens the popup from the shared board.
+    document.addEventListener('click', function (e) {
+      const b = e.target.closest && e.target.closest('[data-act="simTime"],[data-a="simTime"]');
+      if (!b || !G) return;
+      e.preventDefault();
+      openSimTime();
+    });
     document.addEventListener('input', function (e) { if (e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field') === 'symbol') onField(e.target); });
     document.addEventListener('change', function (e) {
       const el = e.target;
@@ -3134,7 +3238,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   const api = {
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
     tick: tick, guard: guard, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
-    _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, reportLine: reportLine },
+    openSimTime: openSimTime, simAhead: simAhead, parseSimInput: parseSimInput,
+    _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, simAhead: simAhead, parseSimInput: parseSimInput, reportLine: reportLine },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show
   };
@@ -3644,10 +3749,17 @@ function claimEngine(id) {
   state.ap = null; state.stopping = false; state.ctl.notch = 0; if (state.ctl) state.ctl.brake = 1;
   setMyEngine(id); toast(locoLabel(v) + ' is now your engine.'); save(); return true;
 }
-const locoCons = () => {
+function releaseEngine() { // Nov 13: Give up engine — stop first so it doesn't roll unattended
+  const id = myEngineId(); if (!id) return false;
+  const v = V(id), c = locoCons();
+  if (c) c.v = 0;
+  state.ap = null; state.stopping = false; state.ctl.notch = 0; if (state.ctl) state.ctl.brake = 1;
+  setMyEngine(null); toast(locoLabel(v) + ' is no longer your engine.'); save(); return true;
+}
+const locoCons = () => { // Nov 13: no fallback — drive and tap do nothing until the player taps an engine
   const id = myEngineId();
   if (id) { const v = state.veh[id]; if (v && TYPES[v.type] && TYPES[v.type].kind === 'loco' && v.cid && state.cons[v.cid]) return state.cons[v.cid]; }
-  return Object.values(state.cons).find(c => locoOf(c));
+  return null;
 };
 const weight = c => c.veh.reduce((a, id) => a + V(id).wt, 0);
 function flipVeh(v) { const f = v.f; v.f = rev(v.r); v.r = rev(f); v.aFront = !v.aFront; }
@@ -3825,10 +3937,10 @@ const BF = {
 for (const K in BF) { const z = BF[K], L = SEG[z.seg].len, fi = z.flagIn || BLUE_FLAG.flagIn; z.d = z.inDir > 0 ? fi : L - fi; }
 const bfS = () => { const s = state.bf || (state.bf = {}); for (const K in BF) if (!s[K]) s[K] = { up: false, rm: null, visit: 0, raised: 0, stuck: false }; return s; }; // old saves: new customers added
 const inBF = (K, p) => p.s === BF[K].seg && (p.d - BF[K].d) * BF[K].inDir > 0;
-const consInBF = (K, c) => c.veh.some(id => { const v = V(id); return inBF(K, v.f) || inBF(K, v.r); });
+const consInBF = (K, c) => !!(c && c.veh.some(id => { const v = V(id); return inBF(K, v.f) || inBF(K, v.r); }));
 // Nov 2 / Nov 4 (Stephen): no flag while the player's train is on the customer's tracks (its own, its run-around, lead or tail) or within
 // BLUE_FLAG.near ft of EITHER end of its track, either direction along the rails; it waits until the train has left the area
-const trainNearBF = (K, c) => { const z = BF[K], segs = new Set([z.seg, ...(z.near || [])]);
+const trainNearBF = (K, c) => { if (!c) return false; const z = BF[K], segs = new Set([z.seg, ...(z.near || [])]);
   if (c.veh.some(id => { const v = V(id); return segs.has(v.f.s) || segs.has(v.r.s); })) return true;
   const nodes = new Set([SEG[z.seg].a, SEG[z.seg].b, ...(z.near || []).flatMap(i => [SEG[i].a, SEG[i].b])]), hit = p => walk(p, BLUE_FLAG.near, 'loose', null, id => nodes.has(id) ? true : undefined) === true;
   return [front(c), rear(c)].some(p => hit(p) || hit(rev(p))); };
@@ -3992,7 +4104,7 @@ function apArrive(c) {
   state.ap = null; if (state.crossGo) { crossAsk = state.crossGo; state.crossGo = null; askTravel(crossAsk.to); return; } toast('Arrived.');
 }
 function tapTarget(target) { if (VISIT) { toast(NII.visitNote(), 'bad'); return; } state.crossGo = null; crossAsk = null;
-  const c = locoCons(), l = locoOf(c);
+  const c = locoCons(), l = locoOf(c); if (!c || !l) return;
   if (l.fuel <= 0) { toast('No fuel - the engine can\'t move.', 'bad'); return; }
   for (const K in BF) if (bfS()[K].up && inBF(K, target) && !consInBF(K, c)) { toast(BFX.blockMsg(K), 'bad'); return; }
   if (!target.car) { const hv = vehAtSpot(target, c.id); if (hv) target = { s: target.s, d: target.d, car: hv.id }; } // a track spot under a car (the Map): either end, shortest route
@@ -4162,7 +4274,7 @@ function carWhere(v) {
 function jobStatus() {
   const j = state.job, v = j.car && V(j.car); if (!v) return { there: false, attached: false, ok: false };
   const there = taskThere(j), attached = !!locoOf(C(v.cid));
-  return { there, attached, ok: there && !attached && Math.abs(locoCons().v) < 0.05 };
+  const c0 = locoCons(); return { there, attached, ok: there && !attached && !(c0 && Math.abs(c0.v) >= 0.05) };
 }
 function finishTask(t) { const v = V(t.car); t.done = true; t.doneDay = dayNo();
   if (t.type === 'spot' || t.type === 'house') startWork(v);
@@ -4172,7 +4284,7 @@ function finishTask(t) { const v = V(t.car); t.done = true; t.doneDay = dayNo();
   if (rp) state.rep += rp;
   toast(`Done: ${t.text.replace(/<[^>]+>/g, '')}${rp ? ` +${rp} rep` : ''}`, 'good'); sfx('cash'); }
 function checkJob() { // every open task whose car is in place, uncoupled from the engine, with the engine stopped, is done
-  if (!state.tasks) syncTasks(); if (Math.abs(locoCons().v) >= 0.05) return; let any = false;
+  if (!state.tasks) syncTasks(); const c0 = locoCons(); if (c0 && Math.abs(c0.v) >= 0.05) return; let any = false;
   for (const t of state.tasks) { if (t.done) continue; const v = state.veh[t.car]; if (!v || locoOf(C(v.cid)) || !taskThere(t)) continue; finishTask(t); any = true; }
   repWatch(); syncTasks(); if (any) save();
 }
@@ -4286,22 +4398,22 @@ function setTags(on) { tagsOn = !!on; try { localStorage.setItem(TAGS_KEY, tagsO
 
 // ---------------------------------------------------------------- fuel & sand
 function atPad() {
-  const c = locoCons(), l = locoOf(c);
+  const c = locoCons(), l = locoOf(c); if (!c || !l) return false;
   if (l.f.s !== PAD.s || l.r.s !== PAD.s) return false;
   const mid = (l.f.d + l.r.d) / 2; return mid >= PAD.d0 + 5 && mid <= PAD.d1 - 5 && Math.abs(c.v) * MPH < 0.2;
 }
 function fillFuel() {
-  const l = locoOf(locoCons()); const need = FUEL_CAP - l.fuel; if (need < 1) { toast('Tank is already full.'); return; }
+  const l = locoOf(locoCons()); if (!l) return; const need = FUEL_CAP - l.fuel; if (need < 1) { toast('Tank is already full.'); return; }
   const gal = need; // fuel is charged per hour run (ECON), so refills at the pad are free
   l.fuel += gal; toast(`Fueled ${Math.round(gal)} gal.`, 'good'); sfx('cash'); save();
 }
 function fillSand() {
-  const l = locoOf(locoCons()); const need = 100 - l.sand; if (need < 0.5) { toast('Sand boxes are already full.'); return; }
+  const l = locoOf(locoCons()); if (!l) return; const need = 100 - l.sand; if (need < 0.5) { toast('Sand boxes are already full.'); return; }
   const pct = Math.min(need, need); if (pct < 0.5) { toast('Not enough cash for sand.', 'bad'); return; }
   l.sand += pct; // sand is charged as it's used (ECON), refills are free toast(`Sand boxes filled.`, 'good'); sfx('cash'); save();
 }
 function callTruck() {
-  const l = locoOf(locoCons()); l.fuel += TRUCK_GAL; state.money -= TRUCK_COST;
+  const l = locoOf(locoCons()); if (!l) return; l.fuel += TRUCK_GAL; state.money -= TRUCK_COST;
   toast(`Fuel truck delivered ${TRUCK_GAL} gal for $${TRUCK_COST}. Fill up at the pad next time, it's cheaper.`, 'good'); sfx('cash'); save();
 }
 
@@ -4336,7 +4448,7 @@ function showWaybill(id, go) { const v = V(id), loco = TYPES[v.type] && TYPES[v.
   const head = loco ? `<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v).replace(' (caboose)', '')}<p style="font-size:13px">${mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.'}</p>`
     : `<h2>Waybill: ${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${v.wb && v.wb.loaded ? 'Load' : 'Empty'} · ${carDest(v) === 'IC-INT' ? '<b>Ready for IC</b>: put it on IC Outbound.' : 'Tag: ' + (carDest(v) || '-')}${v.work ? ' · ' + workLine(v) : ''}</p>`;
   showModal(head + `
-  <div class="btns">${loco && !mine ? `<button data-act="makeEngine" data-id="${v.id}">Make this my engine</button>` : ''}${go && !loco ? '<button data-act="tapGo">Move engine here</button>' : ''}${loco ? '' : '<button data-act="waybills" class="alt">All waybills</button>'}<button data-act="close" class="alt">Back to game</button></div>`); }
+  <div class="btns">${loco && !mine ? `<button data-act="makeEngine" data-id="${v.id}">Make this my engine</button>` : ''}${mine ? `<button data-act="giveUpEngine" data-id="${v.id}">Give up engine</button>` : ''}${go && !loco ? '<button data-act="tapGo">Move engine here</button>' : ''}${loco ? '' : '<button data-act="waybills" class="alt">All waybills</button>'}<button data-act="close" class="alt">Back to game</button></div>`); }
 function showWaybills() { const vs = Object.values(state.veh).filter(v => TYPES[v.type].cap).sort((a, b) => (carDest(a) === 'IC-INT' ? 0 : 1) - (carDest(b) === 'IC-INT' ? 0 : 1) || roadOf(a).localeCompare(roadOf(b)));
   const row = v => { const w = waybillOf(v); return `<li><button class="alt wbrow" data-act="wbCar" data-id="${v.id}"><b>${roadOf(v)} ${v.num}</b> ${w.loaded ? esc(w.what) : 'empty'} → ${esc(w.toRoad === 'NI&I' ? w.cons : w.to + ' (' + w.toRoad + ')')}</button></li>`; };
   const rdy = vs.filter(v => carDest(v) === 'IC-INT'), rest = vs.filter(v => carDest(v) !== 'IC-INT');
@@ -4482,10 +4594,10 @@ function menu() {
   const T = state.tasks || []; showModal(`<h2>Menu</h2><div class="btns"><button data-act="townsPick">Go to another town</button></div><div class="btns"><button data-nm="fs" data-fs class="alt">${NII.fullscreen.label()}</button><button data-nm="ind" class="alt">Industries</button></div><p>Today's jobs: ${T.filter(t => t.done).length} of ${T.length} done. ${weekday(dayNo())} · Day ${dayNo()}.</p>
   <div class="btns"><button data-act="help" class="alt">How to play</button><button data-act="close">Back to game</button></div>
   <div class="btns"><button data-act="callSheet">Call a crew</button></div>
+  <div class="btns"><button data-act="simTime">Sim time</button></div>
   <div class="btns"><button data-act="endDayAsk">&#9790; End Day ${dayNo()}</button></div>
   <div class="btns"><button data-act="spotsToggle" class="${spotsOn ? 'red' : 'alt'}">Spot marks: ${spotsOn ? 'ON' : 'OFF'}</button><button data-act="tasks" class="alt">Today's jobs</button></div>
   <div class="btns"><button data-act="namesToggle" class="${namesOn ? 'red' : 'alt'}">Track names: ${namesOn ? 'ON' : 'OFF'}</button><button data-act="waybills" class="alt">Waybills</button></div>
-  <div class="btns">${Object.keys(BF).map(K => `<button data-act="bfOpen" data-k="${K}" class="alt">${bfS()[K].up ? '&#9873; ' : ''}${BF[K].short}</button>`).join('')}</div>
   <div class="btns"><button data-act="resetAsk" class="red">&#8634; Restart from the beginning</button></div>`);
 }
 document.addEventListener('click', e => {
@@ -4509,7 +4621,9 @@ document.addEventListener('click', e => {
   else if (a === 'wbCar') showWaybill(b.dataset.id, false);
   else if (a === 'tapGo') { hideModal(); if (TAP_PEND) { TAP_ASKED = true; sceneTap(TAP_PEND.sx, TAP_PEND.sy); } TAP_PEND = null; }
   else if (a === 'makeEngine') { hideModal(); claimEngine(b.dataset.id); }
+  else if (a === 'giveUpEngine') { hideModal(); releaseEngine(); }
   else if (a === 'callSheet') { if (window.NII_CALLSHEET) NII_CALLSHEET.open(); }
+  else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); }
   else if (a === 'dayDone') { if (window.NII_CALLSHEET && NII_CALLSHEET.pendingTieUps()) NII_CALLSHEET.showTieUps(); else { hideModal(); state.help = false; save(); } }
   else if (a === 'endDay') { const r = endDay(); showDaySummary(r); (r.returned || []).forEach(t => toast(t + '.', 'good')); sfx(r.pay ? 'cash' : 'tick'); }
 });
@@ -4524,25 +4638,27 @@ $('speedBtn').onclick = () => { state.speed = state.speed >= 4 ? 1 : state.speed
 document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
 function setMode(m) {
   if (state.mode === m) return; state.mode = m; const c = locoCons();
-  if (m === 'drive') { state.ap = null; state.ctl.notch = 0; state.ctl.brake = Math.abs(c.v) < 0.05 ? 1 : 0.5; c.v = Math.abs(c.v) < 0.05 ? 0 : c.v; }
-  else { state.ctl.notch = 0; state.ap = null; c.v = Math.abs(c.v) * MPH < 0.5 ? 0 : c.v; if (c.v) { state.ap = null; } }
+  if (c) {
+    if (m === 'drive') { state.ap = null; state.ctl.notch = 0; state.ctl.brake = Math.abs(c.v) < 0.05 ? 1 : 0.5; c.v = Math.abs(c.v) < 0.05 ? 0 : c.v; }
+    else { state.ctl.notch = 0; state.ap = null; c.v = Math.abs(c.v) * MPH < 0.5 ? 0 : c.v; if (c.v) { state.ap = null; } }
+  } else { state.ap = null; state.ctl.notch = 0; }
   save();
 }
 document.querySelectorAll('[data-rev]').forEach(b => b.onclick = () => {
-  const r = +b.dataset.rev, c = locoCons();
+  const r = +b.dataset.rev, c = locoCons(); if (!c) return;
   if (r !== state.ctl.rev && Math.abs(c.v) * MPH > 0.3) { toast('Stop before you move the reverser.', 'bad'); return; }
   state.ctl.rev = r; sfx('tick'); save();
 });
-$('thrUp').onclick = () => { state.ctl.notch = Math.min(8, state.ctl.notch + 1); sfx('tick'); };
-$('thrDn').onclick = () => { state.ctl.notch = Math.max(0, state.ctl.notch - 1); sfx('tick'); };
-$('thrIdle').onclick = () => { state.ctl.notch = 0; sfx('tick'); };
-document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { state.ctl.brake = +b.dataset.brk; sfx('tick'); });
-$('sandBtn').onclick = () => { const l = locoOf(locoCons()); if (!state.ctl.sand && l.sand <= 0) { toast('Sand boxes are empty.', 'bad'); return; } state.ctl.sand = !state.ctl.sand; state.ctl.sandT = 0; };
+$('thrUp').onclick = () => { if (!locoCons()) return; state.ctl.notch = Math.min(8, state.ctl.notch + 1); sfx('tick'); };
+$('thrDn').onclick = () => { if (!locoCons()) return; state.ctl.notch = Math.max(0, state.ctl.notch - 1); sfx('tick'); };
+$('thrIdle').onclick = () => { if (!locoCons()) return; state.ctl.notch = 0; sfx('tick'); };
+document.querySelectorAll('[data-brk]').forEach(b => b.onclick = () => { if (!locoCons()) return; state.ctl.brake = +b.dataset.brk; sfx('tick'); });
+$('sandBtn').onclick = () => { const l = locoOf(locoCons()); if (!l) return; if (!state.ctl.sand && l.sand <= 0) { toast('Sand boxes are empty.', 'bad'); return; } state.ctl.sand = !state.ctl.sand; state.ctl.sandT = 0; };
 $('fuelBtn').onclick = fillFuel; $('sandFillBtn').onclick = fillSand; $('truckBtn').onclick = callTruck;
-$('stopBtn').onclick = () => { if (state.ap) { state.ap.target = null; } state.ap = null; const c = locoCons(); state.mode === 'tap' && (state.stopping = true); toast('Stopping.'); }; // STOP eases off at NII_SHARED.STOP_DEC (simStep)
+$('stopBtn').onclick = () => { if (!locoCons()) return; if (state.ap) { state.ap.target = null; } state.ap = null; state.mode === 'tap' && (state.stopping = true); toast('Stopping.'); }; // STOP eases off at NII_SHARED.STOP_DEC (simStep)
 document.querySelectorAll('#mapBtns [data-z]').forEach(b => b.onclick = () => {
   const z = b.dataset.z; if (z === 'in') zoomAt(1.4, MW / 2, MH / 2); else if (z === 'out') zoomAt(1 / 1.4, MW / 2, MH / 2); else if (z === 'fit') fit();
-  else { userCam = true; const l = locoOf(locoCons()), [x, y] = xy(l.f.s, l.f.d); cam.x = x; cam.y = y; if (cam.z < 1) cam.z = 1.2; }
+  else { const l = locoOf(locoCons()); if (!l) return; userCam = true; const [x, y] = xy(l.f.s, l.f.d); cam.x = x; cam.y = y; if (cam.z < 1) cam.z = 1.2; }
 });
 function setMap(o) { mapOpen = !!o; document.body.classList.toggle('mapopen', mapOpen); try { if (mapOpen) { putSnap(); NII.mapTabs.show('mattoon', { close: () => { if (mapOpen) setMap(false); }, crossTap: VISIT ? null : crossStart }); } else NII.mapTabs.hide(); } catch (e) { } fitted = false; resize(); drawMap(); }
 $('mapBtn').onclick = () => setMap(!mapOpen); $('mapClose').onclick = () => setMap(false);
@@ -5690,13 +5806,14 @@ function sceneTap(sx, sy) {
   const pk = pk0; if (!pk) return;
   if (pk.kind === 'coupler') { uncouple(C(pk.cid), pk.i); return; }
   if (UNC_ON && pk.kind === 'car') { // Uncouple button: cut on the engine side of the tapped car
-    const c = locoCons(), j = c.veh.indexOf(pk.car), L = c.veh.findIndex(id => TYPES[V(id).type].kind !== 'car');
+    const c = locoCons(); if (!c) { toast("That car isn't on your train.", 'bad'); return; }
+    const j = c.veh.indexOf(pk.car), L = c.veh.findIndex(id => TYPES[V(id).type].kind !== 'car');
     if (j < 0 || j === L) { toast("That car isn't on your train.", 'bad'); return; }
     TAP_FLASH = { kind: 'car', car: pk.car, t: performance.now() };
     if (uncouple(c, j > L ? j - 1 : j)) setUncouple(false); return; }
   if (pk.kind === 'stand') { const ok = throwSwitch(pk.k); TAP_FLASH = { kind: 'stand', k: pk.k, t: performance.now(), bad: !ok }; return; }
   let target;
-  if (pk.kind === 'car' && !TAP_ASKED) { const v = V(pk.car); if (v.idle && !v.rent && !locoCons().veh.includes(v.id)) { // idle NI&I empty: offer to rent it to IC
+  if (pk.kind === 'car' && !TAP_ASKED) { const v = V(pk.car), mine = locoCons(); if (v.idle && !v.rent && !(mine && mine.veh.includes(v.id))) { // idle NI&I empty: offer to rent it to IC
     TAP_PEND = { sx, sy, car: v.id }; showModal(`<h2>${roadOf(v)} ${v.num}: idle empty</h2><p>No customer has asked for it. Rent it to IC? It goes out on the next IC pickup, earns $${ECON.RENT_HR.toFixed(2)}/hr while gone, and comes back empty on an IC cut when IC is done with it.</p><div class="btns"><button data-act="rentIC">Rent to IC</button><button data-act="tapGo">Move engine here</button></div>`); return; } }
   if (pk.kind === 'car' && !TAP_ASKED && TYPES[V(pk.car).type] && TYPES[V(pk.car).type].kind === 'loco') { TAP_PEND = { sx, sy, car: pk.car }; showWaybill(pk.car, false); return; }
   if (pk.kind === 'car' && !TAP_ASKED && (state.mode !== 'tap' || pk.via === 'tag')) { TAP_PEND = { sx, sy, car: pk.car }; showWaybill(pk.car, state.mode === 'tap'); return; }
@@ -5729,7 +5846,7 @@ function drawPickHi(g, f, a) {
   const ptrs = new Map(); let gest = null;
   // Nov 5 (Stephen): PC right-click on a car = its waybill (an idle NI&I empty: the Rent-to-IC offer, as a tap does). Left click / taps unchanged.
   sceneC.addEventListener('contextmenu', e => { e.preventDefault(); const [x, y] = rel(sceneC, e), pk = scenePick(x, y, true); if (!pk || pk.kind !== 'car') return;
-    const v = V(pk.car); if (!v) return; if (!VISIT && !UNC_ON && v.idle && !v.rent && !locoCons().veh.includes(v.id)) { TAP_ASKED = false; sceneTap(x, y); return; } TAP_PEND = { sx: x, sy: y, car: pk.car }; showWaybill(pk.car, false); });
+    const v = V(pk.car); if (!v) return; const mine = locoCons(); if (!VISIT && !UNC_ON && v.idle && !v.rent && !(mine && mine.veh.includes(v.id))) { TAP_ASKED = false; sceneTap(x, y); return; } TAP_PEND = { sx: x, sy: y, car: pk.car }; showWaybill(pk.car, false); });
   sceneC.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button !== 0) return; // right / middle button: not a tap or a drag
     NII_SHARED.audioOn();
     PTR_MOUSE = e.pointerType === 'mouse'; if (!PTR_MOUSE) HOVER = null;
@@ -6171,16 +6288,17 @@ function fmtMoney(m) { return (m < 0 ? '-$' : '$') + Math.abs(Math.round(m)).toL
 let lastUI = 0;
 function updateUI() { return NII.quiet(updateUI0); }
 function updateUI0() {
-  const c = locoCons(), l = locoOf(c), mph = Math.abs(c.v) * MPH, ctl = state.ctl;
+  const c = locoCons(), l = locoOf(c), has = !!(c && l), mph = has ? Math.abs(c.v) * MPH : 0, ctl = state.ctl;
   { const L = state.led || LED0(), n = L.earn + L.dem - L.hire - L.crew - L.fuel - L.sand; $('cash').textContent = `${fmtMoney(state.money)} · today ${n < 0 ? '-' : '+'}$${Math.abs(n).toFixed(0)}`; $('cash').title = `Today: earned $${L.earn.toFixed(2)}, demurrage $${L.dem.toFixed(2)}, car hire $${L.hire.toFixed(2)}, crew $${L.crew.toFixed(2)}, fuel $${L.fuel.toFixed(2)}, sand $${L.sand.toFixed(2)}`; } $('cash').classList.toggle('neg', state.money < 0);
   $('rep').textContent = state.rep;
   checkUnlocks();
   const t = state.time % 86400, h = Math.floor(t / 3600), mi = Math.floor(t / 60) % 60; $('clock').textContent = `${((h + 11) % 12) + 1}:${String(mi).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; $('day').textContent = wd3(dayNo()) + ' · Day ' + dayNo();
   $('speedBtn').textContent = state.speed + 'x';
-  $('mph').textContent = mph.toFixed(1); $('speedo').classList.toggle('fast', mph > trackLimit(c) * MPH - 0.5); $('speedo').title = `Track speed here: ${Math.round(trackLimit(c) * MPH)} mph`; { let e = $('mphLim'); if (!e) { e = document.createElement('span'); e.id = 'mphLim'; e.style.cssText = 'font-size:0.7em;opacity:0.8;margin-left:4px'; $('mph').after(e); } e.textContent = `/${Math.round(trackLimit(c) * MPH)}`; }
-  const movingSign = Math.sign(c.v) * locoSign(c); $('dirArrow').textContent = mph < 0.05 ? '' : (movingSign > 0 ? 'fwd' : 'rev');
-  const fp = l.fuel / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = l.fuel <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(l.fuel) + ' gal';
-  $('sandBar').style.width = l.sand.toFixed(1) + '%'; $('sandBar').className = l.sand <= 0 ? 'empty' : l.sand < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(l.sand) + '%';
+  $('mph').textContent = has ? mph.toFixed(1) : ''; $('speedo').classList.toggle('fast', has && mph > trackLimit(c) * MPH - 0.5); $('speedo').title = has ? `Track speed here: ${Math.round(trackLimit(c) * MPH)} mph` : ''; { let e = $('mphLim'); if (!e) { e = document.createElement('span'); e.id = 'mphLim'; e.style.cssText = 'font-size:0.7em;opacity:0.8;margin-left:4px'; $('mph').after(e); } e.textContent = has ? `/${Math.round(trackLimit(c) * MPH)}` : ''; }
+  const movingSign = has ? Math.sign(c.v) * locoSign(c) : 0; $('dirArrow').textContent = !has || mph < 0.05 ? '' : (movingSign > 0 ? 'fwd' : 'rev');
+  if (has) { const fp = l.fuel / FUEL_CAP * 100; $('fuelBar').style.width = fp.toFixed(1) + '%'; $('fuelBar').className = l.fuel <= 0 ? 'empty' : fp < 12 ? 'low' : ''; $('fuelTxt').textContent = Math.round(l.fuel) + ' gal';
+    $('sandBar').style.width = l.sand.toFixed(1) + '%'; $('sandBar').className = l.sand <= 0 ? 'empty' : l.sand < 15 ? 'low' : ''; $('sandTxt').textContent = Math.round(l.sand) + '%'; }
+  else { $('fuelBar').style.width = '0%'; $('fuelBar').className = ''; $('fuelTxt').textContent = ''; $('sandBar').style.width = '0%'; $('sandBar').className = ''; $('sandTxt').textContent = ''; }
   document.body.classList.toggle('tapmode', state.mode === 'tap'); $('modeDrive').classList.toggle('on', state.mode === 'drive'); $('modeTap').classList.toggle('on', state.mode === 'tap');
   ['R', 'N', 'F'].forEach((k, i) => $('rev' + k).classList.toggle('on', ctl.rev === i - 1));
   $('notch').textContent = ctl.notch ? 'Notch ' + ctl.notch : 'Idle';
@@ -6188,11 +6306,13 @@ function updateUI0() {
   $('sandBtn').classList.toggle('on', ctl.sand); $('sandBtn').textContent = ctl.sand ? 'Sanding…' : 'Sand';
   const pad = atPad(); $('fuelBtn').classList.toggle('hide', !pad); $('sandFillBtn').classList.toggle('hide', !pad);
   if (pad) { $('fuelBtn').textContent = 'Fill fuel'; $('sandFillBtn').textContent = 'Fill sand'; $('fuelBtn').classList.add('fuel'); $('sandFillBtn').classList.add('fuel'); }
-  $('truckBtn').classList.toggle('hide', !(l.fuel <= 0 && !pad)); $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`;
+  $('truckBtn').classList.toggle('hide', !(has && l.fuel <= 0 && !pad)); $('truckBtn').textContent = `Fuel truck ($${TRUCK_COST})`;
   let w = '';
-  if (l.fuel <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (live.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (live.slide) w = 'WHEELS SLIDING! Sand helps you stop.';
-  else if (mph > trackLimit(c) * MPH + 0.5) w = `Over the ${Math.round(trackLimit(c) * MPH)} mph track speed.`; else if (state.mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.';
-  else if (l.fuel < FUEL_CAP * 0.08) w = 'Fuel is low. Head to the fuel pad.';
+  if (has) {
+    if (l.fuel <= 0) w = 'OUT OF FUEL: engine shut down.'; else if (live.slip) w = 'WHEEL SLIP! Ease off the throttle or use sand.'; else if (live.slide) w = 'WHEELS SLIDING! Sand helps you stop.';
+    else if (mph > trackLimit(c) * MPH + 0.5) w = `Over the ${Math.round(trackLimit(c) * MPH)} mph track speed.`; else if (state.mode === 'drive' && ctl.rev !== 0 && ctl.notch > 0 && ctl.brake > 0.3 && mph < 0.1) w = 'Brake is on. Release the independent brake to move.';
+    else if (l.fuel < FUEL_CAP * 0.08) w = 'Fuel is low. Head to the fuel pad.';
+  }
   $('warn').textContent = w;
   const j = state.job; $('jobText').innerHTML = (j.done ? '✅ ' : '📋 ') + j.text;
   const js = jobStatus(); const st = $('jobStatus');
@@ -6205,9 +6325,14 @@ function updateUI0() {
 let paused = false, lastT = 0, saveT = 0, csT = 0;
 // Nov 13 clock sim: Sim until they finish. The clock jumps in 1-minute steps: car hire, your crew's wages, customer work timers.
 function skipClock(sec) { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(60, left); state.time += d; accrueHire(d); book('crew', ECON.CREW_HR * d / 3600); workTick(); left -= d; } reindex(); }
+function stopTrainForSim() { // Nov 13: Sim time stops your engine first so it does not roll unattended
+  const c = locoCons(); if (c) c.v = 0;
+  state.ap = null; state.stopping = false; if (state.ctl) { state.ctl.notch = 0; state.ctl.brake = 1; }
+}
 function simStep(dt) {
   state.time += dt; const c = locoCons();
   { const th = Math.max(0, Math.min(1, (state.ctl.notch || 0) / 8)), l0 = locoOf(c); book('crew', ECON.CREW_HR * dt / 3600); if (l0 && l0.fuel > 0) book('fuel', (ECON.FUEL_IDLE_HR + (ECON.FUEL_MAX_HR - ECON.FUEL_IDLE_HR) * th) * dt / 3600); accrueHire(dt); }
+  if (!c) { if ((workT += dt) >= 5) { workT = 0; workTick(); bfTick(); neogaAway(); } return; }
   if (state.stopping) { if (Math.abs(c.v) < 0.05) { c.v = 0; state.stopping = false; } else { const sp = Math.max(0, Math.abs(c.v) - NII_SHARED.STOP_DEC * dt); c.v = Math.sign(c.v) * sp; moveWithContacts(c, c.v * dt); return; } }
   stepConsist(c, dt);
   if (Math.abs(c.v) < 0.05 && !state.ap) checkJob(); else repWatch();
@@ -6266,8 +6391,8 @@ function bindCallSheet() {
   NII_CALLSHEET.bind({
     getState: () => state, dayNo, weekday, showModal, hideModal, toast, save, book, place, reindex,
     carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM,
-    env: () => NII.env(), myEngineId, claimEngine,
-    town: 'mattoon', now: () => state.time, skip: skipClock
+    env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
+    town: 'mattoon', now: () => state.time, skip: skipClock, stopTrain: stopTrainForSim
   });
 }
 function boot() {
@@ -6299,7 +6424,7 @@ function boot() {
 }
 // test hooks
 window.__game = { fixEnginePG, showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
-  get state() { return state; }, myEngineId, setMyEngine, claimEngine, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
+  get state() { return state; }, myEngineId, setMyEngine, claimEngine, releaseEngine, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
   setFuel(g) { locoOf(locoCons()).fuel = g; }, setSand(s) { locoOf(locoCons()).sand = s; }, live: () => live,
