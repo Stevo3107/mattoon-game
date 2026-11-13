@@ -214,7 +214,16 @@ window.NII_SHARED = (() => {
   // Any other car in it (Stephen, 11:06 AM) costs a switching fee of NW_WRONG_FEE and comes back 1-2 days later, set out on the N&W Interchange with its
   // tags, destination and load unchanged (ng.nwBack; not on our tracks meanwhile, so no hire, storage or demurrage). Takes the cuts out of ng.cuts.
   const NW_REP_CUT = 2, NW_WRONG_FEE = 50, nwPay = (v, ECON) => { const l = v.load; return Math.round((ECON.CAR + (l ? ECON.PER_TON * l.t : 0) + (v.hot ? ECON.HOT || 0 : 0) + (v.type === 'tank' && l && /NH3|nhydrous/i.test(l.c) ? ECON.NH3 || 0 : 0)) * 100) / 100; };
-  function nwPickup(ng, ECON, day) { const r = { cars: [], wrong: [], pay: 0, fee: 0, cuts: 0, rep: 0 }; if (!ng || !ng.cuts) return r;
+  function nwIxOpen() { // Nov 13 (Stephen): no N&W moves at Neoga until 100 reputation
+    try {
+      const E = (typeof NII !== 'undefined' && NII.env) ? NII.env() : null;
+      const mt = (E && E.towns && E.towns.mattoon) || (typeof window !== 'undefined' && window.__game && window.__game.state) || {};
+      if (mt.unlocks && mt.unlocks.neoga) return true;
+      if ((mt.rep || 0) >= 100) return true;
+    } catch (e) { }
+    return false;
+  }
+  function nwPickup(ng, ECON, day) { const r = { cars: [], wrong: [], pay: 0, fee: 0, cuts: 0, rep: 0 }; if (!ng || !ng.cuts || !nwIxOpen()) return r;
     for (const c of ng.cuts.slice()) { const vs = c.veh || []; if (!vs.length || !(c.path || []).length || !c.path.every(g => g.t === 'NWI') || vs.some(v => v.type === 'gp9')) continue;
       if (!vs.some(v => v.dest === 'NW-INT')) continue;
       for (const v of vs) if (v.dest === 'NW-INT') { r.pay += nwPay(v, ECON); r.cars.push(v); }
@@ -226,7 +235,7 @@ window.NII_SHARED = (() => {
   function ngAway(ng, time, open, gameSeed) { // run on Neoga's stored record from another town; returns { done: [cars], came: n }
     const out = { done: [], came: 0 }; if (!ng || !ng.cuts) return out;
     for (const c of ng.cuts) for (const v of c.veh || []) if (ngRelease(v, time)) out.done.push(v);
-    { const d = Math.floor(time / 86400) + 1; if (ng.day >= 0 && d > Math.max(ng.day, ng.nwPick || 0)) { ng.nwPick = d; out.nw = nwPickup(ng, ECON, d); } } // the N&W works its interchange each new day, crew here or not
+    { const d = Math.floor(time / 86400) + 1; if (open && ng.day >= 0 && d > Math.max(ng.day, ng.nwPick || 0)) { ng.nwPick = d; out.nw = nwPickup(ng, ECON, d); } } // Nov 13 (Stephen): N&W does not work Neoga's interchange until 100 reputation; do not advance nwPick while closed
     const d = Math.floor(time / 86400) + 1, from = Math.max(ng.day == null ? d : ng.day, ng.rollDay || 0, d - 14);
     if (open && ng.day >= 0) { for (let dd = from + 1; dd <= d; dd++) { const L = ngRoll(dd, gameSeed(dd)); out.came += L.length; ng.awayIn = (ng.awayIn || []).concat(L); } ng.rollDay = Math.max(from, d); }
     return out; }
@@ -1015,6 +1024,39 @@ window.NII_SHARED = (() => {
     });
   }
 
+  // Nov 13: one hired visit to a customer. Pull released cars off the spots first, then spot new cars into the
+  // room that frees up, oldest first. Pure: the caller says where cars are. Never moves anything itself.
+  // opts: { atIndustry(car) -> bool, onPlayer(car) -> bool, spots: number of car spots (null = no limit), allow(car) -> bool }
+  // returns { pull: [cars], spot: [cars], wait: [{ car, reason }], free: spots left after spotting (null if no limit) }
+  function industryVisit(customer, cars, opts) {
+    opts = opts || {};
+    const at = opts.atIndustry || function (c) { return !!c.atIndustry; };
+    const mine = opts.onPlayer || function () { return false; };
+    const allow = opts.allow || function () { return true; };
+    const pull = [], inbound = [], wait = [];
+    let stayOnSpot = 0;
+    (cars || []).forEach(function (car) {
+      if (!car) return;
+      if (mine(car)) { if (car.dest === customer || at(car)) wait.push({ car: car, reason: 'on-player-train' }); return; }
+      if (at(car)) {
+        if (car.relK === customer && !car.work) pull.push(car);
+        else stayOnSpot++; // still loading or unloading, or not released yet
+        return;
+      }
+      if (car.dest !== customer) return;
+      if (car.work) { wait.push({ car: car, reason: 'working' }); return; }
+      if (!allow(car)) { wait.push({ car: car, reason: 'not-today' }); return; }
+      inbound.push(car);
+    });
+    let free = opts.spots == null ? null : Math.max(0, opts.spots - stayOnSpot);
+    const spot = [];
+    pickOldestFirst(inbound).forEach(function (car) {
+      if (free == null) { spot.push(car); return; }
+      if (free > 0) { spot.push(car); free--; } else wait.push({ car: car, reason: 'no-room' });
+    });
+    return { pull: pickOldestFirst(pull), spot: spot, wait: wait, free: free };
+  }
+
   function releasedDay(car) {
     if (car.relDay != null) return car.relDay;
     if (car.relT != null) return Math.floor(car.relT / 86400) + 1;
@@ -1170,6 +1212,7 @@ window.NII_SHARED = (() => {
     expTimeFactor: expTimeFactor,
     expPayFactor: expPayFactor,
     estimateJob: estimateJob,
+    industryVisit: industryVisit,
     formatAboutHours: formatAboutHours,
     restRequiredHours: restRequiredHours,
     hoursOff: hoursOff,
@@ -1225,7 +1268,27 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function townName(id) { return ({ mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' })[id] || id || ''; }
   function placeName(id) { return id === 'mattoon' ? 'Mattoon Yard' : townName(id); }
   function neogaOpen() { const s = st(); return !!(s.unlocks && s.unlocks.neoga); }
-  function effinghamOpen() { const s = st(); let e = null; try { e = (G && G.env && G.env()) || (typeof window !== 'undefined' && window.NII && NII.env && NII.env()); } catch (x) { } return !!((e && e.towns && e.towns.effingham) || (s.towns && s.towns.effingham) || (s.unlocks && (s.unlocks.effingham || (s.towns && s.towns.mattoon && s.towns.mattoon.unlocks && s.towns.mattoon.unlocks.effingham)))); } // Nov 13: a played Effingham counts as open
+  // Nov 13 (Stephen): N&W interchange work stays closed until 100 reputation (same flag as the Neoga unlock, or raw rep if the flag hasn't been stamped yet).
+  function neogaNwOpen() {
+    try {
+      const s = st();
+      if (s && s.unlocks && s.unlocks.neoga) return true;
+      if (s && (s.rep || 0) >= 100) return true;
+    } catch (e) { }
+    return false;
+  }
+  function effinghamOpen() { // Nov 13 (Stephen): Effingham customers and the PC interchange unlock at 200 reputation, not merely because the map exists
+    try {
+      const s = st();
+      if (s && s.unlocks && s.unlocks.effingham) return true;
+      if (s && (s.rep || 0) >= 200) return true;
+      const e = (G && G.env && G.env()) || (typeof window !== 'undefined' && window.NII && NII.env && NII.env());
+      const mt = e && e.towns && e.towns.mattoon;
+      if (mt && mt.unlocks && mt.unlocks.effingham) return true;
+      if (mt && (mt.rep || 0) >= 200) return true;
+    } catch (x) { }
+    return false;
+  }
   function bases() {
     const o = [{ id: 'mattoon', name: 'Mattoon Yard' }];
     if (neogaOpen()) o.push({ id: 'neoga', name: 'Neoga' });
@@ -1250,19 +1313,37 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function customers() {
     mergeExtraCustomers();
-    return R().CUSTOMERS.filter(function (c) { return c.town === 'mattoon' || (c.town === 'neoga' && neogaOpen()) || (c.town === 'effingham' && effinghamOpen()); });
+    return R().CUSTOMERS.filter(function (c) { return c.town === 'mattoon' || (c.town === 'neoga' && neogaNwOpen()) || (c.town === 'effingham' && effinghamOpen()); });
   }
-  // Nov 13 (Stephen): a local only lists customers at its own yard (start, and tie-up if different). Neoga is an option on either local once it is open.
+  function customersWithLockedNeoga() {
+    mergeExtraCustomers();
+    const seen = {}, out = [];
+    function add(c) { if (!c || !c.id || seen[c.id]) return; seen[c.id] = true; out.push(c); }
+    customers().forEach(add);
+    (R().CUSTOMERS || []).forEach(function (c) { if (c.town === 'neoga') add(c); });
+    const order = { mattoon: 0, neoga: 1, effingham: 2 };
+    out.sort(function (a, b) { return (order[a.town] || 9) - (order[b.town] || 9); });
+    return out;
+  }
+  // Nov 13 (Stephen): a local lists customers at its own yard (start, and tie-up if different). Neoga is always listed on Mattoon and Effingham locals; greyed until 100 reputation.
   function customersForJob(d) {
-    const all = customers();
-    if (!d || d.type !== 'local') return all;
+    mergeExtraCustomers();
+    if (!d || d.type !== 'local') return customersWithLockedNeoga();
     const towns = [];
     function add(t) { if (t && towns.indexOf(t) < 0) towns.push(t); }
     add(d.start || 'mattoon');
     if (d.tieUp && d.tieUp !== d.start) add(d.tieUp);
-    if (neogaOpen()) add('neoga');
-    return all.filter(function (c) { return towns.indexOf(c.town) >= 0; });
+    add('neoga');
+    return (R().CUSTOMERS || []).filter(function (c) {
+      if (towns.indexOf(c.town) < 0) return false;
+      if (c.town === 'effingham' && !effinghamOpen()) return false;
+      return true;
+    });
   }
+  function customersAllowedForJob(d) {
+    return customersForJob(d).filter(function (c) { return c.town !== 'neoga' || neogaNwOpen(); });
+  }
+  function neogaCustLocked(id) { return customerTown(id) === 'neoga' && !neogaNwOpen(); }
   function custName(id) {
     mergeExtraCustomers();
     const c = (R().CUSTOMERS || []).filter(function (x) { return x.id === id; })[0];
@@ -1296,7 +1377,15 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function reachableInterchanges(d) {
     const towns = jobTownsOf(d || {});
-    return INTERCHANGES.filter(function (ix) { return townIsOpen(ix.town) && towns.indexOf(ix.town) >= 0; });
+    const start = d && d.start, tie = d && d.tieUp;
+    return INTERCHANGES.filter(function (ix) {
+      // Nov 13 (Stephen): N&W interchange is on Mattoon- and Effingham-based sheets whenever the Neoga map exists, even if Neoga customers are still locked (100 rep).
+      if (ix.id === 'neoga-nw') {
+        if (start === 'mattoon' || start === 'effingham' || tie === 'mattoon' || tie === 'effingham') return true;
+        return towns.indexOf('neoga') >= 0;
+      }
+      return townIsOpen(ix.town) && towns.indexOf(ix.town) >= 0;
+    });
   }
   function selectedInterchanges(d) {
     const reach = reachableInterchanges(d);
@@ -1305,7 +1394,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!ids.length && d && d.localIx) {
       if (reach.some(function (x) { return x.id === 'mattoon-ic'; })) ids = ['mattoon-ic'];
     }
-    return ids.filter(function (id, i) { return ids.indexOf(id) === i && reach.some(function (x) { return x.id === id; }); });
+    return ids.filter(function (id, i) { return ids.indexOf(id) === i && reach.some(function (x) { return x.id === id; }) && (id !== 'neoga-nw' || neogaNwOpen()); });
   }
   function trackMatchesIx(trackId, ix) {
     const t = trackId || '';
@@ -1321,7 +1410,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (neogaOpen()) t.push('NWI', 'RA');
     return t.filter(function (id) { return R().roadTrainMayUse(id); });
   }
-  function yardTracks() {
+  function yardTracks(town) {
+    town = town || (draft && draft.start) || hereTown();
+    if (town === 'effingham') {
+      try { if (G && G.yardTracks) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { }
+      return ['Y1', 'Y2', 'Y3', 'Y4'];
+    }
+    if (town === 'neoga') {
+      try { if (G && G.yardTracks) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { }
+      return ['RA'];
+    }
     const t = [];
     for (let n = 1; n <= (G.NY || 6); n++) t.push('YARD ' + n);
     return t;
@@ -1329,6 +1427,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function trackLabel(id) {
     if (id === 'NWI') return 'N&W Interchange';
     if (id === 'RA') return 'Runaround';
+    if (/^Y[1-4]$/.test(id || '')) return 'Yard ' + id.slice(1);
     const m = /^YARD (\d+)$/.exec(id || '');
     if (m) return 'Yard ' + m[1];
     return id;
@@ -1358,8 +1457,22 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const T = G.TYPES[v.type] || {};
     return road + ' ' + (T.name || String(v.type || '').toUpperCase()) + ' ' + v.num;
   }
-  function cabooseVehs() {
-    return Object.values(st().veh).filter(function (v) { return v.type === 'caboose'; });
+  function cabooseVehs(town) {
+    town = town || (draft && draft.start) || hereTown() || 'mattoon';
+    const out = [];
+    function add(v) { if (v && v.type === 'caboose') out.push(v); }
+    if (town === 'mattoon') {
+      try { Object.values(st().veh || {}).forEach(add); } catch (e) { }
+    } else {
+      function fromCuts(cuts) { (cuts || []).forEach(function (c) { (c.veh || []).forEach(add); }); }
+      try { const stt = (G.env && G.env().towns && G.env().towns[town]); if (stt) fromCuts(stt.cuts); } catch (e) { }
+      try {
+        const pack = (typeof window !== 'undefined') && ((town === 'effingham' && window.__effingham) || (town === 'neoga' && window.__neoga));
+        if (pack && pack.S) fromCuts(pack.S.cuts);
+      } catch (e) { }
+    }
+    const seen = {};
+    return out.filter(function (v) { if (!v.id || seen[v.id]) return false; seen[v.id] = true; return true; });
   }
   function reservedCabs(exceptId) {
     const used = {}, day = G.dayNo();
@@ -1368,9 +1481,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     });
     return used;
   }
-  function freeCabooses(exceptId) {
+  function freeCabooses(exceptId, town) {
     const used = reservedCabs(exceptId);
-    return cabooseVehs().filter(function (v) { return !used[v.id]; });
+    return cabooseVehs(town).filter(function (v) { return !used[v.id]; });
   }
   function yardJobCalled(day, extra) {
     if (extra && extra.type === 'yard') return true;
@@ -1446,15 +1559,139 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       });
     } catch (e) { }
   }
+
+  function customerTown(key) {
+    try {
+      const list = R() && R().CUSTOMERS;
+      if (list) {
+        const c = list.filter(function (x) { return x.id === key; })[0];
+        if (c && c.town) return c.town;
+      }
+    } catch (e) { }
+    if (/^EF /.test(key || '')) return 'effingham';
+    if (/^NG /.test(key || '')) return 'neoga';
+    return 'mattoon';
+  }
+  function freightForTown(town) {
+    const out = [];
+    if (!town || town === 'mattoon') {
+      try { Object.values(st().veh || {}).forEach(function (v) { if (isFreight(v)) out.push(v); }); } catch (e) { }
+      return out;
+    }
+    eachFreight(function (v, extra) {
+      if (isFreight(v) && extra.town === town) out.push(v);
+    });
+    return out;
+  }
+  function countSpots(key) {
+    if (key === 'HOUSE') return null; // 180 ft door: let placeOnTrack pack what fits
+    const S = G.SPOTS && G.SPOTS[key];
+    if (!S) return null;
+    if (S.spots && S.spots.length) return S.spots.length;
+    return 1;
+  }
+  // Same shape as crews.js industryVisit (Cassie, Nov 13). Used only if R().industryVisit is missing.
+  function localIndustryVisit(customer, cars, opts) {
+    opts = opts || {};
+    const at = opts.atIndustry || function (c) { return !!c.atIndustry; };
+    const mine = opts.onPlayer || function () { return false; };
+    const allow = opts.allow || function () { return true; };
+    const pull = [], inbound = [], wait = [];
+    let stayOnSpot = 0;
+    (cars || []).forEach(function (car) {
+      if (!car) return;
+      if (mine(car)) { if (car.dest === customer || at(car)) wait.push({ car: car, reason: 'on-player-train' }); return; }
+      if (at(car)) {
+        if (car.relK === customer && !car.work) pull.push(car);
+        else stayOnSpot++;
+        return;
+      }
+      if (car.dest !== customer) return;
+      if (car.work) { wait.push({ car: car, reason: 'working' }); return; }
+      if (!allow(car)) { wait.push({ car: car, reason: 'not-today' }); return; }
+      inbound.push(car);
+    });
+    let free = opts.spots == null ? null : Math.max(0, opts.spots - stayOnSpot);
+    const spot = [];
+    const pick = (R() && R().pickOldestFirst) ? R().pickOldestFirst : function (a) { return (a || []).slice(); };
+    pick(inbound).forEach(function (car) {
+      if (free == null) { spot.push(car); return; }
+      if (free > 0) { spot.push(car); free--; } else wait.push({ car: car, reason: 'no-room' });
+    });
+    return { pull: pick(pull), spot: spot, wait: wait, free: free };
+  }
+  function visitFor(key, cars) {
+    const opts = {
+      atIndustry: function (v) { return atIndustry(v, key); },
+      onPlayer: onPlayer,
+      spots: countSpots(key),
+      allow: function (v) {
+        if (key !== 'CIC') return true;
+        if (G.cicDay && !G.cicDay(G.dayNo())) return false;
+        if (G.cicNext) { const allow = G.cicNext(); return !allow || allow.has(v.id); }
+        return true;
+      }
+    };
+    try { if (R() && typeof R().industryVisit === 'function') return R().industryVisit(key, cars, opts); } catch (e) { }
+    return localIndustryVisit(key, cars, opts);
+  }
+  function waitNote(item, key) {
+    const v = item.car, why = item.reason;
+    if (why === 'on-player-train') return nameOf(v) + ' is coupled to your engine — left it';
+    if (why === 'working') return nameOf(v) + ' is still being loaded or unloaded at ' + key + ' — left it';
+    if (why === 'not-today') return nameOf(v) + ' is not for today at ' + key + ' — left it';
+    if (why === 'no-room') return 'no room for ' + nameOf(v) + ' at ' + key + ' — left it';
+    return nameOf(v) + ' left at ' + key;
+  }
+  function clearReleased(v) {
+    try { if (typeof NII !== 'undefined' && NII.ind && v.relK) NII.ind(NII.indKey(v.relK), 'out'); } catch (e) { }
+    delete v.relK; delete v.relT; delete v.relDay; delete v.demUs; delete v.demPaid;
+  }
+  function defaultYardTrack() {
+    const t = yardTracks();
+    return (t && t[0]) || 'YARD 1';
+  }
+
   function countIndustry(id) {
+    const town = customerTown(id);
+    if (town === 'mattoon') {
+      const vis = visitFor(id, freightForTown('mattoon'));
+      return vis.pull.length + vis.spot.length;
+    }
     let n = 0;
-    eachFreight(function (v) { if (v.dest === id) n++; });
+    freightForTown(town).forEach(function (v) {
+      if (v.work) return;
+      if (v.dest === id) n++;
+      else if (v.relK === id || v.from === id) n++;
+    });
+    return n;
+  }
+  function ixHomeGuess() {
+    if (draft && draft.tieUp && draft.tieUp !== 'neoga') return draft.tieUp;
+    if (draft && draft.start && draft.start !== 'neoga') return draft.start;
+    return hereTown() || 'mattoon';
+  }
+  function countNwOut(home) {
+    home = home || ixHomeGuess();
+    let n = 0;
+    if (home === 'effingham') {
+      eachFreight(function (v, extra) {
+        if (extra.town !== 'effingham' || !isFreight(v) || onPlayer(v) || v.dest !== 'NW-INT' || v.work) return;
+        n++;
+      });
+    } else {
+      try {
+        Object.values(st().veh || {}).forEach(function (v) {
+          if (isFreight(v) && v.dest === 'NW-INT' && !onPlayer(v) && !v.work) n++;
+        });
+      } catch (e) { }
+    }
     return n;
   }
   function countIxOut(ix) {
     if (!ix) return 0;
     if (ix.id === 'mattoon-ic') return countOutYard();
-    if (ix.id === 'neoga-nw') return 0;
+    if (ix.id === 'neoga-nw') return countNwOut();
     if (!ix.dest) return 0;
     let n = 0;
     eachFreight(function (v, extra) {
@@ -1498,7 +1735,22 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function countInICI() {
     return Object.values(st().veh).filter(function (v) { return isFreight(v) && G.carWhere(v).icIn && !onPlayer(v); }).length;
   }
+  function onEfYardCut(extra) {
+    const c = extra && extra.cut;
+    return !!(c && c.path && c.path.some(function (g) { return /^Y[1-4]$/.test(g.t) || /^(IX1|IX2|PCX|IX1W|IX1E|IX2W|IX2E|IXC)$/.test(g.t) || /^(GS|GSP|GL|GLP|GA|GAP|GWB)$/.test(g.t); }));
+  }
   function countClassify(rule) {
+    const town = (draft && draft.start) || hereTown();
+    if (town === 'effingham') {
+      let n = 0;
+      eachFreight(function (v, extra) {
+        if (extra.town !== 'effingham' || !isFreight(v) || onPlayer(v) || !onEfYardCut(extra)) return;
+        if (rule.dest && v.dest !== rule.dest) return;
+        if (rule.carType && !matchType(v, rule.carType)) return;
+        n++;
+      });
+      return n;
+    }
     return Object.values(st().veh).filter(function (v) {
       if (!isFreight(v) || onPlayer(v) || !onAnyYard(v)) return false;
       if (rule.dest && v.dest !== rule.dest) return false;
@@ -1526,7 +1778,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       symbol: '', type: 'local', start: here0, tieUp: here0,
       crewId: crew ? crew.id : null,
       engines: locos0[0] ? [locos0[0].id] : [],
-      interchanges: [], industries: [], classify: [], buildTrack: 'YARD 5', buildOrder: [],
+      interchanges: [], industries: [], classify: [], buildTrack: defaultYardTrack(), buildOrder: [],
       stops: [], stopAct: 'setout', stopTrack: '', yardTab: 'classify', crewOpen: false,
       startAt: dutySlots()[0]
     };
@@ -1540,7 +1792,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     selectedInterchanges(d).forEach(function (id) {
       const ix = interchangeById(id); if (!ix) return;
       const outCars = countIxOut(ix), inCars = countIxIn(ix);
-      work.push({ kind: 'localInterchange', town: ix.town, interchange: ix.id, dest: ix.dest || undefined, tracks: (ix.tracks || []).slice(), outCars: outCars, inCars: inCars, cars: outCars + inCars });
+      const ixWork = { kind: 'localInterchange', town: ix.town, interchange: ix.id, dest: ix.dest || undefined, tracks: (ix.tracks || []).slice(), outCars: outCars, inCars: inCars, cars: outCars + inCars };
+      if (ix.id === 'neoga-nw') ixWork.home = (d.tieUp && d.tieUp !== 'neoga') ? d.tieUp : ((d.start && d.start !== 'neoga') ? d.start : d.start);
+      work.push(ixWork);
     });
   }
   function draftToJob(d) {
@@ -1551,13 +1805,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         if (!rule.track) return;
         work.push({ kind: 'classify', town: d.start, dest: rule.dest || undefined, carType: rule.carType || undefined, track: rule.track, cars: countClassify(rule) });
       });
-      if ((d.buildOrder || []).length) work.push({ kind: 'buildLocal', town: d.start, track: d.buildTrack || 'YARD 5', order: d.buildOrder.slice(), cars: countBuild(d.buildOrder) });
-      (d.industries || []).forEach(function (id) { work.push({ kind: 'industry', customer: id, cars: countIndustry(id) }); });
+      if ((d.buildOrder || []).length) work.push({ kind: 'buildLocal', town: d.start, track: d.buildTrack || defaultYardTrack(), order: d.buildOrder.slice(), cars: countBuild(d.buildOrder) });
+      (d.industries || []).forEach(function (id) { if (!neogaCustLocked(id)) work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: countIndustry(id) }); });
     } else if (d.type === 'local') {
       pushIxWork(work, d);
       const allow = {};
-      customersForJob(d).forEach(function (c) { allow[c.id] = true; });
-      (d.industries || []).forEach(function (id) { if (allow[id]) work.push({ kind: 'industry', customer: id, cars: countIndustry(id) }); });
+      customersAllowedForJob(d).forEach(function (c) { allow[c.id] = true; });
+      (d.industries || []).forEach(function (id) { if (allow[id] && !neogaCustLocked(id)) work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: countIndustry(id) }); });
     } else {
       (d.stops || []).forEach(function (s) {
         const town = (R().trackInfo(s.track) || {}).town;
@@ -1710,6 +1964,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .cs-card{border:1px solid var(--line);border-radius:8px;background:var(--cream);min-height:44px;margin:0 0 6px;padding:8px 10px}' +
     '#modal .csheet .cs-chk{display:flex;align-items:center;gap:10px;min-height:44px;margin:0 0 6px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--cream);font-weight:700;font-size:14px;color:var(--ink)}' +
     '#modal .csheet .cs-chk.off{font-weight:400;color:var(--muted)}' +
+    '#modal .csheet .cs-chk.cs-locked{opacity:0.55;pointer-events:none;background:#eeeae0}' +
     '#modal .csheet .cs-chk input{width:20px;height:20px;margin:0;accent-color:#1c2b50;flex:none}' +
     '#modal .csheet .cs-chk small{margin-left:auto;font-weight:400;color:var(--muted);font-size:12px}' +
     '#modal .csheet .cs-town{font-weight:700;font-size:13px;color:var(--navy);margin:8px 0 4px}' +
@@ -1988,8 +2243,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const set = {};
     (selected || []).forEach(function (id) { set[id] = true; });
     let h = '', town = null;
-    (list || customers()).forEach(function (c) {
+    (list || customersWithLockedNeoga()).forEach(function (c) {
       if (c.town !== town) { town = c.town; h += '<div class="cs-town">' + esc(townName(town)) + '</div>'; }
+      if (c.town === 'neoga' && !neogaNwOpen()) {
+        h += '<label class="cs-chk off cs-locked" aria-disabled="true"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '" disabled>' + esc(c.name) + '<small>opens at 100 reputation</small></label>';
+        return;
+      }
       h += '<label class="cs-chk' + (set[c.id] ? '' : ' off') + '"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '"' + (set[c.id] ? ' checked' : '') + '>' + esc(c.name) + '<small>' + countIndustry(c.id) + ' car' + (countIndustry(c.id) === 1 ? '' : 's') + '</small></label>';
     });
     return h;
@@ -2042,7 +2301,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (d.tieUp !== d.start) h += '<div class="cs-box o">Road move — the crew will take this train after makeup.</div>';
       h += '<p class="cs-hint">Crew builds it in this order and leaves it on the track. They don\'t take it on the road unless this call also has a run.</p>';
     } else {
-      h += lab('Yard industry work') + custChecks(d.industries, 'tog-cust');
+      h += lab('Yard industry work') + custChecks(d.industries, 'tog-cust', customersWithLockedNeoga());
       h += '<p class="cs-hint">A yard job can also be assigned a customer at an intermediate point, not only industries at the home yard.</p>';
     }
     h += ixHtml(d);
@@ -2051,12 +2310,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function ixHtml(d) {
     const ixs = reachableInterchanges(d), on = {};
     selectedInterchanges(d).forEach(function (id) { on[id] = true; });
-    let h = lab('Serve local interchange', 'in-town, no caboose');
+    let h = lab('Serve local interchange', (ixs.some(function (x) { return x.id === 'neoga-nw' && neogaNwOpen(); }) ? 'a run to Neoga needs a caboose' : 'in-town, no caboose'));
     if (!ixs.length) {
       h += '<p class="cs-hint">No railroad interchanges on this job yet.</p>';
       return h;
     }
     ixs.forEach(function (ix) {
+      if (ix.id === 'neoga-nw' && !neogaNwOpen()) {
+        h += '<label class="cs-chk off cs-locked" aria-disabled="true"><input type="checkbox" data-cs="tog-ix" data-id="' + esc(ix.id) + '" disabled>' + esc(ix.name) + ' · ' + esc(townName(ix.town)) + '<small>opens at 100 reputation</small></label>';
+        return;
+      }
       const n = countIxOut(ix) + countIxIn(ix);
       h += '<label class="cs-chk' + (on[ix.id] ? '' : ' off') + '"><input type="checkbox" data-cs="tog-ix" data-id="' + esc(ix.id) + '"' + (on[ix.id] ? ' checked' : '') + '>' + esc(ix.name) + ' · ' + esc(townName(ix.town)) + '<small>' + n + ' car' + (n === 1 ? '' : 's') + '</small></label>';
     });
@@ -2295,30 +2558,219 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     s.veh[id] = o;
     return id;
   }
-  function liftNWI() {
-    const ng = G.env().towns && G.env().towns.neoga;
-    const ids = [];
-    if (!ng) return ids;
-    function take(nv) { const id = importCar(nv); if (id) ids.push(id); }
-    if (ng.cuts) {
-      ng.cuts.slice().forEach(function (c) {
-        if (!(c.path || []).length || !(c.path || []).every(function (g) { return g.t === 'NWI'; })) return;
-        if ((c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
-        const keepV = [], keepA = [];
-        (c.veh || []).forEach(function (v, i) {
-          if (v.dest === 'NW-INT') { keepV.push(v); keepA.push(c.aT ? c.aT[i] : true); }
-          else take(v);
-        });
-        if (!keepV.length) ng.cuts.splice(ng.cuts.indexOf(c), 1);
-        else { c.veh = keepV; c.aT = keepA; }
-      });
+  function envTown(id) {
+    try {
+      const E = G.env && G.env();
+      if (!E) return null;
+      E.towns = E.towns || {};
+      return E.towns[id] || (E.towns[id] = {});
+    } catch (e) { return null; }
+  }
+  function ixHomeOf(work, job) {
+    if (work && work.home && work.home !== 'neoga') return work.home;
+    if (job && job.tieUp && job.tieUp !== 'neoga') return job.tieUp;
+    if (job && job.start && job.start !== 'neoga') return job.start;
+    return ixHomeGuess();
+  }
+  function cutsOverlap(a, b, pad) {
+    pad = pad == null ? 2 : pad;
+    const ap = (a && a.path) || [], bp = (b && b.path) || [];
+    for (let i = 0; i < ap.length; i++) for (let j = 0; j < bp.length; j++) {
+      const g = ap[i], h = bp[j];
+      if (g.t !== h.t) continue;
+      const lo = Math.max(Math.min(g.d0, g.d1), Math.min(h.d0, h.d1));
+      const hi = Math.min(Math.max(g.d0, g.d1), Math.max(h.d0, h.d1));
+      if (hi - lo > -pad) return true;
     }
+    return false;
+  }
+  function cloneVeh(nv) {
+    if (!nv) return null;
+    const o = {};
+    Object.keys(nv).forEach(function (k) { if (k !== 'f' && k !== 'r' && k !== 'cid' && k !== 'aFront') o[k] = nv[k]; });
+    return o;
+  }
+  function carLenOf(v) { return (v && (v.L || (G.TYPES && G.TYPES[v.type] && G.TYPES[v.type].L))) || 50; }
+  function nwiLen() {
+    try { if (typeof window !== 'undefined' && window.__neoga && window.__neoga.T && window.__neoga.T.NWI) return window.__neoga.T.NWI.len; } catch (e) { }
+    const ng = envTown('neoga');
+    let best = 0;
+    ((ng && ng.cuts) || []).forEach(function (c) {
+      (c.path || []).forEach(function (g) { if (g.t === 'NWI') best = Math.max(best, g.d0 || 0, g.d1 || 0); });
+    });
+    return best > 80 ? Math.max(best + 40, 502.6548245743669) : 502.6548245743669;
+  }
+  function placeOnNwi(vehs) {
+    const placed = [], left = [];
+    const ng = envTown('neoga');
+    if (!ng || !vehs || !vehs.length) return { placed: placed, left: vehs || [] };
+    ng.cuts = ng.cuts || [];
+    if (ng.nid == null) ng.nid = 1;
+    const N = typeof window !== 'undefined' ? window.__neoga : null;
+    const S = (N && N.S) || ng;
+    if (S.cuts && ng !== S) { /* live pack shares cuts */ }
+    const cuts = S.cuts || (S.cuts = ng.cuts);
+    const len = nwiLen();
+    const pack = !!(N && N.placeCut && N.T && N.T.NWI);
+    (vehs || []).forEach(function (v) {
+      const L = carLenOf(v), aT = [true];
+      let ok = false;
+      for (let d = len - 6; d >= L + 6 && !ok; d -= 10) {
+        let cut;
+        if (pack) cut = N.placeCut([v], aT, 'NWI', d, 1);
+        else {
+          S.nid = S.nid || ng.nid || 1;
+          const id = 'c' + (S.nid++);
+          ng.nid = S.nid;
+          cut = { id: id, veh: [v], aT: aT, path: [{ t: 'NWI', dir: 1, d0: Math.max(0, d - L), d1: d }] };
+        }
+        if ((cuts || []).some(function (o) { return cutsOverlap(o, cut, 2); })) continue;
+        cuts.push(cut);
+        ng.cuts = S.cuts || cuts;
+        placed.push(v);
+        ok = true;
+      }
+      if (!ok) left.push(v);
+    });
+    return { placed: placed, left: left };
+  }
+  function takeFromNWI() {
+    const ng = envTown('neoga');
+    const out = [];
+    if (!ng) return out;
+    const N = typeof window !== 'undefined' ? window.__neoga : null;
+    const S = (N && N.S) || ng;
+    const cuts = S.cuts || ng.cuts || [];
+    function take(nv) { const o = cloneVeh(nv); if (o) out.push(o); }
+    cuts.slice().forEach(function (c) {
+      if (!(c.path || []).length || !(c.path || []).every(function (g) { return g.t === 'NWI'; })) return;
+      if ((c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
+      const keepV = [], keepA = [];
+      (c.veh || []).forEach(function (v, i) {
+        if (v.dest === 'NW-INT') { keepV.push(v); keepA.push(c.aT ? c.aT[i] : true); }
+        else take(v);
+      });
+      if (!keepV.length) {
+        const i = cuts.indexOf(c);
+        if (i >= 0) cuts.splice(i, 1);
+      } else { c.veh = keepV; c.aT = keepA; }
+    });
+    ng.cuts = S.cuts || cuts;
     if (ng.nwPend && ng.nwPend.length) {
       const keep = [];
       ng.nwPend.forEach(function (v) { if (v.dest === 'NW-INT') keep.push(v); else take(v); });
       ng.nwPend = keep;
     }
-    return ids;
+    return out;
+  }
+  function liftNWI() {
+    if (!neogaNwOpen()) return [];
+    return takeFromNWI().map(function (v) { return importCar(v); }).filter(Boolean);
+  }
+  function takeEfNwOut() {
+    const EF = typeof window !== 'undefined' ? window.__effingham : null;
+    const ef = envTown('effingham');
+    const S = (EF && EF.S) || ef;
+    const out = [];
+    if (!S || !S.cuts) return out;
+    const rest = [];
+    S.cuts.forEach(function (c) {
+      const live = (c.veh || []).some(function (v) { return v.type === 'gp9'; });
+      if (live) { rest.push(c); return; }
+      const keepV = [], keepA = [];
+      (c.veh || []).forEach(function (v, i) {
+        if (v.dest === 'NW-INT' && !v.work) out.push(cloneVeh(v));
+        else { keepV.push(v); keepA.push(c.aT ? c.aT[i] : true); }
+      });
+      if (keepV.length === (c.veh || []).length) rest.push(c);
+      else if (keepV.length) rest.push({ id: c.id, veh: keepV, aT: keepA, path: c.path });
+    });
+    S.cuts = rest;
+    if (ef && ef !== S) ef.cuts = S.cuts;
+    return out;
+  }
+  function placeOnEfYard(vehs) {
+    const placed = [], left = [];
+    const EF = typeof window !== 'undefined' ? window.__effingham : null;
+    const ef = envTown('effingham');
+    if (EF && EF.placeCut && EF.S && EF.T) {
+      const tracks = ['Y1', 'Y2', 'Y3', 'Y4'].filter(function (t) { return EF.T[t]; });
+      (vehs || []).forEach(function (v) {
+        const L = carLenOf(v);
+        let ok = false;
+        for (let ti = 0; ti < tracks.length && !ok; ti++) {
+          const t = tracks[ti], len = EF.T[t].len;
+          for (let d = len - 6; d >= L + 6 && !ok; d -= 12) {
+            const cut = EF.placeCut([v], [true], t, d, 1);
+            if ((EF.S.cuts || []).some(function (o) { return cutsOverlap(o, cut, 2); })) continue;
+            EF.S.cuts.push(cut);
+            placed.push(v);
+            ok = true;
+          }
+        }
+        if (!ok) left.push(v);
+      });
+      try { if (EF.save) EF.save(); } catch (e) { }
+      return { placed: placed, left: left };
+    }
+    if (ef) ef.pendingNwIn = (ef.pendingNwIn || []).concat(vehs || []);
+    return { placed: [], left: vehs || [], queued: true };
+  }
+  function takeMtNwOut(day) {
+    const C = R();
+    const cars = Object.values(st().veh || {}).filter(function (v) {
+      if (!isFreight(v) || onPlayer(v) || v.dest !== 'NW-INT' || v.work) return false;
+      if (C && C.hiredMayTakeToInterchange && day != null && (v.relDay != null || v.relT != null) && !C.hiredMayTakeToInterchange(v, day)) return false;
+      return true;
+    });
+    const vehs = [];
+    cars.forEach(function (v) {
+      const o = cloneVeh(v);
+      takeIds([v.id]);
+      delete st().veh[v.id];
+      if (o) vehs.push(o);
+    });
+    return vehs;
+  }
+  function runNeogaNw(day, work, job) {
+    if (!neogaNwOpen()) return ['N&W Interchange at Neoga stays closed until 100 reputation'];
+    const notes = [], home = ixHomeOf(work, job);
+    const outVehs = home === 'effingham' ? takeEfNwOut() : takeMtNwOut(day);
+    if (outVehs.length) {
+      const r = placeOnNwi(outVehs);
+      if (r.placed.length) notes.push('set ' + r.placed.length + ' car' + (r.placed.length > 1 ? 's' : '') + ' out on the N&W Interchange at Neoga');
+      if (r.left.length) {
+        if (home === 'effingham') placeOnEfYard(r.left);
+        else r.left.forEach(function (v) { const id = importCar(v); if (id) placeOnTrack([id], pickYard()); });
+        notes.push('no room on the N&W Interchange for ' + r.left.length + ' car' + (r.left.length > 1 ? 's' : '') + ' — left in the yard');
+      }
+    }
+    const inbound = takeFromNWI();
+    if (inbound.length) {
+      if (home === 'effingham') {
+        const r = placeOnEfYard(inbound);
+        if (r.queued) notes.push('pulled ' + inbound.length + ' inbound car' + (inbound.length > 1 ? 's' : '') + ' off the N&W Interchange; they will be in the Effingham yard when you are next there');
+        else {
+          if (r.placed.length) notes.push('pulled ' + r.placed.length + ' inbound car' + (r.placed.length > 1 ? 's' : '') + ' off the N&W Interchange to the Effingham yard');
+          if (r.left.length) {
+            const ids = r.left.map(function (v) { return importCar(v); }).filter(Boolean);
+            const y = placeOnTrack(ids, pickYard());
+            if (y.placed.length) notes.push(y.placed.length + ' more inbound car' + (y.placed.length > 1 ? 's' : '') + ' went to the Mattoon yard (Effingham yard was full)');
+          }
+        }
+      } else {
+        const ids = inbound.map(function (v) { return importCar(v); }).filter(Boolean);
+        const yard = pickYard();
+        const y = placeOnTrack(ids, yard);
+        if (y.placed.length) notes.push('pulled ' + y.placed.length + ' inbound car' + (y.placed.length > 1 ? 's' : '') + ' off the N&W Interchange to ' + yard);
+        if (y.left.length) notes.push('no room in the yard for ' + y.left.length + ' inbound car' + (y.left.length > 1 ? 's' : ''));
+      }
+    }
+    if (!notes.length) notes.push('N&W Interchange at Neoga: nothing to move');
+    try { if (G.reindex) G.reindex(); } catch (e) { }
+    try { if (typeof window !== 'undefined' && window.__neoga && window.__neoga.save) window.__neoga.save(); } catch (e) { }
+    try { if (G.save) G.save(); } catch (e) { }
+    return notes;
   }
 
   function ixOfWork(w) {
@@ -2349,9 +2801,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (i.left.length) notes.push('no room in the yard for ' + i.left.length + ' inbound car' + (i.left.length > 1 ? 's' : ''));
     return notes;
   }
-  function runLocalIx(day, work) {
+  function runLocalIx(day, work, job) {
     const ix = ixOfWork(work);
     if (!ix || ix.id === 'mattoon-ic') return runMattoonIc(day);
+    if (ix.id === 'neoga-nw') return runNeogaNw(day, work, job);
     queueTownIx(ix, day);
     const nOut = countIxOut(ix), nIn = countIxIn(ix);
     const bits = [];
@@ -2378,39 +2831,35 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return 'built ' + r.placed.length + ' car' + (r.placed.length === 1 ? '' : 's') + ' on ' + work.track + (r.left.length ? '; ' + r.left.length + ' left (no room)' : '');
   }
   function runIndustry(customer, day) {
-    const C = R(), notes = [];
+    const notes = [];
     if (/^EF /.test(customer || '')) {
-      if (customer === 'EF GLASS' && typeof window !== 'undefined' && window.__effingham && window.__effingham.crewSwapMidstate) {
-        return window.__effingham.crewSwapMidstate() || [];
-      }
-      try {
-        const E = G.env && G.env();
-        if (E && E.towns) {
-          const ng = E.towns.effingham || (E.towns.effingham = {});
-          if (customer === 'EF GLASS') ng.pendingCrewSwap = 1;
-          ng.pendingCrewWork = ng.pendingCrewWork || [];
-          if (ng.pendingCrewWork.indexOf(customer) < 0) ng.pendingCrewWork.push(customer);
-        }
-      } catch (e) {}
+      try { if (hereTown() === 'effingham' && G.applyWork) return G.applyWork({ kind: 'industry', customer: customer }) || []; } catch (e) { }
+      queueEf({ kind: 'industry', customer: customer }, day);
       notes.push(custName(customer) + ': crew will switch when you are next in Effingham');
+      return notes;
+    }
+    if (/^NG /.test(customer || '')) {
+      try { if (hereTown() === 'neoga' && G.applyWork) return G.applyWork({ kind: 'industry', customer: customer }) || []; } catch (e) { }
+      queueNg({ kind: 'industry', customer: customer }, day);
+      notes.push(custName(customer) + ': crew will switch when you are next in Neoga');
       return notes;
     }
     if (customer === 'CIC' && G.cicDay && !G.cicDay(day)) {
       notes.push('CIC is not a switch day — left those cars for the next Mon / Wed / Fri');
       return notes;
     }
-    let cars = C.pickOldestFirst(Object.values(st().veh).filter(function (v) {
-      return isFreight(v) && v.dest === customer && !v.work && !onPlayer(v) && !atIndustry(v, customer);
-    }));
-    if (customer === 'CIC' && G.cicNext) {
-      const allow = G.cicNext();
-      cars = cars.filter(function (v) { return allow.has(v.id); });
-    }
-    cars.forEach(function (v) {
+    const vis = visitFor(customer, freightForTown('mattoon'));
+    vis.pull.forEach(function (v) {
+      const r = placeOnTrack([v.id], pickYard());
+      if (r.placed.length) { clearReleased(v); notes.push('pulled ' + nameOf(v) + ' from ' + customer + ' to the yard'); }
+      else notes.push('no room in the yard to pull ' + nameOf(v) + ' from ' + customer + ' — left it');
+    });
+    vis.spot.forEach(function (v) {
       const r = placeAtSpot(v.id, customer);
       if (r.placed.length) notes.push('spotted ' + nameOf(v) + ' at ' + customer);
       else notes.push('no room for ' + nameOf(v) + ' at ' + customer + ' — left it');
     });
+    (vis.wait || []).forEach(function (item) { notes.push(waitNote(item, customer)); });
     return notes;
   }
 
@@ -2523,7 +2972,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   const NG_TRACKS = { 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] }; // Nov 13: Neoga claims, same rules as the other towns
   function efYard() { try { if (G && G.yardTracks) return G.yardTracks(); } catch (e) { } return ['Y1', 'Y2', 'Y3', 'Y4']; }
   function efTracks(key) { try { if (G && G.tracksFor) { const t = G.tracksFor(key); if (t && t.length) return t; } } catch (e) { } return (EF_TRACKS[key] || []).slice(); }
-  function applyCtx(p) { return p.town === 'effingham' ? 'effingham' : p.town === 'neoga' ? 'any' : 'mattoon'; }
+  function applyCtx(p) { return p.town === 'effingham' ? 'effingham' : p.town === 'neoga' ? 'neoga' : 'mattoon'; }
   function placeOf(w, town) {
     if (!w) return 'the run to ' + townName(town);
     if (w.kind === 'industry') return custName(w.customer);
@@ -2634,9 +3083,17 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     try {
       const E = G.env && G.env(); if (!E || !E.towns) return;
       const ef = E.towns.effingham || (E.towns.effingham = {});
-      if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(w.customer); }
+      if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(w.customer); if (w.customer === 'EF GLASS') ef.pendingCrewSwap = 1; }
       else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push({ interchange: migrateIxId(w.interchange), day: day }); }
+      else if (w.kind === 'classify' || w.kind === 'buildLocal') { ef.pendingYardWork = ef.pendingYardWork || []; ef.pendingYardWork.push(w); }
       else { ef.pendingYard = (ef.pendingYard || 0) + 1; }
+    } catch (e) { }
+  }
+  function queueNg(w, day) {
+    try {
+      const E = G.env && G.env(); if (!E || !E.towns) return;
+      const ng = E.towns.neoga || (E.towns.neoga = {});
+      if (w.kind === 'industry') { ng.pendingCrewWork = ng.pendingCrewWork || []; ng.pendingCrewWork.push(w.customer); }
     } catch (e) { }
   }
   function applyPiece(c, p, t) {
@@ -2644,16 +3101,19 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     let notes = [];
     const w = p.i != null ? (c.work || [])[p.i] : null;
     if (p.kind === 'road') {
-      if (here === 'mattoon') notes = applyDoneSet(c, c.work || [], day).notes;
-      else { (st().simQueue = st().simQueue || []).push({ road: true, job: { symbol: c.symbol, start: c.start, tieUp: c.tieUp, work: c.work, type: c.type }, day: day, at: t }); notes = ['road work done; cars move when you are next in Mattoon'] }
+      notes = applyDoneSet(c, c.work || [], day).notes;
     } else if (w) {
       const ctx = applyCtx(p);
-      if (ctx === 'effingham') {
-        if (here === 'effingham') notes = (w.kind === 'classify' || w.kind === 'buildLocal') ? ['switched the Effingham yard'] : efWork(w);
+      if (w.kind === 'localInterchange' && ixOfWork(w) && ixOfWork(w).id === 'neoga-nw') {
+        notes = runNeogaNw(day, w, c);
+      } else if (ctx === 'effingham') {
+        if (here === 'effingham' && G.applyWork) notes = efWork(w);
         else { queueEf(w, day); notes = [p.place + ' done; cars move when you are next in Effingham']; }
-      } else if ((ctx === 'mattoon' || ctx === 'any') && here !== 'mattoon') { // Nov 13: Neoga customer work is kept in Mattoon's save: it lands when you are next in Mattoon
-        (st().simQueue = st().simQueue || []).push({ w: w, day: day, at: t, symbol: c.symbol });
-        notes = [p.place + ' done; cars move when you are next in Mattoon'];
+      } else if (ctx === 'neoga') {
+        try {
+          if (here === 'neoga' && G.applyWork) notes = G.applyWork(w) || [];
+          else { queueNg(w, day); notes = [p.place + ' done; cars move when you are next in Neoga']; }
+        } catch (e) { notes = ['could not finish Neoga work: ' + (e && e.message)]; }
       } else notes = doWork(c, w, day);
       if (w.kind === 'industry') { st().crewAssigned[day] = (st().crewAssigned[day] || []); if (st().crewAssigned[day].indexOf(w.customer) < 0) st().crewAssigned[day].push(w.customer); }
     }
@@ -2781,16 +3241,29 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const c = callFor(blk.c), k = blk.k; blk = null;
     if (!c || !c.sim) { G.hideModal(); return; }
     if (!G.skip) { G.hideModal(); G.toast('Fast-forward is not available here.', 'bad'); return; }
-    const place = c.sim.pieces[k] ? c.sim.pieces[k].place : 'the work', t0 = nowT();
-    simBusy = true;
-    try {
-      for (let g = 0; g < 400 && c.sim && !c.sim.finished && c.sim.k <= k; g++) {
-        const step = c.sim.paused ? 600 : Math.max(20, Math.min(600, Math.ceil(c.sim.left + 1)));
-        G.skip(step); stepAll(nowT());
-      }
-    } finally { simBusy = false; }
-    G.hideModal(); G.save(); paintChip();
-    G.toast('Clock ran ' + Math.max(1, Math.round((nowT() - t0) / 60)) + ' min. ' + c.symbol + (c.sim.finished && c.sim.k <= k ? ' tied up before finishing ' + place + '.' : ' finished ' + place + ' at ' + clockStr(nowT()) + '. The track is yours.'), 'good');
+    const place = c.sim.pieces[k] ? c.sim.pieces[k].place : 'the work';
+    const run = function () {
+      const t0 = nowT();
+      simBusy = true;
+      try {
+        for (let g = 0; g < 400 && c.sim && !c.sim.finished && c.sim.k <= k; g++) {
+          const step = c.sim.paused ? 600 : Math.max(20, Math.min(600, Math.ceil(c.sim.left + 1)));
+          G.skip(step); stepAll(nowT());
+        }
+      } finally { simBusy = false; }
+      try { G.save(); } catch (e) { }
+      paintChip();
+      return { t0: t0, now: nowT(), place: place, finished: !!(c.sim && c.sim.finished), kNow: c.sim && c.sim.k, symbol: c.symbol, waitK: k };
+    };
+    const done = function (r) {
+      if (!r) return;
+      G.hideModal();
+      const early = r.finished && r.kNow <= r.waitK;
+      G.toast('Clock ran ' + Math.max(1, Math.round((r.now - r.t0) / 60)) + ' min. ' + r.symbol + (early ? ' tied up before finishing ' + r.place + '.' : ' finished ' + r.place + ' at ' + clockStr(r.now) + '. The track is yours.'), 'good');
+    };
+    if (typeof window !== 'undefined' && window.NII && NII.runSimClock) {
+      NII.runSimClock(run).then(done).catch(function () { done(run()); });
+    } else done(run());
   }
 
   // Nov 13 (Stephen): Sim time from the Menu in every town. Same skip + stepAll path as "Sim until they finish."
@@ -2869,12 +3342,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (r.capped) G.toast('Clock ran ' + mins + ' min and stopped at midnight. Use End day to start the next day.');
     else G.toast('Clock ran ' + mins + ' min. It is ' + clockStr(nowT()) + '.', 'good');
   }
-  function runSimTime(sec) { finishSimTime(simAhead(sec)); }
+  function runSimTime(sec) {
+    if (typeof window !== 'undefined' && window.NII && NII.runSimClock) {
+      NII.runSimClock(function () { return simAhead(sec); }).then(finishSimTime).catch(function () { finishSimTime(simAhead(sec)); });
+    } else finishSimTime(simAhead(sec));
+  }
   function runTypedSim() {
     const inp = typeof document !== 'undefined' ? document.getElementById('simTimeInput') : null;
     const p = parseSimInput(inp && inp.value, nowT());
     if (p.error) { showSimErr(p.error); return; }
-    finishSimTime(simAhead(p.seconds));
+    runSimTime(p.seconds);
   }
   function openSimTime() {
     if (!G) return;
@@ -3114,6 +3591,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       const id = b.getAttribute('data-id');
       draft.interchanges = draft.interchanges || [];
       const i = draft.interchanges.indexOf(id);
+      if (id === 'neoga-nw' && !neogaNwOpen()) { if (i >= 0) draft.interchanges.splice(i, 1); showSheet(true); return; }
       if (b.checked) { if (id && i < 0) draft.interchanges.push(id); }
       else if (i >= 0) draft.interchanges.splice(i, 1);
       showSheet(true);
@@ -3121,11 +3599,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     else if (a === 'tog-cust') {
       const id = b.getAttribute('data-id');
       const i = draft.industries.indexOf(id);
+      if (neogaCustLocked(id)) { if (i >= 0) draft.industries.splice(i, 1); showSheet(true); return; }
       if (b.checked) { if (i < 0) draft.industries.push(id); }
       else if (i >= 0) draft.industries.splice(i, 1);
       showSheet(true);
     }
-    else if (a === 'add-class') { draft.classify = draft.classify || []; draft.classify.push({ dest: '', carType: '', track: 'YARD 1' }); showSheet(true); }
+    else if (a === 'add-class') { draft.classify = draft.classify || []; draft.classify.push({ dest: '', carType: '', track: defaultYardTrack() }); showSheet(true); }
     else if (a === 'del-class') { draft.classify.splice(ix, 1); showSheet(true); }
     else if (a === 'up-build') { const o = draft.buildOrder; if (ix > 0) { const t = o[ix - 1]; o[ix - 1] = o[ix]; o[ix] = t; } showSheet(true); }
     else if (a === 'del-build') { draft.buildOrder.splice(ix, 1); showSheet(true); }
@@ -3162,7 +3641,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         draft.interchanges = selectedInterchanges(draft);
         if (draft.type === 'local') {
           const allow = {};
-          customersForJob(draft).forEach(function (c) { allow[c.id] = true; });
+          customersAllowedForJob(draft).forEach(function (c) { allow[c.id] = true; });
           draft.industries = (draft.industries || []).filter(function (id) { return allow[id]; });
         }
       }
@@ -3669,7 +4148,7 @@ const onTrack = (v, s) => v.f.s === s && v.r.s === s;
 // Nov 4 (flow fix): cars for Mattoon customers can come in off the N&W too. NW_SHARE_M of the day's cars (deterministic per car) are handed to the
 // N&W instead: the N&W sets them out on Neoga's N&W Interchange (marked mattoonN), and the crew brings them to Mattoon. Only once Neoga is open.
 const NW_SHARE_M = 0.15;
-function nwRoute(day, id) { const E = NII.env(), ng = E.towns && (E.towns.neoga = E.towns.neoga || { pendIC: [] }); if (VISIT || !E.towns || !(state.unlocks && state.unlocks.neoga)) return false;
+function nwRoute(day, id) { const E = NII.env(), ng = E.towns && (E.towns.neoga = E.towns.neoga || { pendIC: [] }); if (VISIT || !E.towns || !((state.unlocks && state.unlocks.neoga) || (state.rep || 0) >= 100)) return false;
   const r = seeded((Math.imul(day + 1, 0x9e3779b1) ^ Math.imul((parseInt(id.slice(2)) || 0) + 7, 0x85ebca6b) ^ NII.gameSeed(day)) >>> 0); r(); if (r() >= NW_SHARE_M) return false;
   const v = state.veh[id], w = JSON.parse(JSON.stringify(v)); delete state.veh[id]; delete w.f; delete w.r; delete w.cid; delete w.aFront; w.mattoonN = 1;
   (ng.nwPend = ng.nwPend || []).push(w); return true; }
@@ -4133,7 +4612,10 @@ function tapTarget(target) { if (VISIT) { toast(NII.visitNote(), 'bad'); return;
 }
 // ---- today's jobs: a checklist built from every car's standing order, done in any order. Rep is how the railroad grows.
 const REP = { SPOT: 2, HOT: 3, CUT: 2, PULL: 1, CLEAN: 2, WRONG: -2, DEM_US: -3, LATE: -2, DERAIL: -5 };
-const UNLOCKS = [{ key: 'neoga', name: 'Neoga customers', rep: 100, msg: '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>' }]; // one-time, permanent (state.unlocks[key])
+const UNLOCKS = [ // one-time, permanent (state.unlocks[key])
+  { key: 'neoga', name: 'Neoga customers', rep: 100, msg: '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>' },
+  { key: 'effingham', name: 'Effingham customers', rep: 200, msg: '<h2>Effingham is open for business!</h2><p>Your reputation reached 200. <b>Effingham Freight House</b>, <b>Burgess Building Supply</b>, <b>Midstate Glass Container Co.</b>, <b>Illini Grain Corp</b>, <b>Crossroads Propane</b>, and <b>Effingham Iron &amp; Metal</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; Penn Central cars are set on the PC Interchange.</p>' }
+];
 function nextUnlock() { const U = state.unlocks || {}, u = UNLOCKS.find(x => !U[x.key]); if (!u) return { done: true, name: 'All areas open', rep: 0, prev: 0, pct: 1 };
   const prev = UNLOCKS.filter(x => x.rep < u.rep).reduce((a, x) => Math.max(a, x.rep), 0); return { ...u, prev, pct: Math.max(0, Math.min(1, (state.rep - prev) / Math.max(1, u.rep - prev))) }; }
 function checkUnlocks() { if (VISIT || !state) return; const U = state.unlocks || (state.unlocks = {});
@@ -4182,7 +4664,7 @@ const dayNo = () => Math.floor(state.time / 86400) + 1;
 // Nov 4 (Stephen: Neoga cars weren't releasing while he was in Mattoon): Neoga's clock runs while you're here. Its finished cars become
 // pull-ready and its new cars are queued for its interchange tracks (shared.js ngAway on Neoga's stored record); a toast says what changed.
 function neogaAway(quiet) { const E = NII.env(), ng = E.towns && E.towns.neoga; if (VISIT || !ng || !ng.cuts) return null;
-  const r = NII_SHARED.ngAway(ng, state.time, !!(state.unlocks && state.unlocks.neoga), NII.gameSeed);
+  const r = NII_SHARED.ngAway(ng, state.time, !!(state.unlocks && state.unlocks.neoga) || (state.rep || 0) >= 100, NII.gameSeed);
   if (r.nw && r.nw.cuts) { book('earn', r.nw.pay); IND('NW', 'inc', r.nw.pay); IND('NW', 'out', r.nw.cars.length); state.rep += r.nw.rep; if (r.nw.fee) { book('crew', r.nw.fee); IND('NW', 'cost', r.nw.fee); } // Nov 5: the N&W works Neoga's interchange while you're here
     if (!quiet) toast(`Neoga: ${NII_SHARED.nwMsg(r.nw, v => (v.road || 'NII') + ' ' + v.num)}.`, r.nw.fee ? 'bad' : 'good'); }
   if (!r.done.length && !r.came) { if (r.nw && r.nw.cuts) try { NII.saveTown('mattoon', state); } catch (e) { } return r; }
@@ -6414,7 +6896,7 @@ function boot() {
   window.addEventListener('pagehide', save);
   if (state.help && !VISIT) showModal(HELP);
   setTimeout(() => { try { fixEnginePG(); } catch (e) { try { const u = new URL(location.href); u.searchParams.delete('fix'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } catch (er) { } } }, 0);
-  if (NII.TEST === 'rep100' && !VISIT && !state.testInit) { state.testInit = 1; state.rep = Math.max(state.rep || 0, 100); save(); } // Nov 5: test game starts at 100 rep (checkUnlocks opens Neoga with its message)
+  if ((NII.TEST === 'rep100' || NII.TEST === 'rep200') && !VISIT && !state.testInit) { state.testInit = 1; state.rep = Math.max(state.rep || 0, NII.TEST === 'rep200' ? 200 : 100); save(); } // Nov 5 / Nov 13: test game starts at 100 or 200 rep (checkUnlocks opens the matching towns)
   try { NII.setOnLeave(save); } catch (e) { }
   { const act = $('actions'); if (act && !act.querySelector('[data-act="endDayAsk"]')) act.insertAdjacentHTML('beforeend', '<button class="act" data-act="endDayAsk">End day</button>'); } // Nov 13 (Stephen: same rules on every map): End day on the bottom bar, as in Effingham and Neoga
   { const sb = $('sceneBtns'), tb = document.createElement('button'); tb.id = 'townsBtn'; tb.setAttribute('aria-label', 'Go to another town'); tb.textContent = 'Towns'; tb.onclick = () => NII.pickTown(); if (sb) sb.insertBefore(tb, $('tagsBtn')); }
@@ -6556,8 +7038,8 @@ boot();
     return o;
   }
   function runSpawnEffingham(NII) {
-    if (!NII || NII.TEST !== 'rep100') return;
-    if (!/[?&]test=rep100(&|$)/.test(location.search)) return;
+    if (!NII || (NII.TEST !== 'rep100' && NII.TEST !== 'rep200')) return;
+    if (!/[?&]test=rep(100|200)(&|$)/.test(location.search)) return;
     if (!/[?&]spawn=effingham(&|$)/.test(location.search)) return;
     try { if (sessionStorage.getItem('nii-visit')) return; } catch (e) { }
     const E = NII.env && NII.env();

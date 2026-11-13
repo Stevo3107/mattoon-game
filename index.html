@@ -258,7 +258,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef110";</script>
+<script>window.NII_BUILD = "mw59ef111";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -271,11 +271,14 @@ const TOWNS = { // the one place for town names, packs and rail miles between th
   effingham: { name: 'Effingham', pack: 'towns/effingham.js', north: 'neoga', northMi: 18 },
 };
 const RUN_MPH = 25;                      // road speed between towns
-// Nov 5 (Stephen): ?test=rep100 plays a separate TEST game (own save slot, never touches the real save): fresh game at 100 rep, Neoga unlocked.
-const TEST = /[?&]test=rep100(&|$)/.test(location.search) ? 'rep100' : null;
-const KEY = TEST ? 'nii-towns-v10-test' : 'nii-towns-v10', OLD_KEY = TEST ? 'nii-no-v9-for-test' : 'nii-mattoon-test-v9';
-// Nov 12 (Stephen): ?test=rep100&fresh=1 wipes ONLY the test save so a new test game starts (and ?spawn=effingham runs again). Never touches the real save.
-if (TEST && /[?&]fresh=1(&|$)/.test(location.search)) { try { localStorage.removeItem('nii-towns-v10-test'); const u = new URL(location.href); u.searchParams.delete('fresh'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) { } }
+// Nov 5 / Nov 13 (Stephen): ?test=rep100 and ?test=rep200 play separate TEST games (own save slots, never touch the real save or each other).
+// rep100 starts at 100 reputation (Neoga unlocked). rep200 starts at 200 (Neoga and Effingham unlocked).
+const TEST_M = /[?&]test=rep(100|200)(&|$)/.exec(location.search);
+const TEST = TEST_M ? ('rep' + TEST_M[1]) : null;
+const KEY = TEST === 'rep200' ? 'nii-towns-v10-test-rep200' : TEST === 'rep100' ? 'nii-towns-v10-test' : 'nii-towns-v10';
+const OLD_KEY = TEST ? 'nii-no-v9-for-test' : 'nii-mattoon-test-v9';
+// Nov 12 / Nov 13: ?fresh=1 wipes ONLY this test slot so a new test game starts (and ?spawn=effingham runs again). Never touches the real save or the other test slot.
+if (TEST && /[?&]fresh=1(&|$)/.test(location.search)) { try { localStorage.removeItem(KEY); const u = new URL(location.href); u.searchParams.delete('fresh'); history.replaceState(null, '', u.pathname + u.search + u.hash); } catch (e) { } }
 const $ = id => document.getElementById(id);
 let ENV = null;
 // ---- per-game random seed (Nov 1): every new game / restart gets its own; old saves get one from the next day on (cars already out are untouched)
@@ -291,6 +294,15 @@ function env() {
   if (!TOWNS[ENV.town]) ENV.town = 'mattoon';
   // Local-only force: ?town=effingham (or any known id) for testing a locked pack without publishing
   try { const ft = new URLSearchParams(location.search).get('town'); if (ft && TOWNS[ft]) ENV.town = ft; } catch (e) { }
+  // Nov 13: stamp starting reputation on the Mattoon record so a direct ?town=effingham / neoga boot still gets 100 or 200.
+  if (TEST) {
+    ENV.towns = ENV.towns || {};
+    const mt = ENV.towns.mattoon || (ENV.towns.mattoon = {});
+    if (!mt.testInit) {
+      mt.testInit = 1;
+      mt.rep = Math.max(mt.rep || 0, TEST === 'rep200' ? 200 : 100);
+    }
+  }
   return ENV;
 }
 // ---- Look around (Nov 1): a view-only visit to another town. The flag lives in sessionStorage, never in the save; during a visit nothing is written.
@@ -306,24 +318,36 @@ function setProg(p, ms) { progTo = p; const p0 = prog, t0 = performance.now(); c
   progAnim = requestAnimationFrame(step); }
 function showLoading(title, sub, info) { const L = $('loading'); L.classList.add('show'); $('ldTitle').textContent = title; $('ldSub').textContent = sub || ''; $('ldInfo').textContent = info || ''; }
 function hideLoading() { setProg(1, 250); setTimeout(() => $('loading').classList.remove('show'), 320); }
-function runEndDay(fn) { // Nov 13 (Stephen): End day uses the same loading screen as town travel. It shows while the day resolves, then hides when the new day starts.
+function runWithLoading(sub, info, fn, failVerb) {
   const e = env(), id = (e && e.town) || 'mattoon', name = (TOWNS[id] && TOWNS[id].name) || 'NI&I';
   try { const bg = document.getElementById('modalBg'); if (bg) bg.classList.remove('show'); } catch (err) { }
-  showLoading(name, 'Ending the day', 'Hired crews finish their work and the railroad starts tomorrow.');
+  showLoading(name, sub, info);
   prog = 0; setProg(0.85, 800);
   const t0 = Date.now();
   return new Promise(function (resolve, reject) {
     setTimeout(function () {
       let result;
       try { result = fn(); } catch (err) {
-        fail('The game hit an error ending the day: ' + String(err && err.message || err).replace(/</g, '&lt;'));
+        fail('The game hit an error ' + (failVerb || 'working') + ': ' + String(err && err.message || err).replace(/</g, '&lt;'));
         reject(err);
         return;
       }
       const wait = Math.max(0, 800 - (Date.now() - t0));
-      setTimeout(function () { hideLoading(); resolve(result); }, wait);
+      setTimeout(function () {
+        hideLoading();
+        try { if (window.__game && window.__game.draw) window.__game.draw(); } catch (e) { }
+        try { if (window.__effingham && window.__effingham.draw) window.__effingham.draw(); } catch (e) { }
+        try { if (window.__neoga && window.__neoga.draw) window.__neoga.draw(); } catch (e) { }
+        resolve(result);
+      }, wait);
     }, 40);
   });
+}
+function runEndDay(fn) { // Nov 13 (Stephen): End day uses the same loading screen as town travel. It shows while the day resolves, then hides when the new day starts.
+  return runWithLoading('Ending the day', 'Hired crews finish their work and the railroad starts tomorrow.', fn, 'ending the day');
+}
+function runSimClock(fn) { // Nov 13 (Stephen): Sim time / "Sim until they finish" use the same screen so the clock and crew moves can run without a wonky redraw.
+  return runWithLoading('Simming time', 'Hired crews are working. The clock jumps ahead.', fn, 'simming time');
 }
 function fail(msg) { $('ldSub').textContent = ''; $('ldInfo').innerHTML = msg; $('loading').classList.add('fail'); }
 const travelText = (from, to) => { const r = runInfo(from, to); return `${TOWNS[from].name} to ${TOWNS[to].name}: ${r.mi} mi at ${r.mph} mph, ${r.min} min`; };
@@ -373,7 +397,7 @@ let QUIET = 0;
   Object.defineProperty(proto, prop, { ...d, set(v) { if (QUIET && ok(this) && d.get.call(this) === String(v)) return; d.set.call(this, v); } }); };
   try { g(Node.prototype, 'textContent', el => el.childNodes.length <= 1); g(Element.prototype, 'innerHTML', () => true); g(Element.prototype, 'className', () => true); g(HTMLElement.prototype, 'title', () => true); } catch (e) { } })();
 function quiet(fn) { QUIET++; try { return fn(); } finally { QUIET--; } }
-window.NII = { dpr: () => Math.min(window.devicePixelRatio || 1, 2) /* Nov 5 (Stephen): drawing density capped at 2x, both towns (3x phones were choppy) */, TEST, quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading, runEndDay,
+window.NII = { dpr: () => Math.min(window.devicePixelRatio || 1, 2) /* Nov 5 (Stephen): drawing density capped at 2x, both towns (3x phones were choppy) */, TEST, quiet, TOWNS, RUN_MPH, runInfo, env, travel, showLoading, hideLoading, runEndDay, runSimClock, runWithLoading,
   fullscreen: FS, sharedMenu, shuffle: shuffleIn, industries, ind: indAdd, indKey,
   loadTown(id) { return env().towns[id] || null; },
   saveTown(id, st) { if (VISIT) return; const e = env(); e.towns[id] = st; if (id === 'mattoon') e.time = st.time; write(); },
