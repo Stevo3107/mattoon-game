@@ -4017,21 +4017,55 @@ function isolateStandingCar(q) {
   const q2 = standingCars().find(o => o.v === q.v);
   return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
 }
-function yardOrLeadSlot() {
-  const tryT = YARD_TS.concat(GLASS_LEAD).filter(t => T[t]);
-  for (const t of tryT) {
-    const probe = placeCut([{ type: 'boxcar50', L: 56, dest: 'TMP' }], [true], t, T[t].len - 6, 1);
-    if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d: T[t].len - 6 };
+function efOccOnTrack(t, ignore) { // occupied ranges on one track (for packed crew slots)
+  const skip = new Set(ignore || []), out = [];
+  for (const c of S.cuts) { if (skip.has(c)) continue; for (const g of c.path || []) { if (g.t !== t) continue; out.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1), live: c.veh.some(isLoco), c }); } }
+  return out; }
+function efCanCoupleCut(c, t) { return !!(c && !c.veh.some(isLoco) && c.path && c.path.length && c.path.every(g => g.t === t)); }
+function efPackedHead(t, L, occ) { // highest head that packs a car of length L tight against standing cars (2 ft clear of engines / multi-track cuts)
+  if (!T[t]) return null;
+  const len = T[t].len, maxHead = len - 6, minHead = L + 6; if (maxHead < minHead) return null;
+  const padFor = o => (o.live || !efCanCoupleCut(o.c, t)) ? 2 : 0;
+  const cands = [maxHead]; for (const o of occ) cands.push(o.lo - padFor(o));
+  cands.sort((a, b) => b - a);
+  for (const d of cands) {
+    if (d > maxHead + 1e-9 || d < minHead - 1e-9) continue;
+    const lo = d - L, hi = d;
+    if (occ.some(o => { const pad = padFor(o); return !(hi + pad <= o.lo || o.hi + pad <= lo); })) continue;
+    return d;
   }
-  return null;
-}
+  return null; }
+function efFreeSlot(tracks, L) { // first packed place (head end) for a car of length L, coupled to standing cars
+  for (const t of tracks) { if (!T[t]) continue; const d = efPackedHead(t, L, efOccOnTrack(t)); if (d != null) return { t, d }; }
+  return null; }
+function efStandingMates(t, dHead, L) {
+  const mates = S.cuts.filter(c => efCanCoupleCut(c, t));
+  const near = (c, lo, hi) => { const ds = c.path.flatMap(g => [g.d0, g.d1]), clo = Math.min(...ds), chi = Math.max(...ds); return hi >= clo - 3 && lo <= chi + 3; };
+  const group = mates.filter(c => near(c, dHead - L, dHead));
+  let more = true;
+  while (more) { more = false; for (const c of mates) { if (group.includes(c)) continue; const ds = c.path.flatMap(g => [g.d0, g.d1]); if (group.some(g => near(g, Math.min(...ds), Math.max(...ds)))) { group.push(c); more = true; } } }
+  return group; }
+function efCoupleStanding(t, dHead, L) { // join adjacent standing cuts on t into one packed cut (end to end, no gap)
+  const mates = efStandingMates(t, dHead, L); if (mates.length < 2) return;
+  const items = []; let head = 0;
+  for (const c of mates) { const ds = c.path.flatMap(g => [g.d0, g.d1]); head = Math.max(head, ...ds); for (const q of vehPos(c)) items.push({ v: q.v, aT: q.aT, d: q.pm.d }); }
+  items.sort((a, b) => b.d - a.d);
+  const saved = mates.slice();
+  for (const c of mates) { const i = S.cuts.indexOf(c); if (i >= 0) S.cuts.splice(i, 1); }
+  const nc = placeCut(items.map(i => i.v), items.map(i => i.aT), t, head, 1);
+  const ds = (nc.path || []).flatMap(g => [g.d0, g.d1]);
+  if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return; }
+  S.cuts.push(nc); }
+function efCrewPackTrack(t) { return !!(t && (YARD_TS.includes(t) || GLASS_LEAD.includes(t) || t === 'PCX' || (typeof EF_IX_TS !== 'undefined' && EF_IX_TS.includes(t)))); }
+function yardOrLeadSlot(L) { return efFreeSlot(YARD_TS.concat(GLASS_LEAD).filter(t => T[t]), L || 56); }
 function moveStandingCar(q, t, dHead) {
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();
   S.cuts.splice(S.cuts.indexOf(c0), 1);
   const nc = placeCut(veh, aT, t, dHead, 1);
-  if (S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
-  S.cuts.push(nc); return true;
+  const L = cutLen(nc), pack = efCrewPackTrack(t), mates = pack ? efStandingMates(t, dHead, L) : [], ignore = new Set(mates);
+  if (S.cuts.some(o => !ignore.has(o) && segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
+  S.cuts.push(nc); if (pack) efCoupleStanding(t, dHead, L); return true;
 }
 function crewSwapMidstate() {
   // Assigned-crew work only: pull released empties off GAC / GLC, then spot waiting loads from the lead (preferred) or yard.
@@ -4045,7 +4079,7 @@ function crewSwapMidstate() {
     });
   const pullReleasedOn = (track, label) => {
     for (const o of cars().filter(o => !o.live && o.pm.t === track && o.v.doneAt && (o.v.dest === 'IC-INT' || o.v.dest === 'PC-INT'))) {
-      const slot = yardOrLeadSlot();
+      const slot = yardOrLeadSlot(vL(o.v));
       if (!slot) { notes.push('no room in the yard or on the lead to pull the released ' + label + ' car'); break; }
       if (moveStandingCar(o, slot.t, slot.d)) notes.push((roadOf(o.v) + ' ' + o.v.num) + ' pulled from the ' + label + ' to ' + slot.t);
     }
@@ -4078,9 +4112,6 @@ function crewSwapMidstate() {
 const EF_TRACK_NAME = { Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', PCX: 'PC Interchange', IX1: 'PC Interchange', IX2: 'PC Interchange', HT: 'House track', GLD: 'Illini Grain track', B1: 'Burgess lumber track', B2: 'Burgess materials track', IM: 'Iron & Metal track', PR: 'Propane rack', GS: 'Midstate sand track', GL: 'Midstate limestone track', GA: 'Midstate soda-ash track', GAC: 'Midstate soda-ash rack', GLC: 'Midstate limestone spots', GW: 'Midstate warehouse' };
 const efTrackName = t => EF_TRACK_NAME[t] || t;
 function efCrewTracks(key) { return [...new Set(SPOTS.filter(sp => sp.dest === key && T[sp.t]).map(sp => sp.t))]; }
-function efFreeSlot(tracks, L) { // first clear place (head end) for a car of length L
-  for (const t of tracks) { if (!T[t]) continue; for (let d = T[t].len - 6; d >= L + 6; d -= 12) { const probe = placeCut([{ type: 'boxcar50', L, dest: 'TMP' }], [true], t, d, 1); if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d }; } }
-  return null; }
 const carName = v => roadOf(v) + ' ' + v.num;
 const byAge = (a, b) => ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
 function efCrewCustomer(key) {
@@ -4193,6 +4224,7 @@ function efApplyPendingCrew() { // work finished while you were away (queued by 
       const slot = efFreeSlot(YARD_TS, L);
       if (!slot) { out.push('no room in the yard for the rest of the N&W inbound cars'); break; }
       S.cuts.push(placeCut([v], [true], slot.t, slot.d, 1));
+      efCoupleStanding(slot.t, slot.d, L);
       n++;
     }
     if (n) out.push('set ' + n + ' inbound car' + (n > 1 ? 's' : '') + ' from the N&W Interchange in the Effingham yard');
