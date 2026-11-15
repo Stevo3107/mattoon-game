@@ -1584,7 +1584,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return out;
   }
   function countSpots(key) {
-    if (key === 'HOUSE') return null; // 180 ft door: let placeOnTrack pack what fits
+    if (key === 'HOUSE' || key === 'GRAIN') return null; // HOUSE: 180 ft door. GRAIN: pack the loading track (one under the spout, rest coupled behind)
     const S = G.SPOTS && G.SPOTS[key];
     if (!S) return null;
     if (S.spots && S.spots.length) return S.spots.length;
@@ -2495,9 +2495,59 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       : tgt.d1;
     return { top: top, room: Math.max(0, top - tgt.d0) };
   }
+  // Nov 15 (Stephen): everything a crew puts on a yard / IC Outbound track ends up coupled together, packed tight
+  // against the standing cars there. Null = something on the track can't join (engine, moving, half on another track).
+  function packedTrack(tgt, ids) {
+    const s = st(), player = G.locoCons && G.locoCons(), skip = {};
+    ids.forEach(function (id) { skip[id] = true; });
+    const onSeg = function (v) { return !!(v && v.f && (v.f.s === tgt.s || (v.r && v.r.s === tgt.s))); };
+    const cons = {};
+    let bad = false;
+    Object.values(s.veh).forEach(function (v) {
+      if (skip[v.id] || !onSeg(v)) return;
+      const c = v.cid && s.cons[v.cid];
+      if (!c || (player && c.id === player.id) || c.v) { bad = true; return; }
+      cons[c.id] = c;
+    });
+    if (bad) return null;
+    const existing = [];
+    Object.values(cons).forEach(function (c) {
+      c.veh.forEach(function (id) {
+        const v = s.veh[id];
+        if (!v || v.type === 'gp9' || !v.f || !v.r || v.f.s !== tgt.s || v.r.s !== tgt.s) bad = true;
+        else existing.push(v);
+      });
+    });
+    if (bad) return null;
+    const hi = function (v) { return Math.max(v.f.d, v.r.d); };
+    existing.sort(function (a, b) { return hi(b) - hi(a); });
+    return existing;
+  }
   function placeOnTrack(ids, trackId) {
     const tgt = trackSeg(trackId);
     if (!tgt || !ids.length) return { placed: [], left: ids.slice(), why: tgt ? 'nothing to place' : 'no track' };
+    const ex = (/^YARD \d+$/.test(trackId) || trackId === 'IC Outbound') ? packedTrack(tgt, ids) : null;
+    if (ex) {
+      const top = ex.length ? Math.max(ex[0].f.d, ex[0].r.d) : tgt.d1;
+      let room = top - tgt.d0 - ex.reduce(function (a, v) { return a + (v.L || 50); }, 0);
+      if (room >= 0) {
+        const fit = [], left = [];
+        ids.forEach(function (id) {
+          const v = st().veh[id]; if (!v) { left.push(id); return; }
+          const L = v.L || 50;
+          if (left.length || room < L) { left.push(id); return; }
+          room -= L; fit.push(id);
+        });
+        if (fit.length) {
+          const all = ex.map(function (v) { return v.id; }).concat(fit);
+          const aF = ex.map(function (v) { return v.f.d >= v.r.d ? v.aFront : !v.aFront; }).concat(fit.map(function () { return true; }));
+          takeIds(all);
+          G.place(all, { s: tgt.s, d: top, dir: 1 }, aF);
+          if (G.reindex) try { G.reindex(); } catch (e) { }
+        }
+        return { placed: fit, left: left, why: left.length ? 'no room' : null };
+      }
+    }
     const fit = [], left = [];
     let info = roomTop(tgt, ids);
     let room = info.room, top = info.top;
@@ -2523,8 +2573,65 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     return (best && best.room > 40) ? best.id : 'YARD 1';
   }
+  function grainTrack() {
+    const S = G.SPOTS && G.SPOTS.GRAIN;
+    if (!S || G.SI == null || !G.SEG) return null;
+    const s = S.s, len = G.SEG[s].len, spout = G.SPOUT_D != null ? G.SPOUT_D : (S.d0 + S.d1) / 2;
+    return { s: s, len: len, spout: spout };
+  }
+  function onGrainSeg(v, s) { return !!(v && v.f && (v.f.s === s || (v.r && v.r.s === s))); }
+  function grainMid(v, s) {
+    const ds = [];
+    if (v.f && v.f.s === s) ds.push(v.f.d);
+    if (v.r && v.r.s === s) ds.push(v.r.d);
+    return ds.length ? (Math.min.apply(null, ds) + Math.max.apply(null, ds)) / 2 : 0;
+  }
+  function grainLen(v) { return (v && v.L) || 50; }
+  function grainFrontFor(ids, spoutI, spout) {
+    let front = spout + grainLen(st().veh[ids[spoutI]]) / 2;
+    for (let i = 0; i < spoutI; i++) front += grainLen(st().veh[ids[i]]);
+    return front;
+  }
+  function grainOk(ids, spoutI, tr) {
+    if (!ids.length) return false;
+    const tot = ids.reduce(function (a, id) { return a + grainLen(st().veh[id]); }, 0);
+    const f0 = grainFrontFor(ids, spoutI, tr.spout);
+    if (f0 - tot < 6 || f0 > tr.len - 6) return false;
+    const last = ids.length - 1, f1 = grainFrontFor(ids, last, tr.spout);
+    if (f1 - tot < 6 || f1 > tr.len - 6) return false;
+    return true;
+  }
+  function placeOnGrain(ids) { // one car under the spout, the rest coupled behind (low d); only 'no room' when the loading track is full
+    const tr = grainTrack();
+    if (!tr || !ids.length) return { placed: [], left: ids.slice(), why: tr ? 'nothing to place' : 'no track' };
+    const s = tr.s, player = G.locoCons && G.locoCons();
+    const existing = Object.values(st().veh).filter(function (v) {
+      if (!onGrainSeg(v, s) || v.type === 'gp9' || v.type === 'caboose') return false;
+      if (player && v.cid && player.id === v.cid) return false;
+      return ids.indexOf(v.id) < 0;
+    }).sort(function (a, b) { return grainMid(b, s) - grainMid(a, s); });
+    const exIds = existing.map(function (v) { return v.id; });
+    let spoutI = 0;
+    const loading = existing.findIndex(function (v) { return v.work || Math.abs(grainMid(v, s) - tr.spout) <= (v.L || 50) / 2 + 2; });
+    if (loading >= 0) spoutI = loading;
+    const left = [];
+    let placed = exIds.slice();
+    ids.forEach(function (id) {
+      if (!st().veh[id]) { left.push(id); return; }
+      const trial = placed.concat([id]);
+      if (grainOk(trial, spoutI, tr)) placed = trial; else left.push(id);
+    });
+    const newIds = placed.filter(function (id) { return exIds.indexOf(id) < 0; });
+    if (!newIds.length) return { placed: [], left: ids.slice(), why: left.length ? 'no room' : null };
+    const front = grainFrontFor(placed, spoutI, tr.spout);
+    takeIds(placed);
+    G.place(placed, { s: tr.s, d: front, dir: 1 }, placed.map(function () { return true; }));
+    if (G.reindex) try { G.reindex(); } catch (e) { }
+    return { placed: newIds, left: left, why: left.length ? 'no room' : null };
+  }
   function placeAtSpot(id, key) {
     if (key === 'HOUSE') return placeOnTrack([id], 'HOUSE');
+    if (key === 'GRAIN') return placeOnGrain([id]);
     const S = G.SPOTS && G.SPOTS[key];
     if (!S) return { placed: [], left: [id], why: 'no spot' };
     const v = st().veh[id]; if (!v) return { placed: [], left: [id] };
@@ -2812,14 +2919,24 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (nIn) bits.push(nIn + ' inbound');
     return ['served ' + ix.name + ' at ' + townName(ix.town) + (bits.length ? ' (' + bits.join(', ') + ')' : '') + ' — cars stay until you are in ' + townName(ix.town)];
   }
+  // Nov 15 (Stephen): same as Effingham. First matching rule wins (a car an earlier rule sorted stays put),
+  // oldest cars go first, and cars already sitting on the rule's track count as sorted.
+  let MT_CLASSIFIED = {};
+  function clearClassified() { MT_CLASSIFIED = {}; }
   function runClassify(rule) {
-    const cars = Object.values(st().veh).filter(function (v) {
+    const tgt = trackSeg(rule.track);
+    const onTgt = function (v) { return !!(tgt && v.f && v.f.s === tgt.s && (!v.r || v.r.s === tgt.s)); };
+    const fits = Object.values(st().veh).filter(function (v) {
       if (!isFreight(v) || onPlayer(v) || !onAnyYard(v)) return false;
       if (rule.dest && v.dest !== rule.dest) return false;
       if (rule.carType && !matchType(v, rule.carType)) return false;
       return true;
     });
+    fits.filter(onTgt).forEach(function (v) { MT_CLASSIFIED[v.id] = 1; });
+    const pick = (R() && R().pickOldestFirst) ? R().pickOldestFirst : function (a) { return (a || []).slice(); };
+    const cars = pick(fits.filter(function (v) { return !onTgt(v) && !MT_CLASSIFIED[v.id]; }));
     const r = placeOnTrack(cars.map(function (v) { return v.id; }), rule.track);
+    r.placed.forEach(function (id) { MT_CLASSIFIED[id] = 1; });
     return 'classified ' + r.placed.length + ' car' + (r.placed.length === 1 ? '' : 's') + ' to ' + rule.track + (r.left.length ? '; ' + r.left.length + ' left (no room)' : '');
   }
   function runBuild(work) {
@@ -2891,6 +3008,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   // the car moves for a set of finished work (road pickups / setouts carry cars between pieces)
   function applyDoneSet(job, doneSet, day) {
     const C = R(), notes = [];
+    if (doneSet === (job && job.work)) clearClassified();
     let lifted = [];
     const pickDone = doneSet.some(function (w) { return w.kind === 'pickup' && (w.track === 'NWI' || w.track === 'NW-INT'); });
     const setoutMattoon = doneSet.filter(function (w) {
@@ -3059,6 +3177,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function leftUntil(c, k) { const s = c.sim; let sec = s.left; for (let j = s.k + 1; j <= k && j < s.pieces.length; j++) sec += s.pieces[j].dur; return sec; }
 
   function goOnDuty(c, t) {
+    clearClassified();
     const crew = crewById(c.crewId);
     if (!crew) { c.sim = { finished: true, on: t, endAt: t, pieces: [], done: [], notes: ['no crew'] }; return; }
     const pieces = planPieces(c, crew);
@@ -3434,6 +3553,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   // End of day (Mattoon's End Day, Effingham's End day): the clock sim runs every hired crew on to the morning,
   // then the board is cleared of that day's finished calls. A crew still on duty stays on the board.
   function runHired(day, untilT) {
+    clearClassified();
     if (!G || !R()) return { lines: [], pay: 0, tieUps: [], none: true };
     ensure();
     const until = untilT != null ? untilT : day * 86400 + 6 * 3600;
@@ -4854,12 +4974,47 @@ function doneWork(v) { // finish one car: returns a summary line
   v.relK = k0; v.relT = state.time; delete v.wb; waybillOf(v); // released: now it's on us to pull it before the free time runs out
   return { id: v.id, name, what, pay };
 }
-// Nov 5 (Stephen): the elevator used to pull empties under the spout on its own when you cut away. Removed. Spotting is only when YOU leave a car under the spout.
-function grainPuller() { }
+// Nov 15 (Stephen): the elevator spots a cut on the loading track (one under the spout, the rest coupled behind).
+// When the spout car finishes, Prairie Grain shifts the cut so the next empty is under the spout and starts loading.
+function grainMid(v) {
+  const ds = [];
+  if (v.f && v.f.s === SI.GLD) ds.push(v.f.d);
+  if (v.r && v.r.s === SI.GLD) ds.push(v.r.d);
+  return ds.length ? (Math.min(...ds) + Math.max(...ds)) / 2 : 0;
+}
+function grainAdvance() {
+  const s = SI.GLD, len = SEG[s].len, spout = SPOUT_D, loco = locoCons();
+  const cars = Object.values(state.veh).filter(v => v && TYPES[v.type] && TYPES[v.type].kind === 'car' && (v.f && (v.f.s === s || (v.r && v.r.s === s))) && !(loco && v.cid === loco.id));
+  if (cars.length < 2) return false;
+  if (cars.some(v => { const c = C(v.cid); return c && (locoOf(c) || Math.abs(c.v) > 0.01); })) return false;
+  const empties = cars.filter(v => v.dest === 'GRAIN' && !v.loaded && !v.work).sort((a, b) => grainMid(b) - grainMid(a));
+  if (empties.some(v => Math.abs(grainMid(v) - spout) <= 3)) return false;
+  const next = empties.find(v => grainMid(v) < spout - 3) || empties[0];
+  if (!next) return false;
+  const ids = cars.slice().sort((a, b) => grainMid(b) - grainMid(a)).map(v => v.id);
+  const spoutI = ids.indexOf(next.id); if (spoutI < 0) return false;
+  let front = spout + (next.L || 50) / 2;
+  for (let i = 0; i < spoutI; i++) front += V(ids[i]).L || 50;
+  const tot = ids.reduce((a, id) => a + (V(id).L || 50), 0);
+  if (front - tot < 6 || front > len - 6) return false;
+  ids.forEach(id => { const v = V(id), c = v.cid && C(v.cid); if (c) { c.veh = c.veh.filter(x => x !== id); if (!c.veh.length) delete state.cons[c.id]; } delete v.cid; });
+  place(ids, { s, d: front, dir: 1 }, ids.map(() => true));
+  reindex();
+  toast('Prairie Grain moved the next car under the spout.');
+  return true;
+}
+function grainStartSpout() {
+  for (const v of Object.values(state.veh)) {
+    if (v.work || v.dest !== 'GRAIN' || !carWhere(v).spot('GRAIN')) continue;
+    const c = C(v.cid); if (c && !locoOf(c) && Math.abs(c.v) < 0.01) startWork(v);
+  }
+}
+function grainPuller() { return grainAdvance(); }
 function finishWork(all) { // all = end of day: everything finishes. Otherwise only cars whose time is up.
   const out = [];
-  for (let k = 0; k < 20; k++) { let any = false;
+  for (let k = 0; k < 40; k++) { let any = false;
     for (const v of Object.values(state.veh)) if (v.work && ((all && !v.work.hold) || state.time >= v.work.until)) { out.push(doneWork(v)); any = true; }
+    if (out.some(d => V(d.id) && V(d.id).relK === 'GRAIN') && grainAdvance()) { any = true; grainStartSpout(); }
     if (!all || !any) break; }
   return out;
 }
@@ -4871,6 +5026,7 @@ function workTick() { // a few times a game minute: start work on cars left at t
     if (v.dest !== 'HOUSE') { v.dest = 'HOUSE'; v.idle = false; } if (!v.out) { const cap = TYPES[v.type].cap; v.out = pickLoad(FREIGHT.houseOut, cap, seeded(+v.num + state.icSeq * 29 + Math.round(state.time))); } }
   for (const v of Object.values(state.veh)) if (!v.work && ((SPOTS[v.dest] && carWhere(v).spot(v.dest)) || (v.dest === 'HOUSE' && carWhere(v).house))) { const c = C(v.cid); if (!locoOf(c) && Math.abs(c.v) < 0.01) startWork(v); }
   const done = finishWork(false);
+  if (done.some(d => V(d.id) && V(d.id).relK === 'GRAIN')) grainStartSpout();
   for (const d of done) toast(`${d.name}: ${d.what}. Tagged IC-INT.`);
   if (done.length) { syncTasks(); save(); }
 }
