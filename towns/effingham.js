@@ -4008,14 +4008,28 @@ const GLASS_LEAD = ['GS', 'GSP', 'GL', 'GLP', 'GA', 'GAP', 'GWB'];
 const YARD_TS = ['Y1', 'Y2', 'Y3', 'Y4'];
 function onGlassLead(pm) { return !!(pm && GLASS_LEAD.includes(pm.t)); }
 function onYard(pm) { return !!(pm && /^Y[1-4]$/.test(pm.t)); }
-function isolateStandingCar(q) {
+function splitCutSilent(c, k) { // crew isolate: same split as uncAt, no toast or save
+  if (!c || k <= 0 || k >= c.veh.length) return false;
+  const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s);
+  const a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
+  S.cuts.splice(S.cuts.indexOf(c), 1, a, b); return true; }
+function isolateStandingCar(q) { // pull one standing car out of a cut, including from the middle (both sides)
   if (!q || q.live) return null;
-  const c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
+  let c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
   if (i < 0) return null;
   if (c.veh.length === 1) return c;
-  if (!uncAt(c, i === 0 ? 1 : i)) return null;
-  const q2 = standingCars().find(o => o.v === q.v);
-  return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
+  if (i < c.veh.length - 1) {
+    if (!splitCutSilent(c, i + 1)) return null;
+    const q2 = standingCars().find(o => o.v === q.v); if (!q2 || q2.live) return null;
+    c = q2.c; i = q2.i != null ? q2.i : c.veh.indexOf(q.v);
+  }
+  if (c.veh.length === 1) return c;
+  if (i > 0) {
+    if (!splitCutSilent(c, i)) return null;
+    const q3 = standingCars().find(o => o.v === q.v);
+    return q3 && q3.c.veh.length === 1 && !q3.live ? q3.c : null;
+  }
+  return c.veh.length === 1 ? c : null;
 }
 function efOccOnTrack(t, ignore) { // occupied ranges on one track (for packed crew slots)
   const skip = new Set(ignore || []), out = [];
@@ -4045,8 +4059,12 @@ function efStandingMates(t, dHead, L) {
   let more = true;
   while (more) { more = false; for (const c of mates) { if (group.includes(c)) continue; const ds = c.path.flatMap(g => [g.d0, g.d1]); if (group.some(g => near(g, Math.min(...ds), Math.max(...ds)))) { group.push(c); more = true; } } }
   return group; }
-function efCoupleStanding(t, dHead, L) { // join adjacent standing cuts on t into one packed cut (end to end, no gap)
-  const mates = efStandingMates(t, dHead, L); if (mates.length < 2) return;
+function efLiveIntervals(t) {
+  const out = [];
+  for (const c of S.cuts) { if (!c.veh.some(isLoco)) continue; for (const g of c.path || []) { if (g.t !== t) continue; out.push({ lo: Math.min(g.d0, g.d1) - 2, hi: Math.max(g.d0, g.d1) + 2 }); } }
+  out.sort((a, b) => a.lo - b.lo); return out; }
+function efPackGroup(t, mates) { // one packed cut, high end kept, gaps closed; does not jump a live engine
+  if (!mates || mates.length < 2) return;
   const items = []; let head = 0;
   for (const c of mates) { const ds = c.path.flatMap(g => [g.d0, g.d1]); head = Math.max(head, ...ds); for (const q of vehPos(c)) items.push({ v: q.v, aT: q.aT, d: q.pm.d }); }
   items.sort((a, b) => b.d - a.d);
@@ -4056,16 +4074,34 @@ function efCoupleStanding(t, dHead, L) { // join adjacent standing cuts on t int
   const ds = (nc.path || []).flatMap(g => [g.d0, g.d1]);
   if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return; }
   S.cuts.push(nc); }
+function efPackStandingOn(t) { // all standing cars wholly on t become one coupled cut per pocket (pockets split by a live engine)
+  if (!T[t]) return;
+  const live = efLiveIntervals(t), mates = S.cuts.filter(c => efCanCoupleCut(c, t));
+  if (mates.length < 2) return;
+  const pocket = new Map();
+  for (const c of mates) {
+    const ds = c.path.flatMap(g => [g.d0, g.d1]), mid = (Math.min(...ds) + Math.max(...ds)) / 2;
+    if (live.some(L => mid >= L.lo && mid <= L.hi)) continue;
+    let k = 0; for (const L of live) if (L.hi <= mid) k++;
+    if (!pocket.has(k)) pocket.set(k, []);
+    pocket.get(k).push(c);
+  }
+  for (const group of pocket.values()) efPackGroup(t, group); }
+function efCoupleStanding(t, dHead, L) { efPackStandingOn(t); }
 function efCrewPackTrack(t) { return !!(t && (YARD_TS.includes(t) || GLASS_LEAD.includes(t) || t === 'PCX' || (typeof EF_IX_TS !== 'undefined' && EF_IX_TS.includes(t)))); }
 function yardOrLeadSlot(L) { return efFreeSlot(YARD_TS.concat(GLASS_LEAD).filter(t => T[t]), L || 56); }
 function moveStandingCar(q, t, dHead) {
+  const srcT = q.pm && q.pm.t;
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();
   S.cuts.splice(S.cuts.indexOf(c0), 1);
   const nc = placeCut(veh, aT, t, dHead, 1);
-  const L = cutLen(nc), pack = efCrewPackTrack(t), mates = pack ? efStandingMates(t, dHead, L) : [], ignore = new Set(mates);
+  const L = cutLen(nc), pack = efCrewPackTrack(t), ignore = new Set(pack ? S.cuts.filter(c => efCanCoupleCut(c, t)) : []);
   if (S.cuts.some(o => !ignore.has(o) && segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
-  S.cuts.push(nc); if (pack) efCoupleStanding(t, dHead, L); return true;
+  S.cuts.push(nc);
+  if (pack) efPackStandingOn(t);
+  if (srcT && srcT !== t && efCrewPackTrack(srcT)) efPackStandingOn(srcT);
+  return true;
 }
 function crewSwapMidstate() {
   // Assigned-crew work only: pull released empties off GAC / GLC, then spot waiting loads from the lead (preferred) or yard.
@@ -4165,26 +4201,29 @@ function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars
   if (nIn) notes.unshift(`pulled ${nIn} inbound car${nIn > 1 ? 's' : ''} off the PC Interchange to the yard`);
   if (!nOut && !nIn && !notes.length) notes.push('PC Interchange: nothing to move');
   return notes; }
+const EF_CLASSIFIED = new Set(); // ids already placed by an earlier classify rule in this job (first matching rule wins)
 function efCrewClassify(w) {
   const notes = [], destTrack = w && w.track && T[w.track] && /^Y[1-4]$/.test(w.track) ? w.track : null;
   if (!destTrack) return ['classify: no Effingham yard track chosen'];
   const wantDest = (w.dest || '').trim(), wantType = (w.carType || '').trim();
   const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
-  const match = o => {
+  const fits = o => {
     if (o.live || isLoco(o.v) || o.v.type === 'caboose') return false;
     if (!onYard(o.pm) && !(typeof EF_IX_TS !== 'undefined' && EF_IX_TS.includes(o.pm.t)) && !onGlassLead(o.pm)) return false;
     if (wantDest && o.v.dest !== wantDest) return false;
     if (wantType && o.v.type !== wantType && kindOf(o.v) !== wantType) return false;
-    if (o.pm.t === destTrack) return false;
     return true;
   };
+  standingCars().filter(o => fits(o) && o.pm.t === destTrack && o.v.id).forEach(o => EF_CLASSIFIED.add(o.v.id));
+  const match = o => fits(o) && o.pm.t !== destTrack && !(o.v.id && EF_CLASSIFIED.has(o.v.id));
   let n = 0;
   for (const v of standingCars().filter(match).sort(byAge).map(o => o.v)) {
     const o = standingCars().find(q => q.v === v && !q.live); if (!o) continue;
     const slot = efFreeSlot([destTrack], vL(o.v));
     if (!slot) { notes.push(efTrackName(destTrack) + ' is full; the rest stay'); break; }
-    if (moveStandingCar(o, slot.t, slot.d)) { n++; notes.push(carName(o.v) + ' classified to ' + efTrackName(slot.t)); }
+    if (moveStandingCar(o, slot.t, slot.d)) { n++; if (o.v.id) EF_CLASSIFIED.add(o.v.id); notes.push(carName(o.v) + ' classified to ' + efTrackName(slot.t)); }
   }
+  efPackStandingOn(destTrack);
   if (!n && !notes.length) notes.push('nothing to classify onto ' + efTrackName(destTrack));
   return notes;
 }
@@ -4199,6 +4238,7 @@ function efCrewBuild(w) {
       if (moveStandingCar(o, slot.t, slot.d)) { n++; notes.push(carName(o.v) + ' added to the ' + cust + ' block on ' + efTrackName(destTrack)); }
     }
   }
+  efPackStandingOn(destTrack);
   if (!n && !notes.length) notes.push('nothing to build on ' + efTrackName(destTrack));
   return notes;
 }
@@ -4237,6 +4277,7 @@ function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400
   if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
   try { if (window.NII_CALLSHEET) { bindCrewBoard(); const r = NII_CALLSHEET.runHired(Math.floor(t / 86400) + 1, next); if (r && r.lines) r.lines.forEach(m => note(m + '.')); } } catch (e) { }
   try { efApplyPendingCrew(); } catch (e) { }
+  try { EF_CLASSIFIED.clear(); } catch (e) { }
   newDay(); save(); hideModal(); }
 function bindCrewBoard() {
   if (!window.NII_CALLSHEET) return;

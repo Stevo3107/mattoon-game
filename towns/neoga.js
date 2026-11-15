@@ -1208,12 +1208,21 @@ function splitCutSilent(c, k) {
 }
 function isolateStandingCar(q) {
   if (!q || q.live) return null;
-  const c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
+  let c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
   if (i < 0) return null;
   if (c.veh.length === 1) return c;
-  if (!splitCutSilent(c, i === 0 ? 1 : i)) return null;
-  const q2 = standingCars().find(o => o.v === q.v);
-  return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
+  if (i < c.veh.length - 1) {
+    if (!splitCutSilent(c, i + 1)) return null;
+    const q2 = standingCars().find(o => o.v === q.v); if (!q2 || q2.live) return null;
+    c = q2.c; i = q2.i != null ? q2.i : c.veh.indexOf(q.v);
+  }
+  if (c.veh.length === 1) return c;
+  if (i > 0) {
+    if (!splitCutSilent(c, i)) return null;
+    const q3 = standingCars().find(o => o.v === q.v);
+    return q3 && q3.c.veh.length === 1 && !q3.live ? q3.c : null;
+  }
+  return c.veh.length === 1 ? c : null;
 }
 function ngOccOnTrack(t, ignore) {
   const skip = new Set(ignore || []), out = [];
