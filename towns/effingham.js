@@ -4190,16 +4190,17 @@ const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g
 // Nov 15 (Stephen): ?seed=ef on a test save only. One time per save, drops a mixed batch of interchange cars
 // for Effingham customers (8 on the PC Interchange, 8 spread over the yard) so there is something to sort and switch.
 function efTestSeed() {
-  if (!NII.TEST || !/[?&]seed=ef(&|$)/.test(location.search) || S.efSeed1) return;
+  const ixOnly = /[?&]seed=efix(&|$)/.test(location.search); // Nov 15 (Stephen): blank yard, interchange cars only
+  if (!NII.TEST || !(ixOnly || /[?&]seed=ef(&|$)/.test(location.search)) || S.efSeed1) return;
   const keys = Object.keys(DEST), pick = () => keys[Math.floor(R() * keys.length)];
   const ix = [], yard = [];
-  for (let i = 0; i < 16; i++) { const v = newCar(pick(), i % 2 ? 'PC' : 'IC'); v.inDay = dayNo() - (i % 4); (i < 8 ? ix : yard).push(v); }
+  for (let i = 0; i < (ixOnly ? 8 : 16); i++) { const v = newCar(pick(), i % 2 ? 'PC' : 'IC'); v.inDay = dayNo() - (i % 4); (i < 8 ? ix : yard).push(v); }
   let k = ix.length; while (k > 0 && !setOutPCX(ix.slice(0, k))) k--;
-  yard.push(...ix.slice(k));
+  if (!ixOnly) yard.push(...ix.slice(k));
   let n = 0;
-  YARD_TS.forEach((t, j) => { const grp = yard.filter((v, i) => i % 4 === j); if (!grp.length || !T[t]) return; const L = grp.reduce((a, v) => a + vL(v), 0), slot = efFreeSlot([t], L + 4); if (!slot) return; const c = placeCut(grp, grp.map(() => true), t, slot.d - 2, 1); if (S.cuts.some(o => segsOverlap(o, c, 1))) return; S.cuts.push(c); n += grp.length; });
+  if (!ixOnly) YARD_TS.forEach((t, j) => { const grp = yard.filter((v, i) => i % 4 === j); if (!grp.length || !T[t]) return; const L = grp.reduce((a, v) => a + vL(v), 0), slot = efFreeSlot([t], L + 4); if (!slot) return; const c = placeCut(grp, grp.map(() => true), t, slot.d - 2, 1); if (S.cuts.some(o => segsOverlap(o, c, 1))) return; S.cuts.push(c); n += grp.length; });
   S.efSeed1 = 1; save();
-  note('Test cars: ' + k + ' on the PC Interchange and ' + n + ' in the yard.');
+  note('Test cars: ' + k + ' on the PC Interchange' + (ixOnly ? '.' : ' and ' + n + ' in the yard.'));
 }
 function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars for Effingham customers (or Mattoon) come off to the yard
   if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
