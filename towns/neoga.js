@@ -1215,23 +1215,55 @@ function isolateStandingCar(q) {
   const q2 = standingCars().find(o => o.v === q.v);
   return q2 && q2.c.veh.length === 1 && !q2.live ? q2.c : null;
 }
-function ngFreeSlot(tracks, L) {
-  for (const t of tracks) {
-    if (!T[t]) continue;
-    for (let d = T[t].len - 6; d >= L + 6; d -= 12) {
-      const probe = placeCut([{ type: 'boxcar50', L, dest: 'TMP' }], [true], t, d, 1);
-      if (!S.cuts.some(o => segsOverlap(o, probe, 2))) return { t, d };
-    }
+function ngOccOnTrack(t, ignore) {
+  const skip = new Set(ignore || []), out = [];
+  for (const c of S.cuts) { if (skip.has(c)) continue; for (const g of c.path || []) { if (g.t !== t) continue; out.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1), live: c.veh.some(isLoco), c }); } }
+  return out; }
+function ngCanCoupleCut(c, t) { return !!(c && !c.veh.some(isLoco) && c.path && c.path.length && c.path.every(g => g.t === t)); }
+function ngPackedHead(t, L, occ) {
+  if (!T[t]) return null;
+  const len = T[t].len, maxHead = len - 6, minHead = L + 6; if (maxHead < minHead) return null;
+  const padFor = o => (o.live || !ngCanCoupleCut(o.c, t)) ? 2 : 0;
+  const cands = [maxHead]; for (const o of occ) cands.push(o.lo - padFor(o));
+  cands.sort((a, b) => b - a);
+  for (const d of cands) {
+    if (d > maxHead + 1e-9 || d < minHead - 1e-9) continue;
+    const lo = d - L, hi = d;
+    if (occ.some(o => { const pad = padFor(o); return !(hi + pad <= o.lo || o.hi + pad <= lo); })) continue;
+    return d;
   }
+  return null; }
+function ngFreeSlot(tracks, L) {
+  for (const t of tracks) { if (!T[t]) continue; const d = ngPackedHead(t, L, ngOccOnTrack(t)); if (d != null) return { t, d }; }
   return null;
 }
+function ngStandingMates(t, dHead, L) {
+  const mates = S.cuts.filter(c => ngCanCoupleCut(c, t));
+  const near = (c, lo, hi) => { const ds = c.path.flatMap(g => [g.d0, g.d1]), clo = Math.min(...ds), chi = Math.max(...ds); return hi >= clo - 3 && lo <= chi + 3; };
+  const group = mates.filter(c => near(c, dHead - L, dHead));
+  let more = true;
+  while (more) { more = false; for (const c of mates) { if (group.includes(c)) continue; const ds = c.path.flatMap(g => [g.d0, g.d1]); if (group.some(g => near(g, Math.min(...ds), Math.max(...ds)))) { group.push(c); more = true; } } }
+  return group; }
+function ngCoupleStanding(t, dHead, L) {
+  const mates = ngStandingMates(t, dHead, L); if (mates.length < 2) return;
+  const items = []; let head = 0;
+  for (const c of mates) { const ds = c.path.flatMap(g => [g.d0, g.d1]); head = Math.max(head, ...ds); for (const q of vehPos(c)) items.push({ v: q.v, aT: q.aT, d: q.pm.d }); }
+  items.sort((a, b) => b.d - a.d);
+  const saved = mates.slice();
+  for (const c of mates) { const i = S.cuts.indexOf(c); if (i >= 0) S.cuts.splice(i, 1); }
+  const nc = placeCut(items.map(i => i.v), items.map(i => i.aT), t, head, 1);
+  const ds = (nc.path || []).flatMap(g => [g.d0, g.d1]);
+  if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return; }
+  S.cuts.push(nc); }
+function ngCrewPackTrack(t) { return !!(t && (t === 'RA' || t === 'NWI' || (typeof NG_YARD_TS !== 'undefined' && NG_YARD_TS.includes(t)))); }
 function moveStandingCar(q, t, dHead) {
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();
   S.cuts.splice(S.cuts.indexOf(c0), 1);
   const nc = placeCut(veh, aT, t, dHead, 1);
-  if (S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
-  S.cuts.push(nc); return true;
+  const L = cutLen(nc), pack = ngCrewPackTrack(t), mates = pack ? ngStandingMates(t, dHead, L) : [], ignore = new Set(mates);
+  if (S.cuts.some(o => !ignore.has(o) && segsOverlap(o, nc, 1.5))) { S.cuts.push(c0); return false; }
+  S.cuts.push(nc); if (pack) ngCoupleStanding(t, dHead, L); return true;
 }
 function spotTaken(sp) {
   return standingCars().some(o => !isLoco(o.v) && o.v.type !== 'caboose' && o.pm.t === sp.t && Math.abs(o.pm.d - sp.d) <= (sp.tol || 8));
