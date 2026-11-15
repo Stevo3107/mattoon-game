@@ -4187,6 +4187,20 @@ function efCrewCustomer(key) {
   return notes; }
 const EF_IX_TS = ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'];
 const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g.t));
+// Nov 15 (Stephen): ?seed=ef on a test save only. One time per save, drops a mixed batch of interchange cars
+// for Effingham customers (8 on the PC Interchange, 8 spread over the yard) so there is something to sort and switch.
+function efTestSeed() {
+  if (!NII.TEST || !/[?&]seed=ef(&|$)/.test(location.search) || S.efSeed1) return;
+  const keys = Object.keys(DEST), pick = () => keys[Math.floor(R() * keys.length)];
+  const ix = [], yard = [];
+  for (let i = 0; i < 16; i++) { const v = newCar(pick(), i % 2 ? 'PC' : 'IC'); v.inDay = dayNo() - (i % 4); (i < 8 ? ix : yard).push(v); }
+  let k = ix.length; while (k > 0 && !setOutPCX(ix.slice(0, k))) k--;
+  yard.push(...ix.slice(k));
+  let n = 0;
+  YARD_TS.forEach((t, j) => { const grp = yard.filter((v, i) => i % 4 === j); if (!grp.length || !T[t]) return; const L = grp.reduce((a, v) => a + vL(v), 0), slot = efFreeSlot([t], L + 4); if (!slot) return; const c = placeCut(grp, grp.map(() => true), t, slot.d - 2, 1); if (S.cuts.some(o => segsOverlap(o, c, 1))) return; S.cuts.push(c); n += grp.length; });
+  S.efSeed1 = 1; save();
+  note('Test cars: ' + k + ' on the PC Interchange and ' + n + ' in the yard.');
+}
 function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars for Effingham customers (or Mattoon) come off to the yard
   if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
   const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
@@ -4355,7 +4369,7 @@ let last = performance.now(), saveT = 0, mapT = 0, bfT = 0, csT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } if ((csT += dt) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
+build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
