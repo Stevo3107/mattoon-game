@@ -4275,9 +4275,12 @@ function splitCutSilent(c, k) { // crew isolate: same split as uncAt, no toast o
   if (!c || k <= 0 || k >= c.veh.length) return false;
   const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s);
   const a = { id: c.id, veh: c.veh.slice(0, k), aT: c.aT.slice(0, k), path: pa }, b = { id: 'c' + (S.nid++), veh: c.veh.slice(k), aT: c.aT.slice(k), path: pb };
-  S.cuts.splice(S.cuts.indexOf(c), 1, a, b); return true; }
+  const at = S.cuts.indexOf(c); if (at < 0) return false; // Nov 15 fix: a stale cut (already split or moved) must never splice(-1), which dropped the last cut and copied this one (ghost cars)
+  S.cuts.splice(at, 1, a, b); return true; }
 function isolateStandingCar(q) { // pull one standing car out of a cut, including from the middle (both sides)
   if (!q || q.live) return null;
+  if (!S.cuts.includes(q.c) || q.c.veh[q.i != null ? q.i : -1] !== q.v) { // Nov 15 fix: q was read before an earlier move; find where the car stands now
+    const f = standingCars().find(o => o.v === q.v); if (!f || f.live) return null; q = f; }
   let c = q.c, i = q.i != null ? q.i : c.veh.indexOf(q.v);
   if (i < 0) return null;
   if (c.veh.length === 1) return c;
@@ -4465,16 +4468,21 @@ function efTestSeed() {
   S.efSeed1 = 1; save();
   note('Test cars: ' + k + ' on the PC Interchange' + (ixOnly ? '.' : ' and ' + n + ' in the yard.'));
 }
-function efCrewPC() { // PC Interchange: outbound PC cars go on it, inbound cars for Effingham customers (or Mattoon) come off to the yard
+function efCrewPC() { // PC Interchange: outbound PC cars go on it, every other car on it (Effingham, Mattoon, IC routed) comes off to the yard
   if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
   const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
   const fresh = v => standingCars().find(q => q.v === v && !q.live); // re-read each time: an earlier move may have split the cut
   for (const v of standingCars().filter(o => !o.live && o.v.dest === 'PC-INT' && !onPcIx(o.c)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
     const slot = efFreeSlot(ixTs, vL(o.v)); if (!slot) { notes.push('the PC Interchange is full: ' + carName(o.v) + ' stays'); break; }
     if (moveStandingCar(o, slot.t, slot.d)) nOut++; }
-  for (const v of standingCars().filter(o => !o.live && onPcIx(o.c) && (DEST[o.v.dest] || o.v.mattoonN)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
+  // Nov 15 (Stephen): every car standing anywhere on the PC Interchange (IX1, IX2, the lead and the switches) comes off to the yard,
+  // except outbound PC cars waiting for the PC. That includes IC- and Mattoon-routed cars and anything else (they head on from the yard).
+  const inbound = o => !o.live && onPcIx(o.c) && o.v.dest !== 'PC-INT' && !isLoco(o.v) && o.v.type !== 'caboose';
+  for (const v of standingCars().filter(inbound).map(o => o.v).filter((v, i, a) => a.indexOf(v) === i)) { const o = fresh(v); if (!o || !inbound(o)) continue;
     const slot = efFreeSlot(YARD_TS, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
     if (moveStandingCar(o, slot.t, slot.d)) nIn++; }
+  { const held = standingCars().filter(o => o.live && !isLoco(o.v) && o.v.type !== 'caboose' && o.v.dest !== 'PC-INT' && o.c.path.every(g => EF_IX_TS.includes(g.t))).length;
+    if (held) notes.push(`${held} car${held > 1 ? 's' : ''} coupled to an engine on the PC Interchange stay put`); }
   if (nOut) notes.unshift(`set ${nOut} car${nOut > 1 ? 's' : ''} out on the PC Interchange`);
   if (nIn) notes.unshift(`pulled ${nIn} inbound car${nIn > 1 ? 's' : ''} off the PC Interchange to the yard`);
   if (!nOut && !nIn && !notes.length) notes.push('PC Interchange: nothing to move');
