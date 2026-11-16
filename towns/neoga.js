@@ -219,7 +219,8 @@ const FH = { doorX: HX0 + 90 }; // freight house: car door at x, house 40 x 20 f
 let S = E.towns.neoga;
 if (!S || S.v !== 2) { const old = S; S = { v: 2, sw: { S1: 'N', S2: 'N', S3: 'N', S4: 'N', S5: 'N' }, ra: 2, cuts: [], nid: 1, day: -1, tower: null, pendIC: [], speedX: 1 };
   if (old && old.train && old.train.length && !E.trainIn) E.trainIn = old.train;
-  if (old && old.nwPend) S.nwPend = old.nwPend; if (old && old.pendIC) S.pendIC = old.pendIC; } // Nov 4: cars Mattoon handed to Neoga before its first visit
+  if (old && old.nwPend) S.nwPend = old.nwPend; if (old && old.pendIC) S.pendIC = old.pendIC;
+  if (old && !old.v && typeof old === 'object') for (const k of Object.keys(old)) if (k !== 'v' && old[k] != null && !(Array.isArray(old[k]) && !old[k].length)) S[k] = old[k]; } // Nov 4: cars Mattoon handed to Neoga before its first visit. Nov 16 fix: also cars the call sheet set on the N&W Interchange / runaround (Effingham overflow) before the first visit; they were dropped
 E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
@@ -530,6 +531,7 @@ const COAL_SIZES = ['Stoker coal', 'Nut coal', 'Egg coal', 'Pea coal', 'Lump coa
 const coalSize = num => COAL_SIZES[(parseInt(String(num || 0).replace(/\D/g, ''), 10) || 0) % COAL_SIZES.length];
 function fixLoad(v) { const c = v && v.load && v.load.c; if (c === 'Coal (stoker)') v.load.c = coalSize(v.num); else if (c === 'Fuel oil (No. 2)') v.load.c = 'Heating oil (No. 2)'; return v; } // old saves: seeded by car number
 function carTag(v) { fixLoad(v); if (ngHeld(v)) { const sd = SH.SUBDIVS.NEO, d = DEST[v.dest]; return { code: (TAG_NAME[v.dest] || v.dest) + ' HOLD', load: SH.tagLoad(v), sub: 'NEO', subName: sd.name, color: sd.color, ink: sd.ink, name: d.name + ': held until one of its spots is free' }; }
+  if (!DEST[v.dest] && /^EF /.test(v.dest || '') && SH.SUBDIVS.EFF) { const sd = SH.SUBDIVS.EFF; return { code: TAG_NAME[v.dest] || v.dest, load: SH.tagLoad(v), sub: 'EFF', subName: sd.name, color: sd.color, ink: sd.ink, name: 'Effingham customer: ' + (v.efHold ? 'held here, the Effingham yard was full' : 'goes south') }; } // Nov 16
   const code = v.dest || (v.type === 'caboose' ? 'HOLD' : 'NII'), sub = DEST[code] ? 'NEO' : 'MAT', sd = SH.SUBDIVS[sub]; return { code: TAG_NAME[code] || code, load: SH.tagLoad(v), sub, subName: sd.name, color: sd.color, ink: sd.ink, name: DEST[code] ? DEST[code].name : code }; }
 function busyFor(k, cuts) { const s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
   return cuts.some(c => c.path.some(g2 => ends.some(([t, e]) => g2.t === t && Math.min(g2.d0, g2.d1) - 12 <= at(t, e) && Math.max(g2.d0, g2.d1) + 12 >= at(t, e)))); }
@@ -1306,14 +1308,15 @@ let last = performance.now(), saveT = 0, mapT = 0, bfT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); nwiClear(); if (!VISIT) { try { ngCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
+const NG_YARD_TS = ['RA']; // Nov 16 fix: declared before load runs; the crew catch-up used it too early ('Cannot access NG_YARD_TS before initialization') and skipped the crew's work
+build(); nwiClear(); if (!VISIT) { try { ngCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); if (S.fixBack) { delete S.fixBack; try { dropIC(); } catch (e) { } } /* Nov 16: cars Mattoon sent back (a crew had pulled them off the N&W Interchange by mistake) go straight back on the interchange track */ releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 // Nov 13 (Stephen): the call board works from Neoga too (crews are still only called where they are based); the crews' clock runs while you are here
 
 // Hired crew work (Nov 13): pull released cars off Neoga spots first, then spot new ones. Same idea as Effingham's efCrewCustomer.
-const NG_YARD_TS = ['RA'];
-const carNameN = v => roadOf(v) + ' ' + v.num;
+/* NG_YARD_TS moved up (Nov 16): load() runs before this line */
+function carNameN(v) { return roadOf(v) + ' ' + v.num; } // Nov 16: a hoisted function, the load-time crew catch-up calls it before this line runs
 function splitCutSilent(c, k) {
   if (k <= 0 || k >= c.veh.length) return false;
   const s = c.veh.slice(0, k).reduce((a, v) => a + vL(v), 0), [pa, pb] = splitPath(c, s);
@@ -1342,7 +1345,7 @@ function ngOccOnTrack(t, ignore) {
   const skip = new Set(ignore || []), out = [];
   for (const c of S.cuts) { if (skip.has(c)) continue; for (const g of c.path || []) { if (g.t !== t) continue; out.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1), live: c.veh.some(isLoco), c }); } }
   return out; }
-function ngCanCoupleCut(c, t) { return !!(c && !c.veh.some(isLoco) && c.path && c.path.length && c.path.every(g => g.t === t)); }
+function ngCanCoupleCut(c, t) { return !!(c && !c.veh.some(isLoco) && !c.veh.some(v => v.efHold) && c.path && c.path.length && c.path.every(g => g.t === t)); } // Nov 16 (Stephen): Effingham cars held on the runaround stay put: crews work around them, never couple, shove or haul them
 function ngPackedHead(t, L, occ) {
   if (!T[t]) return null;
   const len = T[t].len, maxHead = len - 6, minHead = L + 6; if (maxHead < minHead) return null;
@@ -1420,8 +1423,35 @@ function ngCrewCustomer(key) {
     else if (q && q.pm.t === sp.t) notes.push(carNameN(next.v) + ' set on the ' + (T[sp.t] && T[sp.t].name || sp.t) + ' (not on a spot)');
     else notes.push('could not spot ' + carNameN(next.v) + ' at the ' + sp.name);
   }
+  // Nov 16 fix (Stephen: crews drop ALL the customer's cars; everything a crew puts on one track is coupled together): cars with no free spot go on the customer's track, coupled behind the cars there
+  const coupledTo = (v, set) => { const c = S.cuts.find(k => k.veh.includes(v)); return !!(c && c.veh.some(x => x !== v && set.has(x))); };
+  const spotted = new Set(); for (const o of cars()) if (!o.live && o.v.dest === key && o.v.work && spotTs.includes(o.pm.t)) spotted.add(o.v);
+  const rest = cars().filter(o => !o.live && o.v.dest === key && !o.v.work && !o.v.doneAt && srcOk(o.pm.t) && !carAtSpot(o.v, o.pm) && !(spotTs.includes(o.pm.t) && coupledTo(o.v, spotted))).sort(byAge).map(o => o.v);
+  for (const v of rest) {
+    let put = null;
+    for (const t of spotTs) { if (ngCrewAppend(t, v, key)) { put = t; break; } }
+    if (put) notes.push(carNameN(v) + ' set on the ' + (T[put] && T[put].name || put) + ', coupled to the ' + name + ' cars (waits its turn)');
+    else { const o = cars().find(q => q.v === v); notes.push('no room on the ' + name + ' track for ' + carNameN(v) + (o ? '; it stays on ' + (T[o.pm.t] && T[o.pm.t].name || o.pm.t) : '')); }
+  }
   if (!notes.length) notes.push(name + ': nothing to switch');
   return notes;
+}
+function ngCrewAppend(t, v, key) { // Nov 16: add standing car v to the customer's cut on t at its low end, as one coupled cut; no cut there yet: it goes on the first spot
+  if (!T[t]) return false;
+  const q = standingCars().find(o => o.v === v); if (!q || q.live) return false;
+  const lo = c => Math.min(...c.path.flatMap(g => [g.d0, g.d1])), hi = c => Math.max(...c.path.flatMap(g => [g.d0, g.d1]));
+  const mates = S.cuts.filter(c => !c.veh.some(isLoco) && c.path.length === 1 && c.path[0].t === t && c.path[0].dir === 1 && !c.veh.includes(v));
+  const A = mates.filter(c => c.veh.some(x => x.dest === key || x.relK === key)).sort((a, b) => lo(a) - lo(b))[0];
+  if (!A) { const sp = SPOTS.find(s => s.dest === key && s.t === t); if (!sp) return false; return moveStandingCar(q, t, Math.min(T[t].len - 0.5, sp.d + vL(v) / 2)); }
+  const c0 = isolateStandingCar(q); if (!c0) return false;
+  const A2 = S.cuts.find(c => c.veh.includes(A.veh[0])) || A;
+  const nc = placeCut(c0.veh.concat(A2.veh), c0.aT.concat(A2.aT), t, hi(A2), 1); // veh[0] is the low end: the cut already there keeps its place
+  const fits = c => c.path.length === 1 && c.path[0].t === t && lo(c) >= 0.5 && hi(c) <= T[t].len - 0.5 && !S.cuts.some(o => o !== A2 && o !== c0 && segsOverlap(o, c, 1.5));
+  let ok = fits(nc) ? nc : null;
+  if (!ok) { const nb = placeCut(A2.veh.concat(c0.veh), A2.aT.concat(c0.aT), t, lo(A2) + cutLen(A2) + cutLen(c0), 1); if (fits(nb)) ok = nb; } // no room behind: couple it on the other end
+  if (!ok) return false;
+  S.cuts.splice(S.cuts.indexOf(A2), 1); S.cuts.splice(S.cuts.indexOf(c0), 1); S.cuts.push(ok);
+  return true;
 }
 function ngCrewWork(w) {
   if (!w) return [];
