@@ -1216,7 +1216,9 @@ const PCL = { at: [PC.x, -276], name: 'PC connection (locked)' }; // never throw
  // Nov 12 (Stephen): one soda-ash spot at the rear (stub/far end) of GAC, capacity 1 car.
  { const gac=T.GAC||T.GA, sodaL=58, sodaD=gac?Math.max(sodaL/2, gac.len-sodaL/2):100;
    spot('GLASS-SODA','GAC',sodaD,'EF GLASS','soda ash (rear)',sodaL,sodaL/2); spots.at(-1).cap=1; }
- [28,53,78].forEach((x,i)=>spot('HOUSE-DOOR-'+(i+1),'HT',house.planX-house.x+x,'EF HOUSE','freight door '+(i+1),50,3));spot('HOUSE-TEAM','HT',335,'EF HOUSE','team ramp',50,5);
+ /* Nov 16 (Stephen): the freight house is ONE long spot, like Mattoon's house track. The three doors were only 25 ft apart (cars are 46-56 ft), so door 2 could never be used next to door 1 or 3.
+    The spot runs along the 110 ft building (+5 ft each end for car overhang): two house cars (boxcars) fit, coupled together. Cars left at the old doors 1/2/3 are inside it. */
+ { const fhL=120, fhD=house.planX-house.x+55; spot('HOUSE-FH','HT',fhD,'EF HOUSE','freight house',fhL,fhL/2); spots.at(-1).cap=2; spots.at(-1).couple=true; }spot('HOUSE-TEAM','HT',335,'EF HOUSE','team ramp',50,5);
  let dlo=0,dhi=T.IL0.len;for(let i=0;i<70;i++){const d=(dlo+dhi)/2;if(T.IL0.analyticAt(d)[0]<2340)dlo=d;else dhi=d;}const dd=(dlo+dhi)/2,dp=T.IL0.analyticAt(dd),beltDiamond={track:'IL0',d:dd,at:dp.slice(0,2),heading:dp[2],source:'exact mock second physical PC/belt diamond; no graph junction',frogPoints:[]};
  for(const pcOffset of [-2.35,2.35])for(const beltOffset of [-2.35,2.35]){let lo=dd-30,hi=dd+30;for(let i=0;i<60;i++){const p=T.IL0.analyticAt((lo+hi)/2);if(p[0]-Math.sin(p[2])*beltOffset<2340+pcOffset)lo=(lo+hi)/2;else hi=(lo+hi)/2;}const p=T.IL0.analyticAt((lo+hi)/2);beltDiamond.frogPoints.push([p[0]-Math.sin(p[2])*beltOffset,p[1]+Math.cos(p[2])*beltOffset]);}
  globalThis.EF_GLASS_LAYOUT={origin:[glass.x,glass.y],ladderX:glass.ladderX,sandRadiusFt:200,source:'native art-specific exception'};
@@ -4449,14 +4451,46 @@ function efCrewCustomer(key) {
       else notes.push('could not spot ' + carName(next.v) + ' at the ' + sp.name);
     }
   }
+  // Nov 16 (Stephen): cars spotted on the freight house spot are coupled together (one cut), not left a foot apart
+  for (const sp of spots) if (sp.couple) { try { const mates = efStandingMates(sp.t, sp.d + (sp.L || 50) / 2, sp.L || 50); if (mates.length > 1) efPackGroup(sp.t, mates); } catch (e) { } }
+  // Nov 16 fix (Stephen: they only took one car to Illini Grain; crews drop ALL the customer's cars, and everything a crew puts on one track is coupled together).
+  // Cars that did not get a working spot (Illini Grain has one loadout spout; Burgess 3 per track ...) are set on the customer's track coupled behind the spotted cars, waiting their turn.
+  const spotted = new Set(); for (const o of cars()) if (!o.live && o.v.dest === key && o.v.work && spotTs.includes(o.pm.t)) spotted.add(o.v);
+  const rest = cars().filter(o => !o.live && o.v.dest === key && !o.v.work && !o.v.doneAt && src(o.pm.t) && !carAtSpot(o.v, o.pm) && !(spotTs.includes(o.pm.t) && efCrewCoupledTo(o.v, spotted))).sort(byAge).map(o => o.v);
+  for (const v of rest) {
+    let put = null;
+    for (const t of spotTs) { if (efCrewAppend(t, v, key)) { put = t; break; } }
+    if (put) notes.push(carName(v) + ' set on the ' + efTrackName(put) + ', coupled to the ' + name + ' cars (waits its turn)');
+    else { const o = cars().find(q => q.v === v); notes.push('no room on the ' + name + ' track for ' + carName(v) + (o ? '; it stays on ' + efTrackName(o.pm.t) : '')); }
+  }
   if (!notes.length) notes.push(name + ': nothing to switch');
   return notes; }
+function efCrewCoupledTo(v, set) { const c = S.cuts.find(k => k.veh.includes(v)); return !!(c && c.veh.some(x => x !== v && set.has(x))); }
+// Nov 16: add standing car v to the customer's cut on track t (behind it, toward the low end), as one coupled cut. No cut there yet: it goes on the first spot.
+function efCrewAppend(t, v, key) {
+  if (!T[t]) return false;
+  const q = standingCars().find(o => o.v === v); if (!q || q.live) return false;
+  const lo = c => Math.min(...c.path.flatMap(g => [g.d0, g.d1])), hi = c => Math.max(...c.path.flatMap(g => [g.d0, g.d1]));
+  const mates = S.cuts.filter(c => efCanCoupleCut(c, t) && !c.veh.includes(v) && c.path.length === 1 && c.path[0].dir === 1);
+  const A = mates.filter(c => c.veh.some(x => x.dest === key || x.relK === key)).sort((a, b) => lo(a) - lo(b))[0];
+  if (!A) { const sp = SPOTS.find(s => s.dest === key && s.t === t && s.workActive !== false); if (!sp) return false; return moveStandingCar(q, t, Math.min(T[t].len - 0.5, sp.d + vL(v) / 2)); }
+  const c0 = isolateStandingCar(q); if (!c0) return false;
+  const A2 = S.cuts.find(c => c.veh.includes(A.veh[0])) || A; // isolating can rebuild cuts
+  const nc = placeCut(c0.veh.concat(A2.veh), c0.aT.concat(A2.aT), t, hi(A2), 1); // veh[0] is the low end: the cut already there keeps its place (the spotted car stays on its spot)
+  const fits = c => c.path.length === 1 && c.path[0].t === t && lo(c) >= 0.5 && hi(c) <= T[t].len - 0.5 && !S.cuts.some(o => o !== A2 && o !== c0 && segsOverlap(o, c, 1.5));
+  let ok = fits(nc) ? nc : null;
+  if (!ok) { const nb = placeCut(A2.veh.concat(c0.veh), A2.aT.concat(c0.aT), t, lo(A2) + cutLen(A2) + cutLen(c0), 1); if (fits(nb)) ok = nb; } // no room behind: couple it on the other end
+  if (!ok) return false;
+  S.cuts.splice(S.cuts.indexOf(A2), 1); S.cuts.splice(S.cuts.indexOf(c0), 1); S.cuts.push(ok);
+  return true;
+}
 const EF_IX_TS = ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'];
 const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g.t));
 // Nov 15 (Stephen): ?seed=ef on a test save only. One time per save, drops a mixed batch of interchange cars
 // for Effingham customers (8 on the PC Interchange, 8 spread over the yard) so there is something to sort and switch.
 function efTestSeed() {
   const ixOnly = /[?&]seed=efix(&|$)/.test(location.search); // Nov 15 (Stephen): blank yard, interchange cars only
+  if (NII.TEST && /[?&]seed=efix2(&|$)/.test(location.search) && !S.efSeed1) { efTestSeed2(); return; } // Nov 16
   if (!NII.TEST || !(ixOnly || /[?&]seed=ef(&|$)/.test(location.search)) || S.efSeed1) return;
   const keys = Object.keys(DEST), pick = () => keys[Math.floor(R() * keys.length)];
   const ix = [], yard = [];
@@ -4467,6 +4501,35 @@ function efTestSeed() {
   if (!ixOnly) YARD_TS.forEach((t, j) => { const grp = yard.filter((v, i) => i % 4 === j); if (!grp.length || !T[t]) return; const L = grp.reduce((a, v) => a + vL(v), 0), slot = efFreeSlot([t], L + 4); if (!slot) return; const c = placeCut(grp, grp.map(() => true), t, slot.d - 2, 1); if (S.cuts.some(o => segsOverlap(o, c, 1))) return; S.cuts.push(c); n += grp.length; });
   S.efSeed1 = 1; save();
   note('Test cars: ' + k + ' on the PC Interchange' + (ixOnly ? '.' : ' and ' + n + ' in the yard.'));
+}
+// Nov 16 (Stephen: a different set of cars than the other tests): ?seed=efix2 on a test save only. One time per save, about 20 interchange
+// cars with other reporting marks than ?seed=efix and the ?spawn=effingham list (mostly boxcars and grain hoppers), on PCX / IX1 / IX2. Blank yard.
+function efTestSeed2() {
+  const R0 = R; R = seeded(0xEF1C2 ^ 0x5eed2);
+  try {
+    const BAN_ROADS = new Set(['PC', 'NATX', 'SUNX', 'PRR', 'MON', 'ACY', 'BN', 'GN', 'UP', 'ICG', 'GTW']); // the marks efix and the spawn list use
+    const plan = ['EF HOUSE', 'EF BURGESS', 'EF GRAIN', 'EF HOUSE', 'EF GLASS', 'EF BURGESS', 'EF GRAIN', 'EF HOUSE', 'EF BURGESS'];
+    const cars = [], perRoad = {}, keys = new Set(S.cuts.flatMap(c => c.veh).map(v => (v.road || '') + ' ' + v.num));
+    for (let i = 0; cars.length < 20 && i < 900; i++) {
+      const v = newCar(plan[i % plan.length], i % 3 ? 'IC' : 'PC'), k = (v.road || '') + ' ' + v.num, cap = v.road === 'IC' ? 3 : 4;
+      if (BAN_ROADS.has(v.road) || keys.has(k) || (perRoad[v.road] || 0) >= cap) continue;
+      keys.add(k); perRoad[v.road] = (perRoad[v.road] || 0) + 1; v.inDay = dayNo() - (cars.length % 4); cars.push(v);
+    }
+    const put = (grp, ts) => { let left = grp.slice();
+      for (const t of ts) { if (!left.length) break; let k = left.length;
+        if (t === 'PCX') { while (k > 0 && !setOutPCX(left.slice(0, k))) k--; left = left.slice(k); continue; }
+        if (!T[t]) continue;
+        while (k > 0) { const sl = left.slice(0, k), L = sl.reduce((a, v) => a + vL(v), 0), slot = efFreeSlot([t], L + 4);
+          if (slot) { const c = placeCut(sl, sl.map(() => true), t, slot.d - 2, 1); if (c.path.every(g => g.t === t) && !S.cuts.some(o => segsOverlap(o, c, 1))) { S.cuts.push(c); break; } }
+          k--; }
+        left = left.slice(k); }
+      return left; };
+    const pc = cars.filter(v => v.via === 'PC'), ic = cars.filter(v => v.via !== 'PC');
+    if (dayNo() <= 1) S.cuts = S.cuts.filter(c => !(onPcIx(c) && c.veh.every(v => v.ngIn && !v.work && !v.doneAt))); // a brand-new test game: today's delivery (PC 74214, IC 765328, the same in every test) makes way for this set
+    const lost = put(pc, ['PCX', 'IX1', 'IX2']).concat(put(ic.slice(0, 10), ['IX2', 'IX1', 'PCX']), put(ic.slice(10), ['IX1', 'IX2', 'PCX']));
+    S.efSeed1 = 1; save();
+    note('Test cars (efix2): ' + (cars.length - lost.length) + ' on the interchange tracks' + (lost.length ? ' (' + lost.length + ' did not fit)' : '') + '.');
+  } finally { R = R0; }
 }
 function efCrewPC() { // PC Interchange: outbound PC cars go on it, every other car on it (Effingham, Mattoon, IC routed) comes off to the yard
   if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
@@ -4550,13 +4613,17 @@ function efApplyPendingCrew(upTo, quiet) { // work finished while you were away 
     for (const v of nwIn) {
       const L = vL(v);
       const slot = efFreeSlot(YARD_TS, L);
-      if (!slot) { out.push('no room in the yard for the rest of the N&W inbound cars'); break; }
+      if (!slot) { const rest = nwIn.slice(nwIn.indexOf(v)); // Nov 16 (Stephen: the closer to the yard, the better): runaround at Neoga, then the Mattoon yard, then Neoga's N&W Interchange
+        let o = null; try { if (window.NII_CALLSHEET && NII_CALLSHEET.efOverflow) o = NII_CALLSHEET.efOverflow(rest); } catch (e) { o = null; }
+        if (o) out.push('the Effingham yard is full: ' + (o.join('; ') || 'nothing moved')); else { out.push('no room in the yard for the rest of the N&W inbound cars; they wait for room'); S.pendingNwIn = rest.concat(S.pendingNwIn || []); }
+        break; }
       S.cuts.push(placeCut([v], [true], slot.t, slot.d, 1));
       efCoupleStanding(slot.t, slot.d, L);
       n++;
     }
     if (n) out.push('set ' + n + ' inbound car' + (n > 1 ? 's' : '') + ' from the N&W Interchange in the Effingham yard');
   }
+  if (S.fetchHeld) { delete S.fetchHeld; try { if (window.NII_CALLSHEET && NII_CALLSHEET.fetchHeldToEf) out.push(...NII_CALLSHEET.fetchHeldToEf()); } catch (e) { } } // Nov 16: an Effingham local worked the N&W: runaround-held cars come on to the yard
   if (S.pendingCrewSwap && !(S.pendingCrewWork || []).some(o => (typeof o === 'string' ? o : o.k) === 'EF GLASS')) { if (!cw.includes('EF GLASS')) out.push(...crewSwapMidstate()); S.pendingCrewSwap = 0; }
   if (quiet) return out;
   if (out.length) { note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.'); save(); }
@@ -4687,6 +4754,9 @@ function migrateIndustrySpots() {
 }
 
 migrateIndustrySpots();
+// Nov 16: old saves with cars at the three freight doors: they stand on the one freight house spot now. If an old save has more cars there
+// than the spot holds (short cars at all three doors), the spot holds them all, so every one still counts as spotted.
+try { for (const sp of SPOTS.filter(s => s.couple)) { const n = standingCars().filter(o => !o.live && o.pm.t === sp.t && Math.abs(o.pm.d - sp.d) <= sp.tol && o.v.dest === sp.dest).length; if (n > (sp.cap || 1)) sp.cap = n; } } catch (e) { }
 if (!VISIT) { try { bindCrewBoard(); } catch (e) { } try { efApplyPendingCrew(); } catch (e) { } }
 window.__effingham = { EF_PC2, EF_PC_ROUTES, efPCRoute, efPCLineRoute, efPCSigAspect, efPCRestore, efPCWalk, SWM_PAD, get EF_PC_LINED(){return EF_PC_LINED;}, get EF_PC_DIR_MODE(){return EF_PC_DIR_MODE;}, set EF_PC_DIR_MODE(v){EF_PC_DIR_MODE=v;}, swmList, swmHas, SWM_KIND, SWM_FACE_AT, EF_PCX_DWARF,efPCXDwarfAspect,efNiiAspect,efMainTrackMove,efRouteTracks,EF_RESTRICTING_ASPECTS,get EF_RESTRICTING_VARIANT(){return EF_RESTRICTING_VARIANT;},get EF_RESTRICTING_ACTIVE(){return Object.keys(EF_RESTRICTING_ASPECTS).find(k=>EF_RESTRICTING_ASPECTS[k]===EF_RESTRICTING);},EF_CLEAR_ALLOWED,set aspectClock(v){EF_ASPECT_CLOCK=v;},EF_OPS,EF_IL,efOccupied,efCorridorOccupied,efCanStartPC,efStartPC,efRequestLocal,efRequestRoute,efRequestNamed,requestNamedRoute,openTowerRequest,efXingLabel,twMenuState,twMenuPaint,twArt,ROUTE_CLEAR_ODDS,efTowerTick,efAdvanceInterlock,efGraphTargets,efPredictStop,efConservativeStop,efBodyPad,efRedAhead,efChooseRequest,efCapacitySnapshot,efRangesHit,cutInBFN,inBFN,bfAtN,efBFHit,efBFCar,efAutoProtectionStep,reverseCut,drawBlueFlags,drawNWTrain,frameN:frame,sx,sy,hz,C, get SCN() { return SCN(); }, EF_CORE_ONLY, get EF_CORE_CAPACITY() { return globalThis.EF_CORE_CAPACITY; }, get EF_GLASS_LAYOUT() { return globalThis.EF_GLASS_LAYOUT; }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, carAtSpot, carsOnSpot, ngTrackFull, migrateIndustrySpots, DEST, waybill, newCar, placeCut, ptAt, workH, clockWhen, crewSwapMidstate, efCrewWork, efCrewCustomer, efCrewPC, efCrewClassify, efCrewBuild, efApplyPendingCrew, efCrewTracks, startWorkN, isSodaAsh, isLime, SODA_WORK_H, LIME_WORK_H, onYard, onGlassLead, moveStandingCar, crossStart, openMap, mapSnap, go, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, routeSwitchKeys, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };

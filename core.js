@@ -2741,7 +2741,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     });
     return { placed: placed, left: left };
   }
-  function takeFromNWI() {
+  // Nov 16 fix (Stephen: the local sent to spot Miller & Sons put the car on Yard 1, then Mattoon froze): the crew lifts only the cars that belong in its home town.
+  // Cars for Neoga's own customers stay on the N&W Interchange for the crew / player to spot; Effingham cars only go to Effingham, Mattoon cars only to Mattoon.
+  function nwiTakes(v, home) { const d = (v && v.dest) || ''; if (d === 'NW-INT' || /^NG /.test(d)) return false; return home === 'effingham' ? /^EF /.test(d) : !/^EF /.test(d); }
+  function takeFromNWI(home) {
     const ng = envTown('neoga');
     const out = [];
     if (!ng) return out;
@@ -2754,7 +2757,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if ((c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
       const keepV = [], keepA = [];
       (c.veh || []).forEach(function (v, i) {
-        if (v.dest === 'NW-INT') { keepV.push(v); keepA.push(c.aT ? c.aT[i] : true); }
+        if (!nwiTakes(v, home)) { keepV.push(v); keepA.push(c.aT ? c.aT[i] : true); }
         else take(v);
       });
       if (!keepV.length) {
@@ -2765,14 +2768,14 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     ng.cuts = S.cuts || cuts;
     if (ng.nwPend && ng.nwPend.length) {
       const keep = [];
-      ng.nwPend.forEach(function (v) { if (v.dest === 'NW-INT') keep.push(v); else take(v); });
+      ng.nwPend.forEach(function (v) { if (!nwiTakes(v, home)) keep.push(v); else take(v); });
       ng.nwPend = keep;
     }
     return out;
   }
   function liftNWI() {
     if (!neogaNwOpen()) return [];
-    return takeFromNWI().map(function (v) { return importCar(v); }).filter(Boolean);
+    return takeFromNWI('mattoon').map(function (v) { return importCar(v); }).filter(Boolean);
   }
   function takeEfNwOut() {
     const EF = typeof window !== 'undefined' ? window.__effingham : null;
@@ -2823,6 +2826,114 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (ef) ef.pendingNwIn = (ef.pendingNwIn || []).concat(vehs || []);
     return { placed: [], left: vehs || [], queued: true };
   }
+
+  // ---------------------------------------------------------------- Nov 16 (Stephen: "the closer to the yard, the better")
+  // Effingham cars that do not fit in the Effingham yard go, in order: (1) Neoga's runaround, (2) the Mattoon yard, (3) Neoga's N&W Interchange.
+  // They stay Effingham cars (efHold): crews never haul them off or shove them on the runaround (Neoga treats them as fixed), the stray-car
+  // repairs leave them be, and an Effingham local working the N&W at Neoga brings runaround cars on to Effingham when its yard has room.
+  // A Mattoon local working the N&W at Neoga takes cars held in Mattoon down to the runaround. Your own train can take them any time.
+  const RA_LEN = 858.2508764908947; // Neoga run-around length (ft), when Neoga is not loaded
+  function placeInYards(ids) { // the emptiest yard track first, then any other with room
+    let r = placeOnTrack(ids, pickYard()), placed = r.placed.slice(), left = r.left.slice();
+    for (let n = 1; n <= (G.NY || 6) && left.length; n++) { const q = placeOnTrack(left, 'YARD ' + n); placed = placed.concat(q.placed); left = q.left.slice(); }
+    return { placed: placed, left: left };
+  }
+  function markHeld(v) { if (v) { v.efHold = 1; v.ngPicked = true; } return v; }
+  function isEfCar(v) { return !!(v && /^EF /.test(v.dest || '')); }
+  function placeOnNgRA(vehs) {
+    const placed = [], left = [];
+    const ng = envTown('neoga');
+    if (!ng || !vehs || !vehs.length) return { placed: placed, left: vehs || [] };
+    ng.cuts = ng.cuts || []; if (ng.nid == null) ng.nid = 1;
+    const N = typeof window !== 'undefined' ? window.__neoga : null;
+    const S = (N && N.S) || ng, cuts = S.cuts || (S.cuts = ng.cuts);
+    const live = !!(N && N.placeCut && N.T && N.T.RA), len = live ? N.T.RA.len : RA_LEN;
+    (vehs || []).forEach(function (v) {
+      const L = carLenOf(v), maxHead = len - 6, minHead = L + 6;
+      const occ = []; (cuts || []).forEach(function (c) { (c.path || []).forEach(function (g) { if (g.t === 'RA') occ.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1) }); }); });
+      const cands = [maxHead].concat(occ.map(function (o) { return o.lo - 2; })).sort(function (a, b) { return b - a; });
+      let ok = false;
+      for (let k = 0; k < cands.length && !ok; k++) {
+        const d = cands[k]; if (d > maxHead + 1e-9 || d < minHead - 1e-9) continue;
+        if (occ.some(function (o) { return !(d + 2 <= o.lo || o.hi + 2 <= d - L); })) continue;
+        let cut;
+        if (live) cut = N.placeCut([v], [true], 'RA', d, 1);
+        else { S.nid = S.nid || ng.nid || 1; cut = { id: 'c' + (S.nid++), veh: [v], aT: [true], path: [{ t: 'RA', dir: 1, d0: Math.max(0, d - L), d1: d }] }; ng.nid = S.nid; }
+        if ((cuts || []).some(function (o) { return cutsOverlap(o, cut, 1.5); })) continue;
+        cuts.push(cut); ng.cuts = S.cuts || cuts; placed.push(v); ok = true;
+      }
+      if (!ok) left.push(v);
+    });
+    try { if (live && N.save) N.save(); } catch (e) { }
+    return { placed: placed, left: left };
+  }
+  // overflow for Effingham cars the Effingham yard cannot take; returns notes. Nothing is ever dropped.
+  function efOverflow(vehs) {
+    const notes = []; let rest = (vehs || []).filter(Boolean).map(function (v) { return markHeld(cloneVeh(v)); });
+    if (!rest.length) return notes;
+    const plural = function (n, a, b) { return n + ' car' + (n > 1 ? 's ' + b : ' ' + a); };
+    const ra = placeOnNgRA(rest); rest = ra.left;
+    if (ra.placed.length) notes.push(plural(ra.placed.length, 'is', 'are') + ' held on the Neoga runaround for Effingham (the Effingham yard is full)');
+    if (rest.length) {
+      if (hereTown() === 'mattoon' && !visiting()) {
+        const ids = rest.map(function (v) { return importCar(v); }).filter(Boolean), y = placeInYards(ids);
+        if (y.placed.length) notes.push(plural(y.placed.length, 'is', 'are') + ' held in the Mattoon yard for Effingham (the Effingham yard and the Neoga runaround are full)');
+        rest = (y.left || []).map(function (id) { const v = st().veh[id]; const o = cloneVeh(v); delete st().veh[id]; return o; }).filter(Boolean);
+        try { if (G.reindex) G.reindex(); } catch (e) { }
+      } else {
+        const m = envTown('mattoon');
+        if (m) { m.efIn = (m.efIn || []).concat(rest); notes.push(plural(rest.length, 'goes', 'go') + ' to the Mattoon yard for Effingham (the Effingham yard and the Neoga runaround are full)'); rest = []; }
+      }
+    }
+    if (rest.length) {
+      const nw = placeOnNwi(rest); rest = nw.left;
+      if (nw.placed.length) notes.push(plural(nw.placed.length, 'stays', 'stay') + ' on the N&W Interchange at Neoga for Effingham (no room anywhere closer)');
+    }
+    if (rest.length) { const ef = envTown('effingham'); if (ef) ef.pendingNwIn = (ef.pendingNwIn || []).concat(rest); notes.push(plural(rest.length, 'waits', 'wait') + ' for room in the Effingham yard'); }
+    return notes;
+  }
+  // Mattoon load: Effingham cars sent to the Mattoon yard while you were elsewhere
+  function applyEfIn() {
+    if (hereTown() !== 'mattoon' || visiting()) return [];
+    const m = envTown('mattoon'), s = st(); const q = (s && s.efIn) || (m && m.efIn) || [];
+    if (!q.length) return [];
+    if (s) delete s.efIn; if (m) delete m.efIn;
+    const ids = q.map(function (v) { return importCar(markHeld(v)); }).filter(Boolean), y = placeInYards(ids), notes = [];
+    if (y.placed.length) notes.push(y.placed.length + ' Effingham car' + (y.placed.length > 1 ? 's are' : ' is') + ' held in the Mattoon yard (the Effingham yard was full)');
+    const left = (y.left || []).map(function (id) { const o = cloneVeh(st().veh[id]); delete st().veh[id]; return o; }).filter(Boolean);
+    if (left.length) { const nw = placeOnNwi(left); if (nw.placed.length) notes.push(nw.placed.length + ' more stay on the N&W Interchange at Neoga'); if (nw.left.length) { const ef = envTown('effingham'); if (ef) ef.pendingNwIn = (ef.pendingNwIn || []).concat(nw.left); } }
+    try { if (G.reindex) G.reindex(); if (G.save) G.save(); } catch (e) { }
+    return notes;
+  }
+  // Mattoon local working the N&W at Neoga: Effingham cars held in Mattoon ride down to the Neoga runaround (if it has room)
+  function heldMattoonToRA() {
+    if (hereTown() !== 'mattoon' || visiting()) return [];
+    const cars = Object.values(st().veh || {}).filter(function (v) { return isFreight(v) && v.efHold && isEfCar(v) && !onPlayer(v) && onAnyYard(v); });
+    if (!cars.length) return [];
+    const r = placeOnNgRA(cars.map(function (v) { return markHeld(cloneVeh(v)); }));
+    const done = {}; r.placed.forEach(function (o) { done[o.id] = 1; });
+    cars.forEach(function (v) { if (done[v.id]) { takeIds([v.id]); delete st().veh[v.id]; } });
+    try { if (G.reindex) G.reindex(); } catch (e) { }
+    return r.placed.length ? ['took ' + r.placed.length + ' Effingham car' + (r.placed.length > 1 ? 's' : '') + ' held in Mattoon down to the Neoga runaround'] : [];
+  }
+  // Effingham side: Effingham cars held on the Neoga runaround come into the Effingham yard while it has room (an Effingham local working the N&W)
+  function fetchHeldToEf() {
+    const EF = typeof window !== 'undefined' ? window.__effingham : null;
+    if (!(EF && EF.placeCut && EF.S && EF.T)) return [];
+    const ng = envTown('neoga'); if (!ng || !ng.cuts) return [];
+    const held = ng.cuts.filter(function (c) { return (c.path || []).length && c.path.every(function (g) { return g.t === 'RA'; }) && (c.veh || []).length && c.veh.every(function (v) { return v.efHold && isEfCar(v); }); });
+    let n = 0;
+    held.forEach(function (c) {
+      const vs = c.veh.map(function (v) { const o = cloneVeh(v); delete o.efHold; return o; });
+      const r = placeOnEfYard(vs);
+      if (r.placed.length === vs.length) { const i = ng.cuts.indexOf(c); if (i >= 0) ng.cuts.splice(i, 1); n += vs.length; }
+      else if (r.placed.length) { // part of a coupled cut did not fit: put the placed ones back, keep the cut whole on the runaround
+        r.placed.forEach(function (o) { (EF.S.cuts || []).forEach(function (k, j) { if (k.veh.indexOf(o) >= 0 && k.veh.length === 1) EF.S.cuts.splice(j, 1); }); });
+      }
+    });
+    try { if (EF.save) EF.save(); } catch (e) { }
+    return n ? ['brought ' + n + ' Effingham car' + (n > 1 ? 's' : '') + ' held on the Neoga runaround into the Effingham yard'] : [];
+  }
   function takeMtNwOut(day) {
     const C = R();
     const cars = Object.values(st().veh || {}).filter(function (v) {
@@ -2852,18 +2963,17 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         notes.push('no room on the N&W Interchange for ' + r.left.length + ' car' + (r.left.length > 1 ? 's' : '') + ' — left in the yard');
       }
     }
-    const inbound = takeFromNWI();
+    // Nov 16: held Effingham cars move one step closer: Effingham local -> runaround cars into the Effingham yard; Mattoon local -> Mattoon-held cars down to the runaround
+    if (home === 'effingham') { const EF = typeof window !== 'undefined' ? window.__effingham : null; if (EF && EF.S) notes.push.apply(notes, fetchHeldToEf()); else { const ef = envTown('effingham'); if (ef) ef.fetchHeld = 1; } }
+    else notes.push.apply(notes, heldMattoonToRA());
+    const inbound = takeFromNWI(home === 'effingham' ? 'effingham' : 'mattoon');
     if (inbound.length) {
       if (home === 'effingham') {
         const r = placeOnEfYard(inbound);
         if (r.queued) notes.push('pulled ' + inbound.length + ' inbound car' + (inbound.length > 1 ? 's' : '') + ' off the N&W Interchange; they will be in the Effingham yard when you are next there');
         else {
           if (r.placed.length) notes.push('pulled ' + r.placed.length + ' inbound car' + (r.placed.length > 1 ? 's' : '') + ' off the N&W Interchange to the Effingham yard');
-          if (r.left.length) {
-            const ids = r.left.map(function (v) { return importCar(v); }).filter(Boolean);
-            const y = placeOnTrack(ids, pickYard());
-            if (y.placed.length) notes.push(y.placed.length + ' more inbound car' + (y.placed.length > 1 ? 's' : '') + ' went to the Mattoon yard (Effingham yard was full)');
-          }
+          if (r.left.length) notes.push.apply(notes, efOverflow(r.left)); // Nov 16 (Stephen): the closer to the yard, the better
         }
       } else {
         const ids = inbound.map(function (v) { return importCar(v); }).filter(Boolean);
@@ -2942,7 +3052,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function runBuild(work) {
     const C = R(), ids = [];
     (work.order || []).forEach(function (cust) {
-      C.pickOldestFirst(Object.values(st().veh).filter(function (v) { return isFreight(v) && v.dest === cust && !onPlayer(v); })).forEach(function (v) { ids.push(v.id); });
+      C.pickOldestFirst(Object.values(st().veh).filter(function (v) { return isFreight(v) && v.dest === cust && !onPlayer(v) && !v.work && onAnyYard(v); })).forEach(function (v) { ids.push(v.id); }); // Nov 16 fix: yard cars only (as Effingham), never a car at work at the customer
     });
     const r = placeOnTrack(ids, work.track);
     return 'built ' + r.placed.length + ' car' + (r.placed.length === 1 ? '' : 's') + ' on ' + work.track + (r.left.length ? '; ' + r.left.length + ' left (no room)' : '');
@@ -3020,7 +3130,15 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       else if (w.kind === 'buildLocal') notes.push(runBuild(w));
       else if (w.kind === 'industry') notes.push.apply(notes, runIndustry(w.customer, day));
       else if (w.kind === 'pickup' && w.track !== 'NWI' && w.track !== 'NW-INT' && w.track !== 'RA') {
-        const cars = Object.values(st().veh).filter(function (v) { return isFreight(v) && !onPlayer(v) && atTrack(v, w.track); });
+        // Nov 16 fix: a pickup takes only cars that are free to go: not being loaded or unloaded, not waiting on a customer spot (or the house track)
+        // for that customer, and not cars for another town's customers.
+        const custTrack = w.track === 'HOUSE' || !!(G.SPOTS && G.SPOTS[w.track]);
+        const cars = Object.values(st().veh).filter(function (v) {
+          if (!isFreight(v) || onPlayer(v) || !atTrack(v, w.track) || v.work) return false;
+          if (/^(NG|EF) /.test(v.dest || '')) return false;
+          if (custTrack && v.dest === w.track && !v.relK) return false;
+          return true;
+        });
         lifted = lifted.concat(cars.map(function (v) { return v.id; }));
         notes.push('picked up ' + cars.length + ' car' + (cars.length === 1 ? '' : 's') + ' from ' + w.track);
       }
@@ -3865,6 +3983,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
     tick: tick, guard: guard, runDayOut: runDayOut, nextQueuedAt: nextQueuedAt, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
     openSimTime: openSimTime, simAhead: simAhead, parseSimInput: parseSimInput,
+    efOverflow: efOverflow, applyEfIn: applyEfIn, fetchHeldToEf: fetchHeldToEf, heldMattoonToRA: heldMattoonToRA, // Nov 16: Effingham yard-full overflow (runaround, Mattoon yard, N&W Interchange)
     _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, simAhead: simAhead, parseSimInput: parseSimInput, reportLine: reportLine },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show
@@ -4981,7 +5100,9 @@ function carLoad(v) { // what's in the car, from its data: { c, t } or null when
   return v.loaded && T.cap ? { c: 'Freight', t: Math.round(v.wt - T.tare) } : null;
 }
 function loadLine(v) { if (!TYPES[v.type].cap) return null; const l = carLoad(v); return l ? `${l.c} ${l.t}T` : 'EMPTY'; } // null = no load line (caboose)
-function carTag(v) { const code = carDest(v); if (!code) return null; const d = DEST[code], sd = SUBDIVS[d.sub]; return { code, load: loadLine(v), sub: d.sub, subName: sd.name, color: sd.color, ink: sd.ink, name: d.name }; }
+function carTag(v) { const code = carDest(v); if (!code) return null; const d = DEST[code], sd = d && SUBDIVS[d.sub];
+  if (!d && /^(EF|NG) /.test(code)) { const ef = code[0] === 'E', s2 = SUBDIVS[ef ? 'EFF' : 'NEO'] || SUBDIVS.MAT; return { code, load: loadLine(v), sub: ef ? 'EFF' : 'NEO', subName: s2.name, color: s2.color, ink: s2.ink, name: `${ef ? 'Effingham' : 'Neoga'} customer: ${v.efHold ? 'held here, the Effingham yard was full; take it south' : 'goes south'}` }; } /* Nov 16: cars for other towns' customers (Effingham overflow held here) */
+  if (!d || !sd) return null; /* Nov 16 fix: a car for another town's customer has no Mattoon tag (it froze the picture) */ return { code, load: loadLine(v), sub: d.sub, subName: sd.name, color: sd.color, ink: sd.ink, name: d.name }; }
 // ---- customers working spotted cars: unloading (inbound loads pay their freight when done) or loading; released to IC when done
 function workHours(v) { const [a, b] = WORK_H[v.dest] || [2, 3], r = seeded(state.icSeq * 131 + (+v.num || 7) + Math.round(state.time)); return a + (b - a) * r(); }
 const CIC_HOLD_ODDS = 0.15; // now and then the box plant keeps one of the pair until the next switch day
@@ -5135,7 +5256,7 @@ function departTo(to, ok) { const c = locoCons(); if (!c) return; if (!ok && win
   state.ap = null; state.ctl.notch = 0; state.ctl.brake = 1; live = { slip: false, slide: false, eq: 0 }; reindex();
   const run = NII.runInfo('mattoon', to); state.awayTrain = { town: to, veh: train, left: state.time };
   state.time += run.sec;
-  putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } paused = true;
+  putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } paused = true; LEAVING = true;
   NII.travel('mattoon', to, train);
 }
 // Nov 3 (late): stray cleanup in Mattoon too. A Neoga car (ngIn) that is still inbound and unworked and that the player never coupled himself
@@ -5150,6 +5271,27 @@ function stripStraysM() { const c = locoCons(); if (!c || VISIT) return 0; const
   for (const v of out) { delete state.veh[v.id]; const w = JSON.parse(JSON.stringify(v)); if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.f; delete w.r; delete w.cid; delete w.aFront;
     if (ng) (ng.pendIC = ng.pendIC || []).push(w); }
   reindex(); toast(`${out.length} car${out.length > 1 ? 's' : ''} for Neoga came off your train: the IC way freight takes ${out.length > 1 ? 'them' : 'it'} to the Neoga interchange track.`); return out.length; }
+// Nov 16 repair (Stephen: the Neoga local put the Miller & Sons car on Yard 1, then Mattoon froze): a car for a Neoga or Effingham customer standing in Mattoon
+// (a hired crew pulled it off the N&W Interchange by mistake) goes back to its own town: Neoga cars to Neoga's interchange track, Effingham cars to the Effingham yard.
+// Cars on your own train are left alone (you may be taking them there).
+function sendStraysHome() {
+  if (VISIT) return 0; const E = NII.env(); E.towns = E.towns || {}; const mine = locoCons(), back = [];
+  for (const v of Object.values(state.veh)) {
+    if (!TYPES[v.type] || TYPES[v.type].kind !== 'car') continue;
+    const d = v.dest || '', ng = /^NG /.test(d), ef = /^EF /.test(d); if ((!ng && !ef) || DEST[d]) continue;
+    if (ef) { v.efHold = 1; v.ngPicked = true; continue; } // Nov 16 (Stephen: the closer to the yard, the better): Effingham cars in the Mattoon yard are held here for Effingham, not sent away
+    if (mine && mine.veh.includes(v.id)) continue;
+    const c = state.cons[v.cid]; if (c && c.veh.some(id => V(id) && TYPES[V(id).type] && TYPES[V(id).type].kind === 'loco')) continue; // coupled to an engine: leave it
+    if (c) { const i = c.veh.indexOf(v.id), b = c.veh.slice(i + 1); c.veh = c.veh.slice(0, i); if (b.length) { const cid = 'c' + state.nextCid++; state.cons[cid] = { id: cid, veh: b, v: 0 }; b.forEach(id => { V(id).cid = cid; }); } if (!c.veh.length) delete state.cons[c.id]; }
+    delete state.veh[v.id]; const w = JSON.parse(JSON.stringify(v)); delete w.f; delete w.r; delete w.cid; delete w.aFront; delete w.wb; delete w.ngIn; delete w.work; delete w.spotT;
+    if (ng) { const t = E.towns.neoga || (E.towns.neoga = { pendIC: [] }); (t.pendIC = t.pendIC || []).push(w); t.fixBack = 1; }
+    else { const t = E.towns.effingham || (E.towns.effingham = {}); (t.pendingNwIn = t.pendingNwIn || []).push(w); }
+    back.push(`${roadOf(v)} ${v.num} (${ng ? 'Neoga' : 'Effingham'})`);
+  }
+  if (!back.length) return 0;
+  reindex(); save(); setTimeout(() => toast(`${back.length} car${back.length > 1 ? 's' : ''} for another town ${back.length > 1 ? 'were' : 'was'} in the Mattoon yard by mistake and went back: ${back.join(', ')}.`, 'good'), 900);
+  return back.length;
+}
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (env.town !== 'mattoon' || !env.travel) return; // Nov 13: only a real train arrival (a Towns jump brings no train)
   if (!state.awayTrain && !(env.trainIn && env.trainIn.length)) return;
@@ -5182,7 +5324,11 @@ function crossArrive() { const e = NII.env(), x = e.cross; if (!x || x.to !== 'm
   if (!best || best.dd > 40) { toast("Couldn't find that spot on the Mattoon map. Stopped at the edge.", 'bad'); return; }
   if (state.mode !== 'tap') setMode('tap'); tapTarget({ s: best.s, d: best.d }); carryM(v0); if (state.ap) toast(`Continuing to ${x.label}.`); }
 function putSnap() { try { NII.mapTabs.put('mattoon', mapSnap()); } catch (e) { } }
-function save() { if (VISIT || (state && state.awayTrain)) return; putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
+let LEAVING = false; // Nov 16: set only while the train is leaving for another town (page about to reload)
+window.__frameErrs = [];
+let FRAME_ERR_TOLD = false;
+function frameFail(e, where) { const m = String((e && e.message) || e).slice(0, 140); if (window.__frameErrs.length < 30) window.__frameErrs.push(where + ': ' + m); if (!FRAME_ERR_TOLD) { FRAME_ERR_TOLD = true; try { console.warn('frame error (' + where + ')', e); } catch (er) { } try { toast('Something on screen could not be drawn (' + where + ': ' + m + '). The game keeps running. Please send a screenshot of this.', 'bad'); } catch (er) { } } }
+function save() { if (VISIT || LEAVING) return; putSnap(); try { NII.saveTown('mattoon', state); } catch (e) { } } // v10 envelope (towns): Mattoon's record is the old v9 state
 function migrateTasks() { // saves from before the checklist: give NII 4412 the standing order its old fixed job had
   if (state.tasks) return; const v = state.veh.bx1, j = state.job || {};
   if (v && !v.dest && !v.idle && j.car === 'bx1' && !j.done && j.n < 4) { if (j.type === 'house') { v.dest = 'HOUSE'; if (!v.loaded) v.out = { ...FH_FREIGHT.outbound }; } else if (j.type === 'yard') v.dest = 'YARD ' + (j.yard || 1); else if (j.type === 'icout') v.dest = 'IC-INT'; }
@@ -6379,21 +6525,21 @@ function drawScene(dt) {
     items.push({ key: o.key, f: fr ? g2 => { g2.globalAlpha = 0.3; o.draw(g2); g2.globalAlpha = 1; } : o.draw }); }
   for (const k of SWITCHES) { const [x, y] = standPos(k); if (!visX(x - 3, x + 3, y)) continue; items.push({ key: y, f: g2 => drawStand(g2, k) }); }
   for (const b of ['bEng', 'bHse', 'bG']) { const [x, y] = P[b]; if (!visX(x - 5, x + 5, y)) continue; items.push({ key: y - 3, f: g2 => drawBumper(g2, b) }); }
-  for (const v of Object.values(state.veh)) {
+  for (const v of Object.values(state.veh)) { try { // Nov 16 fix: one car that cannot be drawn is skipped, it no longer stops the whole picture (Stephen: Mattoon froze when scrolling)
     const own = v.cid === c.id, q = vehScreen(v); if (Math.max(q.Pl[0], q.Pr[0]) < -20 || Math.min(q.Pl[0], q.Pr[0]) > VW + 20) continue;
     const ghost = !own && q.depth < ly - 10 && hides(q.Pl[0], q.Pr[0]);
-    items.push({ key: q.depth - (ghost ? 1000 : 0) + (own ? -0.01 : 0), f: g2 => drawVehicle(g2, v, ghost ? 0.33 : 1) });
-  }
+    items.push({ key: q.depth - (ghost ? 1000 : 0) + (own ? -0.01 : 0), f: g2 => drawVehicle(g2, v, ghost ? 0.33 : 1), what: (v.road || '') + ' ' + (v.num || v.id) + ' ' + (v.art || v.type) });
+  } catch (e) { frameFail(e, 'car ' + (v && (v.road || '') + ' ' + (v.num || v.id))); } }
   items.sort((a, b) => b.key - a.key);
   const hazes = [[900, 'rgba(226,234,238,.32)'], [206, 'rgba(226,234,238,.22)']]; let hz = 0;
   for (const it of items) {
     while (hz < hazes.length && it.key < hazes[hz][0]) { g.fillStyle = hazes[hz][1]; g.fillRect(0, 0, VW, gyOf(hazes[hz][0])); hz++; }
-    it.f(g);
+    try { it.f(g); } catch (e) { frameFail(e, it.what || 'scenery'); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.globalAlpha = 1; }
   }
   while (hz < hazes.length) { g.fillStyle = hazes[hz][1]; g.fillRect(0, 0, VW, gyOf(hazes[hz][0])); hz++; }
   drawLabels(g);
   if (!tagsOn) TAGS_DRAWN = [];
-  const TR = tagsOn ? drawTags(g) : {};
+  let TR = {}; if (tagsOn) { try { TR = drawTags(g); } catch (e) { frameFail(e, 'tags'); g.setTransform(DPR, 0, 0, DPR, 0, 0); g.globalAlpha = 1; } }
   // job car pointer (sits on top of the car's tag when tags are on)
   const jv = job.car && V(job.car);
   if (!job.done && jv) { const q = vehScreen(jv), cx = TR[jv.id] ? TR[jv.id].cx : (q.Pl[0] + q.Pr[0]) / 2, cy = TR[jv.id] ? TR[jv.id].y - 3 : Math.min(q.Pl[1], q.Pr[1]) - 16.5 * q.k - 6;
@@ -7056,11 +7202,15 @@ function simStep(dt) {
 function advanceTime(sec) { const h = 1 / 60; let n = Math.floor(sec / h + 1e-9); const r = sec - n * h; while (n-- > 0) simStep(h); if (r > 1e-6) simStep(r); }
 function frame(t) {
   if (VISIT) { lastT = t; sceneCam(0.016); drawMap(); drawScene(0.016); try { updateUI(); } catch (e) { } requestAnimationFrame(frame); return; } // looking around: draw only, the clock stays stopped, nothing saved
-  if (state.awayTrain) return; // the train left for another town: the page is about to reload
+  if (LEAVING) return; // the train left for another town: the page is about to reload. Nov 16 fix: was state.awayTrain, which froze Mattoon for good when you came back by the Towns button while the train was still away
   const dtR = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
-  if (!paused && !$('modalBg').classList.contains('show')) advanceTime(dtR * state.speed);
+  // Nov 16 fix (Stephen: Mattoon froze when scrolling): one error in a frame no longer stops the game loop for good
+  try { if (!paused && !$('modalBg').classList.contains('show')) advanceTime(dtR * state.speed); } catch (e) { frameFail(e, 'sim'); }
   if ((csT += dtR) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } }
-  crossTick(); sceneCam(dtR); drawMap(); drawScene(dtR); updateUI();
+  try { crossTick(); } catch (e) { frameFail(e, 'cross'); }
+  try { sceneCam(dtR); drawMap(); } catch (e) { frameFail(e, 'map'); }
+  try { drawScene(dtR); } catch (e) { frameFail(e, 'scene'); try { gctx.setTransform(DPR, 0, 0, DPR, 0, 0); gctx.globalAlpha = 1; } catch (er) { } }
+  try { updateUI(); } catch (e) { frameFail(e, 'ui'); }
   saveT += dtR; if (saveT > 3) { saveT = 0; save(); }
   requestAnimationFrame(frame);
 }
@@ -7111,6 +7261,8 @@ function bindCallSheet() {
 function boot() {
   startState(); load(); reindex();
   try { bindCallSheet(); } catch (e) { }
+  try { sendStraysHome(); } catch (e) { console.warn('stray cars', e); }
+  try { if (window.NII_CALLSHEET && NII_CALLSHEET.applyEfIn && !VISIT) { const n = NII_CALLSHEET.applyEfIn(); if (n && n.length) setTimeout(() => toast(n.join('; ') + '.', 'good'), 1200); } } catch (e) { console.warn('ef overflow', e); } // Nov 16
   try { const E = NII.env(); if (E.jump && E.jump.to === 'mattoon') delete E.jump; catchUpClock(); if (window.NII_CALLSHEET && !VISIT) NII_CALLSHEET.applyQueued(); } catch (e) { console.warn('catch-up', e); } // Nov 16: every arrival catches up to the shared clock
   // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
   for (const v of Object.values(state.veh)) { if (!v.work || !SPOTS[v.dest]) continue; if (carWhere(v).spot(v.dest) || (v.dest === 'HOUSE' && carWhere(v).house)) continue;
@@ -7406,6 +7558,7 @@ boot();
       if (v.dest === 'EF SCRAP' && v.forLoad) v.loadArt = /Aluminum/.test(v.forLoad.c) ? 'aluminum' : 'steel';
     }
 
+    if (/[?&]seed=efix2(&|$)/.test(location.search)) want.length = 0; // Nov 16 (Stephen): efix2 brings its own, different cars; engines and cabooses still come
     const pcCars = want.filter(v => v.via === 'PC');
     const icCars = want.filter(v => v.via === 'IC');
     const addedPC = placeGroup(pcCars, ['IX1']);
