@@ -1413,11 +1413,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function yardTracks(town) {
     town = town || (draft && draft.start) || hereTown();
     if (town === 'effingham') {
-      try { if (G && G.yardTracks) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { }
+      try { if (G && G.yardTracks && hereTown() === town) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { } // Nov 16 fix: only this town's own tracks (a call written in Neoga for Effingham got Neoga's RA)
       return ['Y1', 'Y2', 'Y3', 'Y4'];
     }
     if (town === 'neoga') {
-      try { if (G && G.yardTracks) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { }
+      try { if (G && G.yardTracks && hereTown() === town) { const t = G.yardTracks(); if (t && t.length) return t; } } catch (e) { } // Nov 16 fix: only this town's own tracks (a call written in Neoga for Effingham got Neoga's RA)
       return ['RA'];
     }
     const t = [];
@@ -3088,7 +3088,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function activeSims() { return (st().calls || []).filter(function (c) { return onDuty(c); }); }
   const EF_TRACKS = { 'EF HOUSE': ['HT'], 'EF GRAIN': ['GLD'], 'EF BURGESS': ['B1', 'B2'], 'EF SCRAP': ['IM'], 'EF PROPANE': ['PR'], 'EF GLASS': ['GS', 'GL', 'GA', 'GAC', 'GLC', 'GW'] };
   const NG_TRACKS = { 'NG HOUSE': ['HT'], 'NG COAL': ['FL'], 'NG OIL': ['FL'] }; // Nov 13: Neoga claims, same rules as the other towns
-  function efYard() { try { if (G && G.yardTracks) return G.yardTracks(); } catch (e) { } return ['Y1', 'Y2', 'Y3', 'Y4']; }
+  function efYard() { try { if (G && G.yardTracks && hereTown() === 'effingham') return G.yardTracks(); } catch (e) { } return ['Y1', 'Y2', 'Y3', 'Y4']; }
   function efTracks(key) { try { if (G && G.tracksFor) { const t = G.tracksFor(key); if (t && t.length) return t; } } catch (e) { } return (EF_TRACKS[key] || []).slice(); }
   function applyCtx(p) { return p.town === 'effingham' ? 'effingham' : p.town === 'neoga' ? 'neoga' : 'mattoon'; }
   function placeOf(w, town) {
@@ -3198,41 +3198,48 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     try { if (G && G.applyWork) return G.applyWork(w) || []; } catch (e) { return ['could not finish: ' + (e && e.message)]; }
     return [];
   }
-  function queueEf(w, day) {
+  // Nov 16 (Stephen: every map sims at the same rate): queued work keeps the clock time it finished (at), so the town applies it at that time when it catches up
+  function queueEf(w, day, at) {
     try {
       const E = G.env && G.env(); if (!E || !E.towns) return;
       const ef = E.towns.effingham || (E.towns.effingham = {});
-      if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(w.customer); if (w.customer === 'EF GLASS') ef.pendingCrewSwap = 1; }
-      else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push({ interchange: migrateIxId(w.interchange), day: day }); }
-      else if (w.kind === 'classify' || w.kind === 'buildLocal') { ef.pendingYardWork = ef.pendingYardWork || []; ef.pendingYardWork.push(w); }
+      if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(at != null ? { k: w.customer, at: at } : w.customer); if (w.customer === 'EF GLASS') ef.pendingCrewSwap = 1; }
+      else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push({ interchange: migrateIxId(w.interchange), day: day, at: at }); }
+      else if (w.kind === 'classify' || w.kind === 'buildLocal') { ef.pendingYardWork = ef.pendingYardWork || []; const c = JSON.parse(JSON.stringify(w)); if (at != null) c.at = at; ef.pendingYardWork.push(c); }
       else { ef.pendingYard = (ef.pendingYard || 0) + 1; }
     } catch (e) { }
   }
-  function queueNg(w, day) {
+  function queueNg(w, day, at) {
     try {
       const E = G.env && G.env(); if (!E || !E.towns) return;
       const ng = E.towns.neoga || (E.towns.neoga = {});
-      if (w.kind === 'industry') { ng.pendingCrewWork = ng.pendingCrewWork || []; ng.pendingCrewWork.push(w.customer); }
+      if (w.kind === 'industry') { ng.pendingCrewWork = ng.pendingCrewWork || []; ng.pendingCrewWork.push(at != null ? { k: w.customer, at: at } : w.customer); }
     } catch (e) { }
   }
+  function queueMattoon(e) { const s = st(); s.simQueue = s.simQueue || []; s.simQueue.push(e); }
+  function jobCopy(c) { const o = {}; Object.keys(c || {}).forEach(function (k) { if (k !== 'sim') o[k] = c[k]; }); return JSON.parse(JSON.stringify(o)); }
   function applyPiece(c, p, t) {
     const s = c.sim, here = hereTown(), day = c.day || G.dayNo();
     let notes = [];
     const w = p.i != null ? (c.work || [])[p.i] : null;
     if (p.kind === 'road') {
-      notes = applyDoneSet(c, c.work || [], day).notes;
+      // Nov 15 fix: a road run moves Mattoon cars; if you are in another town, queue it for Mattoon (applyQueued) instead of moving cars with that town's stubs
+      if (here !== 'mattoon' && G.applyWork) { queueMattoon({ road: true, job: jobCopy(c), day: day, at: t }); notes = [p.place + ' done; cars move when you are next in Mattoon']; }
+      else notes = applyDoneSet(c, c.work || [], day).notes;
     } else if (w) {
       const ctx = applyCtx(p);
       if (w.kind === 'localInterchange' && ixOfWork(w) && ixOfWork(w).id === 'neoga-nw') {
         notes = runNeogaNw(day, w, c);
       } else if (ctx === 'effingham') {
         if (here === 'effingham' && G.applyWork) notes = efWork(w);
-        else { queueEf(w, day); notes = [p.place + ' done; cars move when you are next in Effingham']; }
+        else { queueEf(w, day, t); notes = [p.place + ' done; cars move when you are next in Effingham']; }
       } else if (ctx === 'neoga') {
         try {
           if (here === 'neoga' && G.applyWork) notes = G.applyWork(w) || [];
-          else { queueNg(w, day); notes = [p.place + ' done; cars move when you are next in Neoga']; }
+          else { queueNg(w, day, t); notes = [p.place + ' done; cars move when you are next in Neoga']; }
         } catch (e) { notes = ['could not finish Neoga work: ' + (e && e.message)]; }
+      } else if (here !== 'mattoon' && G.applyWork) { // Nov 15 fix (Stephen: End day in Effingham left the Mattoon local undone): Mattoon work finished while you are in another town waits for Mattoon
+        queueMattoon({ w: JSON.parse(JSON.stringify(w)), day: day, at: t }); notes = [p.place + ' done; cars move when you are next in Mattoon'];
       } else notes = doWork(c, w, day);
       if (w.kind === 'industry') { st().crewAssigned[day] = (st().crewAssigned[day] || []); if (st().crewAssigned[day].indexOf(w.customer) < 0) st().crewAssigned[day].push(w.customer); }
     }
@@ -3315,15 +3322,23 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     } catch (e) { if (typeof console !== 'undefined') console.warn('clock sim', e); }
   }
   // Mattoon work finished while you were in another town: applied when Mattoon is loaded
-  function applyQueued() {
+  function nextQueuedAt() { // earliest finish time of Mattoon work still waiting (null if none)
+    if (!G) return null; const q = st().simQueue || []; let m = null;
+    q.forEach(function (e) { const a = e.at != null ? e.at : 0; if (m == null || a < m) m = a; });
+    return m;
+  }
+  function applyQueued(upTo, quiet) { // Nov 16: upTo = only work that finished by this clock time (the catch-up applies it in time order)
     if (!G || hereTown() !== 'mattoon' || visiting()) return 0;
-    const q = st().simQueue || []; if (!q.length) return 0;
-    st().simQueue = [];
+    const all = st().simQueue || []; if (!all.length) return 0;
+    const due = function (e) { return upTo == null || (e.at != null ? e.at : 0) <= upTo; };
+    const q = all.filter(due); if (!q.length) return 0;
+    st().simQueue = all.filter(function (e) { return !due(e); });
     let n = 0;
     q.sort(function (a, b) { return (a.at || 0) - (b.at || 0); }).forEach(function (e) {
       try { if (e.road) applyDoneSet(e.job, e.job.work || [], e.day); else doWork(null, e.w, e.day); n++; } catch (x) { }
     });
     if (G.reindex) G.reindex();
+    if (quiet) return n;
     G.save();
     if (n) G.toast('Hired crews finished ' + n + ' piece' + (n > 1 ? 's' : '') + ' of work here while you were away. Their cars are in place.', 'good');
     return n;
@@ -3391,11 +3406,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const s = String(text == null ? '' : text).trim();
     now = now == null ? nowT() : now;
     if (!s) return { error: 'Type how long to sim, or a clock time.' };
-    const clock = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(s);
+    const clock = /^(\d{1,2})(?::(\d{2}))?\s*([AP])\.?\s*M\.?$/i.exec(s); // Nov 15: '1:30 pm', '1:30PM' and '1:30 p.m.' all work
     if (clock) {
       let h = +clock[1], m = clock[2] != null ? +clock[2] : 0;
       if (h < 1 || h > 12 || m > 59) return { error: "That time doesn't look right." };
-      if (/pm/i.test(clock[3])) { if (h !== 12) h += 12; } else if (h === 12) h = 0;
+      if (/p/i.test(clock[3])) { if (h !== 12) h += 12; } else if (h === 12) h = 0;
       const target = Math.floor(now / 86400) * 86400 + h * 3600 + m * 60;
       if (target <= now + 0.5) return { error: "That's already passed today." };
       return { seconds: target - now, until: target };
@@ -3436,6 +3451,18 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     try { G.save(); } catch (e) { }
     paintChip();
     return { ok: true, seconds: nowT() - t0, capped: capped, from: t0, to: nowT() };
+  }
+  // Nov 16 (Stephen: End day finishes the day's crew work the same as simming through it): the clock runs to untilT in short steps,
+  // hired crews go on duty and finish each piece at its time. G.pass moves time with no player crew wages (End day); falls back to G.skip.
+  function runDayOut(untilT) {
+    if (!G || !R()) return;
+    const pass = G.pass || G.skip; if (!pass) return;
+    try { ensure(); } catch (e) { }
+    simBusy = true;
+    try {
+      let g = 0;
+      while (nowT() < untilT - 0.5 && g++ < 6000) { const step = Math.max(1, Math.min(60, Math.ceil(untilT - nowT()))); pass(step); stepAll(nowT()); }
+    } finally { simBusy = false; }
   }
   function simTimeHtml() {
     return '<h2>Sim time</h2>' +
@@ -3819,7 +3846,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     G = game;
     listen();
     try { ensure(); } catch (e) { }
-    try { applyQueued(); } catch (e) { }
+    try { applyQueued(nowT()); } catch (e) { } // Nov 16: work that finished later than this town's clock waits for the catch-up
     if (!pickHooked && typeof document !== 'undefined') {
       pickHooked = true;
       // Towns picker (look at another town): ask first if a crew is still stood aside
@@ -3836,7 +3863,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
 
   const api = {
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
-    tick: tick, guard: guard, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
+    tick: tick, guard: guard, runDayOut: runDayOut, nextQueuedAt: nextQueuedAt, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
     openSimTime: openSimTime, simAhead: simAhead, parseSimInput: parseSimInput,
     _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, simAhead: simAhead, parseSimInput: parseSimInput, reportLine: reportLine },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
@@ -4302,7 +4329,7 @@ const C = id => state.cons[id];
 
 function newState() {
   state = {
-    v: 1, money: ECON.START_CASH, led: LED0(), away: [], rep: 10, time: 6 * 3600, mode: 'drive', speed: 1,
+    v: 1, money: ECON.START_CASH, led: LED0(), away: [], rep: 10, time: 7 * 3600, /* Nov 16: every town's day starts at 7:00 AM */ mode: 'drive', speed: 1,
     ctl: { rev: 0, notch: 0, brake: 1, sand: false, sandT: 0 },
     sw: {}, veh: {}, cons: {}, nextCid: 1, job: null, jobN: 0, done: 0, ap: null, help: true, msgs: {}, icSeq: 1,
   };
@@ -4779,7 +4806,7 @@ function noTaskText() { const cars = Object.values(state.veh), today = dayNo(), 
 function makeJob() { syncTasks(); return state.job; } // (kept for old callers: the "job" is now just the selected checklist task)
 function taskThere(t) { const v = state.veh[t.car]; if (!v) return false; const w = carWhere(v); return t.type === 'house' ? w.house : t.type === 'icout' ? w.icOut : t.type === 'spot' ? w.spot(t.spot) : w.yard(t.yard); }
 // ---- End day: IC picks up IC Outbound (pays per car, loaded more than empty), sets out the next day's cut on
-// IC Inbound, and the clock moves to 6:00 AM the next day. Cars anywhere else stay put.
+// IC Inbound, and the clock moves to 7:00 AM the next day (Nov 16: same morning as Effingham and Neoga). Cars anywhere else stay put.
 const dayNo = () => Math.floor(state.time / 86400) + 1;
 // Nov 4 (Stephen: Neoga cars weren't releasing while he was in Mattoon): Neoga's clock runs while you're here. Its finished cars become
 // pull-ready and its new cars are queued for its interchange tracks (shared.js ngAway on Neoga's stored record); a toast says what changed.
@@ -4797,8 +4824,11 @@ function neogaStatus() { const ng = (NII.env().towns || {}).neoga; if (!ng || !n
   const waiting = (ng.awayIn || []).length + (ng.pendIC || []).length + (ng.nwPend || []).length; return { ready, work, waiting }; }
 function endDay() {
   const c0 = locoCons(); for (const c of Object.values(state.cons)) c.v = 0; state.ap = null; state.stopping = false; state.ctl.notch = 0; state.ctl.brake = 1;
-  const day = dayNo(), picked = [], left = [], worked = finishWork(true);
-  let crewRun = null; try { if (window.NII_CALLSHEET) crewRun = NII_CALLSHEET.runHired(day); } catch (e) { }
+  const day = dayNo();
+  // Nov 16 (Stephen: End day finishes the crews' work the same as simming through it): the clock runs out the day first, crews finish each piece at its time
+  try { if (window.NII_CALLSHEET) NII_CALLSHEET.runDayOut(day * 86400 - 1); } catch (e) { }
+  const picked = [], left = [], worked = finishWork(true);
+  let crewRun = null; try { if (window.NII_CALLSHEET) crewRun = NII_CALLSHEET.runHired(day, day * 86400 + 7 * 3600); } catch (e) { }
   for (const c of Object.values(state.cons)) {
     if (c === c0 || locoOf(c)) continue; // IC never takes the engine or anything coupled to it
     const vs = c.veh.map(V); if (!vs.some(v => v.f.s === SI.ICO || v.r.s === SI.ICO)) continue;
@@ -4821,7 +4851,7 @@ function endDay() {
     if (roadOf(v) === 'NII') { const [a, b] = v.rent ? ECON.RENT_DAYS : ECON.NII_BACK_DAYS; state.away.push({ vtype: v.type, num: v.num, art: v.art, back: day + a + r0() * (b - a + 1) /* hidden: random day and hour, never shown */, rentFrom: v.rent ? state.time : null }); }
     const c = C(v.cid); if (c) { c.veh = c.veh.filter(id => id !== v.id); if (!c.veh.length) delete state.cons[c.id]; } delete state.veh[v.id]; }
   if (pay) { book('earn', pay); IND('ICG', 'inc', pay); } if (picked.length) IND('ICG', 'out', picked.length);
-  { const t1 = day * 86400 + 6 * 3600; accrueHire(t1 - state.time); state.time = t1; } reindex();
+  { const t1 = day * 86400 + 7 * 3600; passClock(t1 - state.time); } reindex(); // Nov 16: the night passes like any other time (car hire, customers work), to 7:00 AM as in every town
   let crewStage = null; try { if (window.NII_CALLSHEET) crewStage = NII_CALLSHEET.stageMorning(day + 1); } catch (e) { }
   setTimeout(() => neogaAway(), 900); const bfLines = bfNewDay(day + 1); if (bfLines.length) setTimeout(() => toast(bfLines.join('. ') + '.', 'bad'), 2500);
   // NI&I cars due back from IC come on this set-out, empty (rent paid on return)
@@ -4843,7 +4873,7 @@ function endDay() {
 function askEndDay() {
   const out = Object.values(state.veh).filter(v => TYPES[v.type].kind === 'car' && carWhere(v).icOut).length;
   const wk = Object.values(state.veh).filter(v => v.work).length;
-  showModal(`<h2>End ${weekday(dayNo())} · Day ${dayNo()}?</h2><p>${wk ? `Customers finish the ${wk} car${wk === 1 ? '' : 's'} they're working. ` : ''}IC picks up the ${out} car${out === 1 ? '' : 's'} on IC Outbound and pays per car ($${ECON.CAR} a car + $${ECON.PER_TON.toFixed(2)} a ton; hot +$${ECON.HOT}, NH3 +$${ECON.NH3}), sets out new cars on IC Inbound, and the clock goes to ${weekday(dayNo() + 1)} · Day ${dayNo() + 1}, 6:00 AM. Every other car stays where it is.</p><div class="btns"><button data-act="close" class="alt">Cancel</button><button data-act="endDay">End the day</button></div>`);
+  showModal(`<h2>End ${weekday(dayNo())} · Day ${dayNo()}?</h2><p>${wk ? `Customers finish the ${wk} car${wk === 1 ? '' : 's'} they're working. ` : ''}IC picks up the ${out} car${out === 1 ? '' : 's'} on IC Outbound and pays per car ($${ECON.CAR} a car + $${ECON.PER_TON.toFixed(2)} a ton; hot +$${ECON.HOT}, NH3 +$${ECON.NH3}), sets out new cars on IC Inbound, and the clock goes to ${weekday(dayNo() + 1)} · Day ${dayNo() + 1}, 7:00 AM. Every other car stays where it is.</p><div class="btns"><button data-act="close" class="alt">Cancel</button><button data-act="endDay">End the day</button></div>`);
 }
 function showTasks() {
   syncTasks(); const u = nextUnlock(), T = state.tasks || [];
@@ -4867,7 +4897,7 @@ function showDaySummary(r) {
     ${r.storLines && r.storLines.length ? `<p><b>Storage</b>:</p><ul>${li(r.storLines)}</ul>` : ''}
     ${r.repLines && r.repLines.length ? `<p><b>Reputation</b> (now ${state.rep}):</p><ul>${li(r.repLines)}</ul>` : ''}
     ${r.crewHtml || ''}
-    <p>Now ${weekday(r.next)} · Day ${r.next}, 6:00 AM.</p><div class="btns"><button data-act="${r.crewTieUps && r.crewTieUps.length ? 'dayDone' : 'close'}">Start ${weekday(r.next)}</button></div>`);
+    <p>Now ${weekday(r.next)} · Day ${r.next}, 7:00 AM.</p><div class="btns"><button data-act="${r.crewTieUps && r.crewTieUps.length ? 'dayDone' : 'close'}">Start ${weekday(r.next)}</button></div>`);
 }
 function carWhere(v) {
   const onSeg = (s, d0, d1) => v.f.s === s && v.r.s === s && Math.min(v.f.d, v.r.d) >= d0 - 0.5 && Math.max(v.f.d, v.r.d) <= d1 + 0.5;
@@ -5058,17 +5088,20 @@ function callTruck() {
 // ---------------------------------------------------------------- waybills (data in waybills.js). Kept on the car (v.wb), so they save.
 const WB_ROADNAME = r => r === 'CNW' ? 'C&NW' : r;
 function wbDate(t) { const d = Math.floor(t / 86400); const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(1975, 2, 3 + d); return `${m[dt.getMonth()]} ${dt.getDate()} 1975`; }
+// Nov 15 fix: no waybill place lists the PS-2 / center-flow hopper kinds (ps2, cf, cf2), so wbPick came back empty and a loaded
+// center-flow hopper released at Prairie Grain crashed the clock ("reading '1'"). Fall back to covered-hopper places, then any place.
+function wbPickSafe(kind, c, r, not) { return wbPick(kind, c, r, not) || wbPick(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[kind] || 'box', c, r, not) || wbPick('box', null, r, not); }
 function waybillOf(v) {
-  const T = TYPES[v.type]; if (!T.cap) return null; const l = carLoad(v), road = WB_ROADNAME(roadOf(v)), kind = WB_KIND[v.type] || 'box';
+  const T = TYPES[v.type]; if (!T || !T.cap) return null; const l = carLoad(v), road = WB_ROADNAME(roadOf(v)), kind = WB_KIND[v.type] || 'box';
   const out = v.dest === 'IC-INT' || v.dest === 'HOUSE' && v.out, key = `${l ? 'L' : 'E'}|${out ? 'o' : 'i'}|${out ? v.relK || v.dest : v.dest || ''}`;
   if (v.wb && v.wb.key === key) return v.wb;
   const r = seeded((+v.num || 7) * 31 + key.length * 977 + (v.relT ? Math.round(v.relT / 60) : 0)), no = String(10000 + Math.floor(r() * 89999));
   const home = WB_HOME[roadOf(v)] || WB_HOME.IC, at = WB_ONLINE[v.relK || v.dest] || WB_ONLINE[v.dest] || ['NI&I Railroad', 'Mattoon, IL'];
   let w;
   if (!out && WB_ONLINE[v.dest]) { const cu = WB_ONLINE[v.dest];
-    if (l) { const sh = wbPick(kind, l.c, r); w = { from: `${sh[3]}, ${sh[1]}, ${sh[2]}`, fromRoad: sh[0], to: `${cu[0]}, ${cu[1]}`, toRoad: 'NI&I', route: wbRoute(sh[0]) + (/^EF /.test(v.dest) ? '–Effingham' : ''), cons: cu[0], what: l.c }; }
+    if (l) { const sh = wbPickSafe(kind, l.c, r); w = { from: `${sh[3]}, ${sh[1]}, ${sh[2]}`, fromRoad: sh[0], to: `${cu[0]}, ${cu[1]}`, toRoad: 'NI&I', route: wbRoute(sh[0]) + (/^EF /.test(v.dest) ? '–Effingham' : ''), cons: cu[0], what: l.c }; }
     else w = { from: `${home[0]}, ${home[1]}`, fromRoad: road, to: `${cu[0]}, ${cu[1]}`, toRoad: 'NI&I', route: wbRoute(WB_JCT[road] !== undefined ? road : 'IC') + (/^EF /.test(v.dest) ? '–Effingham' : ''), cons: cu[0], what: 'EMPTY for loading' }; }
-  else if (out && l) { const cn = wbPick(kind, l.c, r, 'IC'); w = { from: `${at[0]}, ${at[1]}`, fromRoad: 'NI&I', to: `${cn[1]}, ${cn[2]}`, toRoad: cn[0], route: wbRouteOut(cn[0]), cons: cn[3], what: l.c }; }
+  else if (out && l) { const cn = wbPickSafe(kind, l.c, r, 'IC'); w = { from: `${at[0]}, ${at[1]}`, fromRoad: 'NI&I', to: `${cn[1]}, ${cn[2]}`, toRoad: cn[0], route: wbRouteOut(cn[0]), cons: cn[3], what: l.c }; }
   else if (out) w = { from: `${at[0]}, ${at[1]}`, fromRoad: 'NI&I', to: home[1], toRoad: WB_JCT[road] !== undefined ? road : 'IC', route: wbRouteOut(WB_JCT[road] !== undefined ? road : 'IC'), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
   else w = { from: 'Mattoon, IL', fromRoad: 'NI&I', to: 'Mattoon, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: v.dest && /^YARD/.test(v.dest) ? 'Held in the yard' : 'No orders: hold at Mattoon', what: l ? l.c : 'EMPTY' };
   return (v.wb = Object.assign(w, { key, no, date: wbDate(state.time), kname: WB_KNAME[kind], lbs: l ? (l.t * 2000).toLocaleString() : '', loaded: !!l }));
@@ -5120,11 +5153,11 @@ function stripStraysM() { const c = locoCons(); if (!c || VISIT) return 0; const
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (env.town !== 'mattoon' || !env.travel) return; // Nov 13: only a real train arrival (a Towns jump brings no train)
   if (!state.awayTrain && !(env.trainIn && env.trainIn.length)) return;
-  const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - (state.awayTrain ? state.awayTrain.left : state.time)); state.time = Math.max(state.time, env.time || 0);
+  const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - (state.awayTrain ? state.awayTrain.left : state.time)); // Nov 16: catchUpClock() moves the clock (car hire, customers, crews, End days) after load
   const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; delete v.mattoonN; state.veh[v.id] = v; }
   if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;
     place(ids, { s, d: Math.max(5, SEG[s].len - 15 - len), dir: -1 }, backA); ids.forEach((id, i) => { V(id).aFront = backA[i]; }); }
-  delete state.awayTrain; accrueHire(away); if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
+  delete state.awayTrain; if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
 }
 // ---------------------------------------------------------------- save / load
 // big map town tabs (Oct 30): a light copy of this map (track, lined switch legs, cars) goes in the save for the other towns' Map tabs
@@ -5223,7 +5256,7 @@ const HELP = `<h2>NI&amp;I at Mattoon, IL (test yard)</h2>
 <li><b>Uncoupling:</b> stop, then tap the &#9986; between two cars in the picture.</li>
 <li><b>TAGS:</b> the TAGS button (top right of the picture) puts a destination tag over every car. The colour is the subdivision (Mattoon is red); the code says where the car goes: HOUSE = freight house door, YARD 1&ndash;6 = that yard track, IC-INT = going to the Illinois Central (leave it on IC Outbound; an IC car becomes IC-INT once it's finished at its HOUSE or YARD spot), HOLD = no orders yet, leave it in the yard. The second line is what's in the car and how many tons (e.g. Paper 43T), or EMPTY.</li>
 <li><b>IC interchange:</b> two long stub tracks (about 14 cars each) off the main toward Effingham, running north from the south end right up to the yard ladder (switch IC on the main, then switch IO). On the Map, tap the IC chip at the right edge (or drag) to see them. The Illinois Central leaves cars for us on <b>IC Inbound</b>; cars tagged <b>IC-INT</b> go on <b>IC Outbound</b>. Back in from the main (the switch faces south); tap a car or the track and auto-routing lines the switches and makes the reversing move for you.</li>
-<li><b>End day:</b> End Day in the menu (&#9776;) ends the day. Hired crews you marked up on the call sheet do their work then (you won't see them switch). IC picks up every car on IC Outbound and pays per car (see the money summary for the rates), sets out new cars on IC Inbound (if that track is clear), and it's 6:00 AM the next day. Cars anywhere else stay put unless a hired crew moved them.</li>
+<li><b>End day:</b> End Day in the menu (&#9776;) ends the day. Hired crews you marked up on the call sheet do their work then (you won't see them switch). IC picks up every car on IC Outbound and pays per car (see the money summary for the rates), sets out new cars on IC Inbound (if that track is clear), and it's 7:00 AM the next day. Cars anywhere else stay put unless a hired crew moved them.</li>
 <li><b>Restart:</b> &#8634; in the top bar puts everything back exactly how the game starts, so you can replay the same situation.</li>
 <li><b>Fuel and sand:</b> the engine burns fuel, more at higher notches. Sand stops wheel slip and helps you stop. Refill on the engine track at the fuel pad (costs money). If you run dry, the engine quits.</li>
 </ul>
@@ -6986,7 +7019,25 @@ function updateUI0() {
 // ---------------------------------------------------------------- loop
 let paused = false, lastT = 0, saveT = 0, csT = 0;
 // Nov 13 clock sim: Sim until they finish. The clock jumps in 1-minute steps: car hire, your crew's wages, customer work timers.
-function skipClock(sec) { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(60, left); state.time += d; accrueHire(d); book('crew', ECON.CREW_HR * d / 3600); workTick(); left -= d; } reindex(); }
+function skipClock(sec) { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(60, left); state.time += d; accrueHire(d); book('crew', ECON.CREW_HR * d / 3600); { const l0 = locoOf(locoCons()); if (l0 && l0.fuel > 0) book('fuel', ECON.FUEL_IDLE_HR * d / 3600); } workTick(); left -= d; } reindex(); } // Nov 16: Sim time bills crew + idle fuel the same in every town
+function passClock(sec) { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(60, left); state.time += d; accrueHire(d); workTick(); left -= d; } } // Nov 16: time passes with no player crew wages (End day, catching up)
+// Nov 16 (Stephen: every map sims at the same rate): on arrival (train, Towns button or reload) Mattoon catches up to the shared clock.
+// Time that passed in another town passes here too: car hire, customer work, crew work at the time it finished, and Mattoon's own End day for every day that ended elsewhere.
+function catchUpClock() {
+  if (VISIT) return; const E = NII.env(), target = E.time || 0; if (!(target > state.time + 1)) return;
+  const CS = window.NII_CALLSHEET, days = []; let crew = 0, g = 0;
+  const passTo = t => { while (state.time < t - 1e-6) { let d = Math.min(1800, t - state.time); const nq = CS && CS.nextQueuedAt ? CS.nextQueuedAt() : null; if (nq != null && nq > state.time) d = Math.min(d, nq - state.time); if (CS && CS.applyQueued) crew += CS.applyQueued(state.time, true) || 0; passClock(Math.max(1, d)); } if (CS && CS.applyQueued) crew += CS.applyQueued(state.time, true) || 0; };
+  try {
+    while (state.time < target - 0.5 && g++ < 40) {
+      const D = Math.floor(state.time / 86400) * 86400;
+      if (target >= D + 86400 + 7 * 3600) { passTo(D + 86400 - 1); days.push(endDay()); } // that day ended in another town: Mattoon's End day, same rules
+      else passTo(target);
+    }
+  } finally { if (state.time < target) state.time = target; reindex(); save(); }
+  if (crew) toast(`Hired crews finished ${crew} piece${crew > 1 ? 's' : ''} of work here while you were away. Their cars are in place.`, 'good');
+  const last = days[days.length - 1];
+  if (last) setTimeout(() => toast(`Mattoon ended ${days.length > 1 ? days.length + ' days' : 'Day ' + last.day} while you were away: IC picked up ${last.picked.length} car${last.picked.length === 1 ? '' : 's'}${last.pay ? ' ($' + last.pay.toFixed(2) + ')' : ''} and set out ${last.set.length}.`, 'good'), 1200);
+}
 function stopTrainForSim() { // Nov 13: Sim time stops your engine first so it does not roll unattended
   const c = locoCons(); if (c) c.v = 0;
   state.ap = null; state.stopping = false; if (state.ctl) { state.ctl.notch = 0; state.ctl.brake = 1; }
@@ -7054,13 +7105,13 @@ function bindCallSheet() {
     getState: () => state, dayNo, weekday, showModal, hideModal, toast, save, book, place, reindex,
     carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM,
     env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
-    town: 'mattoon', now: () => state.time, skip: skipClock, stopTrain: stopTrainForSim
+    town: 'mattoon', now: () => state.time, skip: skipClock, pass: sec => { passClock(sec); reindex(); }, stopTrain: stopTrainForSim
   });
 }
 function boot() {
   startState(); load(); reindex();
-  try { const E = NII.env(); if (E.jump && E.jump.to === 'mattoon' && !VISIT) { const gap = (E.time || 0) - state.time; if (gap > 0) { accrueHire(gap); state.time = E.time; } delete E.jump; } } catch (e) { } // Nov 13: came by the Towns button: the clock catches up to the shared game clock
   try { bindCallSheet(); } catch (e) { }
+  try { const E = NII.env(); if (E.jump && E.jump.to === 'mattoon') delete E.jump; catchUpClock(); if (window.NII_CALLSHEET && !VISIT) NII_CALLSHEET.applyQueued(); } catch (e) { console.warn('catch-up', e); } // Nov 16: every arrival catches up to the shared clock
   // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
   for (const v of Object.values(state.veh)) { if (!v.work || !SPOTS[v.dest]) continue; if (carWhere(v).spot(v.dest) || (v.dest === 'HOUSE' && carWhere(v).house)) continue;
     delete v.work; delete v.spotT; delete v.fhDone; delete v.wb; try { waybillOf(v); } catch (e) { } }
