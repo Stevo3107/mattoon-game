@@ -1955,7 +1955,7 @@ function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.
     if (!SH.ngRelease(v, E.time)) continue; const via = v.outVia;
     toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${via === 'PC' ? 'PC (leave it on the PC Interchange)' : 'IC (take it to Mattoon)'}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
 function advance(dt,operationalTime=true) { // game time passes in Effingham: car hire, work at the spots, demurrage
-  if (dt <= 0) return; if(operationalTime)efAdvanceInterlock(dt);const t0 = E.time; E.time += dt; let hire = 0;
+  if (dt <= 0) return; if(operationalTime)efAdvanceInterlock(dt);const t0 = E.time; E.time += dt; S.clockT = E.time; /* Nov 16: last time this town was run (catch-up) */ let hire = 0;
   for (const q of standingCars()) { const v = q.v; if (!isLoco(v) && v.type !== 'caboose' && roadOf(v) !== 'NII') { const hr = SH.hireRate(v, winterNow()); hire += hr; IND(DEST[v.dest] ? v.dest : v.from || 'PC', 'cost', hr * dt / 3600); }
     if (q.live || !DEST[v.dest]) continue; const sp = carAtSpot(v, q.pm); if (!sp) continue; if (MILLER(v.dest) && weekend(E.time) && !v.work) continue; // Miller: no switching fee or unloading Sat/Sun
     startWorkN(v, sp); }
@@ -4536,10 +4536,12 @@ function efCrewWork(w) {
   else if (w.kind === 'buildLocal') r = efCrewBuild(w);
   else r = ['switched the Effingham yard'];
   save(); return r; }
-function efApplyPendingCrew() { // work finished while you were away (queued by the call sheet), oldest first
-  if (VISIT || !S) return; const out = [];
-  const ix = (S.pendingIx || []).splice(0), cw = (S.pendingCrewWork || []).splice(0), yw = (S.pendingYardWork || []).splice(0), nwIn = (S.pendingNwIn || []).splice(0);
-  delete S.pendingIx; delete S.pendingCrewWork; delete S.pendingYardWork; delete S.pendingYard; delete S.pendingNwIn;
+function efApplyPendingCrew(upTo, quiet) { // work finished while you were away (queued by the call sheet), oldest first. Nov 16: upTo = only work finished by that clock time
+  if (VISIT || !S) return []; const out = [];
+  const due = o => !(upTo != null && o && typeof o === 'object' && o.at != null && o.at > upTo);
+  const take = k => { const a = S[k] || [], now = a.filter(due), later = a.filter(o => !due(o)); if (later.length) S[k] = later; else delete S[k]; return now; };
+  const ix = take('pendingIx'), cw = take('pendingCrewWork').map(o => typeof o === 'string' ? o : o.k), yw = take('pendingYardWork'), nwIn = take('pendingNwIn');
+  delete S.pendingYard;
   if (ix.length) out.push(...efCrewPC());
   for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...efCrewCustomer(k));
   for (const w of yw) out.push(...efCrewWork(w));
@@ -4555,10 +4557,25 @@ function efApplyPendingCrew() { // work finished while you were away (queued by 
     }
     if (n) out.push('set ' + n + ' inbound car' + (n > 1 ? 's' : '') + ' from the N&W Interchange in the Effingham yard');
   }
-  if (S.pendingCrewSwap && !cw.includes('EF GLASS')) { out.push(...crewSwapMidstate()); } S.pendingCrewSwap = 0;
-  if (out.length) { note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.'); save(); } }
+  if (S.pendingCrewSwap && !(S.pendingCrewWork || []).some(o => (typeof o === 'string' ? o : o.k) === 'EF GLASS')) { if (!cw.includes('EF GLASS')) out.push(...crewSwapMidstate()); S.pendingCrewSwap = 0; }
+  if (quiet) return out;
+  if (out.length) { note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.'); save(); }
+  return out; }
+function efNextPendingAt() { let m = null; for (const k of ['pendingIx', 'pendingCrewWork', 'pendingYardWork']) for (const o of S[k] || []) { const a = o && typeof o === 'object' && o.at != null ? o.at : null; if (a != null && (m == null || a < m)) m = a; } return m; }
+// Nov 16 (Stephen: every map sims at the same rate, jobs finish in their time): time that passed while you were in another town passes here too, on load.
+// The clock goes back to when Effingham was last run and steps forward to the shared clock: car hire, customer work, and crew work at the time it finished.
+// Days that ended elsewhere are rolled by newDay() right after, as before.
+function efCatchUp() {
+  if (VISIT) return; if (S.clockT == null || S.clockT > E.time) { S.clockT = E.time; return; }
+  const target = E.time; if (target - S.clockT < 1) return;
+  const out = []; E.time = S.clockT;
+  try { let g = 0; while (E.time < target - 1e-6 && g++ < 20000) { out.push(...efApplyPendingCrew(E.time, true)); let d = Math.min(1800, target - E.time); const nx = efNextPendingAt(); if (nx != null && nx > E.time) d = Math.min(d, nx - E.time); advance(Math.max(1, d), false); } out.push(...efApplyPendingCrew(E.time, true)); }
+  finally { E.time = target; S.clockT = target; }
+  if (out.length) note('Hired crews worked Effingham while you were away: ' + out.join('; ') + '.');
+}
 function endDay() { const t = E.time, next = (Math.floor(t / 86400) + 1) * 86400 + 7 * 3600; ctl.dir = 0; ctl.v = 0; ctl.ap = null;
-  for (let x = t; x < next; x += 1800) advance(Math.min(1800, next - x));
+  try { if (window.NII_CALLSHEET) { bindCrewBoard(); NII_CALLSHEET.runDayOut(next - 7 * 3600 - 1); } } catch (e) { } // Nov 16: crews finish the day's work at its time, same as Sim time, in every town
+  for (let x = E.time; x < next; x += 1800) advance(Math.min(1800, next - x));
   // Assigned-crew Midstate swap runs after overnight work so a released empty can come off and the next load can go on. No auto-move if no crew was sent.
   if (S.pendingCrewSwap) { const n = crewSwapMidstate(); S.pendingCrewSwap = 0; if (n && n.length) n.forEach(m => note(m + '.')); }
   try { if (window.NII_CALLSHEET) { bindCrewBoard(); const r = NII_CALLSHEET.runHired(Math.floor(t / 86400) + 1, next); if (r && r.lines) r.lines.forEach(m => note(m + '.')); } } catch (e) { }
@@ -4576,7 +4593,7 @@ function bindCrewBoard() {
     roadOf, TYPES: { gp9: { kind: 'loco', name: 'GP9' }, caboose: { kind: 'car' } },
     SI: {}, SEG: {}, YARD: {}, SPOTS: {}, ECON, FH: {}, NY: 6, ICI_N: 0, ICI_ROOM: 0,
     env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
-    town: 'effingham', now: () => E.time, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); const cf = SH.crewFuel(d, 0, !!(locoV(liveCut()) && locoV(liveCut()).fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); left -= d; } }, stopTrain: () => { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; },
+    town: 'effingham', now: () => E.time, pass: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); left -= d; } }, skip: sec => { let left = Math.max(0, sec || 0); while (left > 1e-6) { const d = Math.min(300, left); advance(d); const cf = SH.crewFuel(d, 0, !!(locoV(liveCut()) && locoV(liveCut()).fuel > 0)); book('crew', cf.crew); book('fuel', cf.fuel); left -= d; } }, stopTrain: () => { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; ctl.stopping = false; },
     applyWork: w => efCrewWork(w), tracksFor: k => efCrewTracks(k), yardTracks: () => YARD_TS.filter(t => T[t]), trackName: efTrackName
   });
 }
@@ -4641,7 +4658,7 @@ let last = performance.now(), saveT = 0, mapT = 0, bfT = 0, csT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } if ((csT += dt) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); nwiClear(); if (!VISIT) { if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
+build(); nwiClear(); if (!VISIT) { try { efCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
