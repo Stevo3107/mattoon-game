@@ -1501,6 +1501,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function atIndustry(v, key) {
     const w = G.carWhere(v);
     if (key === 'HOUSE') return w.house;
+    if (key === 'GRAIN' && v.relK === 'GRAIN') { const tr = grainTrack(); if (tr && v.f && v.r && v.f.s === tr.s && v.r.s === tr.s) return true; } // Nov 16 (Stephen: only one loaded grain car was pulled): released cars anywhere on the elevator track count as at Prairie Grain, not only the one under the spout
     if (G.SPOTS[key]) return w.spot(key);
     return false;
   }
@@ -1797,8 +1798,15 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       work.push(ixWork);
     });
   }
+  // Nov 16 (Stephen): a checked customer with nothing to spot or pull is passed by (switch-list rule). It is left off the
+  // job's work, so it adds no switching time and no trip, and the board shows it as skipped. Same for every town.
+  function pushIndustry(work, skipped, id) {
+    const n = countIndustry(id);
+    if (!(n > 0)) { skipped.push(id); return; }
+    work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: n });
+  }
   function draftToJob(d) {
-    const work = [];
+    const work = [], skipped = [];
     if (d.type === 'yard') {
       pushIxWork(work, d);
       (d.classify || []).forEach(function (rule) {
@@ -1806,23 +1814,197 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         work.push({ kind: 'classify', town: d.start, dest: rule.dest || undefined, carType: rule.carType || undefined, track: rule.track, cars: countClassify(rule) });
       });
       if ((d.buildOrder || []).length) work.push({ kind: 'buildLocal', town: d.start, track: d.buildTrack || defaultYardTrack(), order: d.buildOrder.slice(), cars: countBuild(d.buildOrder) });
-      (d.industries || []).forEach(function (id) { if (!neogaCustLocked(id)) work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: countIndustry(id) }); });
+      (d.industries || []).forEach(function (id) { if (!neogaCustLocked(id)) pushIndustry(work, skipped, id); });
     } else if (d.type === 'local') {
       pushIxWork(work, d);
       const allow = {};
       customersAllowedForJob(d).forEach(function (c) { allow[c.id] = true; });
-      (d.industries || []).forEach(function (id) { if (allow[id] && !neogaCustLocked(id)) work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: countIndustry(id) }); });
+      (d.industries || []).forEach(function (id) { if (allow[id] && !neogaCustLocked(id)) pushIndustry(work, skipped, id); });
     } else {
       (d.stops || []).forEach(function (s) {
         const town = (R().trackInfo(s.track) || {}).town;
         work.push({ kind: s.act === 'pickup' ? 'pickup' : 'setout', track: s.track, town: town, cars: s.act === 'pickup' ? countOnTrack(s.track) : 0 });
       });
     }
-    return {
+    const job = {
       type: d.type, symbol: (d.symbol || '').trim() || defaultSymbol(d),
       start: d.start, tieUp: d.tieUp, work: work, engines: (d.engines || []).slice(), mode: 'hire',
       startAt: d.startAt != null ? +d.startAt : dutySlots()[0]
     };
+    if (skipped.length) job.skipped = skipped;
+    return job;
+  }
+
+  // ---- Saved jobs (Nov 16, Stephen): name a call-sheet setup, load it later, add or take off customers, then call it.
+  // Kept on the game state (state.savedJobs), so each save slot keeps its own list. Old saves just start with none.
+  let sjRename = null, sjDelAsk = null, sjName = '';
+  function savedJobs() { const s = st(); if (!Array.isArray(s.savedJobs)) s.savedJobs = []; return s.savedJobs; }
+  function savedById(id) { return savedJobs().filter(function (j) { return j && j.id === id; })[0] || null; }
+  function cleanName(n) { return String(n == null ? '' : n).replace(/\s+/g, ' ').trim().slice(0, 40); }
+  function todOf(t) { return t == null || !isFinite(+t) ? null : ((+t % 86400) + 86400) % 86400; }
+  function draftToSaved(d, name) {
+    return {
+      name: name, symbol: (d.symbol || '').trim(), type: d.type, start: d.start, tieUp: d.tieUp,
+      crewId: d.crewId || null, engines: (d.engines || []).slice(),
+      interchanges: (d.interchanges || []).slice(), industries: (d.industries || []).slice(),
+      classify: JSON.parse(JSON.stringify(d.classify || [])), buildTrack: d.buildTrack || '', buildOrder: (d.buildOrder || []).slice(),
+      stops: JSON.parse(JSON.stringify(d.stops || [])), yardTab: d.yardTab || 'classify', startTod: todOf(d.startAt), savedDay: G.dayNo()
+    };
+  }
+  function saveDraftAs(name) {
+    if (!draft) return;
+    name = cleanName(name);
+    if (!name) { G.toast('Type a name for this job first.', 'bad'); return; }
+    const s = st(), list = savedJobs();
+    const same = list.filter(function (j) { return j && cleanName(j.name).toLowerCase() === name.toLowerCase(); })[0];
+    const rec = draftToSaved(draft, name);
+    if (same) { rec.id = same.id; list[list.indexOf(same)] = rec; }
+    else { s.savedJobSeq = (s.savedJobSeq || 0) + 1; rec.id = 'sj' + s.savedJobSeq; list.push(rec); }
+    draft.savedFrom = rec.id; sjName = name;
+    G.save();
+    G.toast(same ? 'Saved job "' + name + '" updated.' : 'Saved job "' + name + '" added.', 'good');
+    showSheet(true);
+  }
+  function renameSaved(id, name) {
+    const j = savedById(id); if (!j) return;
+    name = cleanName(name);
+    if (!name) { G.toast('Type a name first.', 'bad'); return; }
+    if (savedJobs().some(function (x) { return x !== j && cleanName(x.name).toLowerCase() === name.toLowerCase(); })) { G.toast('There is already a saved job called "' + name + '".', 'bad'); return; }
+    j.name = name; sjRename = null;
+    if (draft && draft.savedFrom === id) sjName = name;
+    G.save();
+  }
+  function deleteSaved(id) {
+    const s = st(), j = savedById(id); if (!j) return;
+    s.savedJobs = savedJobs().filter(function (x) { return x !== j; });
+    sjDelAsk = null;
+    if (draft && draft.savedFrom === id) { delete draft.savedFrom; if (draft.loadNote) draft.loadNote = null; }
+    G.save();
+    G.toast('Saved job "' + j.name + '" deleted.');
+  }
+  function lockWhy(id) {
+    const t = customerTown(id);
+    if (t === 'neoga' && !neogaNwOpen()) return 'opens at 100 reputation';
+    if (t === 'effingham' && !effinghamOpen()) return 'opens at 200 reputation';
+    return 'not on this job\'s route';
+  }
+  function statusWord(s) { return s.state === 'off' ? 'marked off' : s.state === 'vacation' ? 'on vacation' : s.label.charAt(0).toLowerCase() + s.label.slice(1); }
+  // Build a fresh draft from a saved job. Anything not open or not on hand today is left off, with a short note.
+  function savedToDraft(j) {
+    const d = blankDraft(), notes = [];
+    const open = {}; bases().forEach(function (b) { open[b.id] = true; });
+    d.type = (j.type === 'yard' || j.type === 'local' || j.type === 'road') ? j.type : 'local';
+    d.symbol = j.symbol || '';
+    if (j.start && !open[j.start]) notes.push(townName(j.start) + ' is not open yet, so it starts at ' + placeName(d.start));
+    else if (j.start) d.start = j.start;
+    if (j.tieUp && !open[j.tieUp]) { d.tieUp = d.start; notes.push(townName(j.tieUp) + ' is not open yet, so it ties up at ' + placeName(d.tieUp)); }
+    else d.tieUp = j.tieUp || d.start;
+    // crew
+    const want = j.crewId ? crewById(j.crewId) : null;
+    if (!j.crewId) d.crewId = null;
+    else {
+      const ok = want && crewStatus(want, { start: d.start }, null).state === 'available';
+      if (ok) d.crewId = want.id;
+      else {
+        const alt = firstAvailable(d.start);
+        d.crewId = alt ? alt.id : null;
+        notes.push((want ? want.name + ' is ' + statusWord(crewStatus(want, { start: d.start }, null)) : 'The saved crew is gone') + (alt ? ', so ' + alt.name + ' is picked' : ', so no crew is picked'));
+      }
+    }
+    // engines
+    const have = {}; locos().forEach(function (v) { have[v.id] = v; });
+    const wantE = Array.isArray(j.engines) ? j.engines : [];
+    const keptE = wantE.filter(function (id) { return have[id]; });
+    if (keptE.length < wantE.length) notes.push((wantE.length - keptE.length) + ' saved engine' + (wantE.length - keptE.length === 1 ? ' is' : 's are') + ' not on hand');
+    if (keptE.length || !wantE.length) d.engines = keptE.length ? keptE : (wantE.length ? d.engines : []);
+    if (!keptE.length && wantE.length && d.engines.length) notes.push(locoName(have[d.engines[0]]) + ' is used instead');
+    // customers
+    const allow = {};
+    (d.type === 'local' ? customersAllowedForJob(d) : customersWithLockedNeoga().filter(function (c) { return !neogaCustLocked(c.id) && (c.town !== 'effingham' || effinghamOpen()); }))
+      .forEach(function (c) { allow[c.id] = true; });
+    const offC = [];
+    d.industries = (Array.isArray(j.industries) ? j.industries : []).filter(function (id, i, a) {
+      if (a.indexOf(id) !== i) return false;
+      if (allow[id]) return true;
+      offC.push(custName(id) + ' (' + lockWhy(id) + ')'); return false;
+    });
+    if (offC.length) notes.push('Left off: ' + offC.join(', '));
+    const custOk = {}; customers().forEach(function (c) { custOk[c.id] = true; });
+    d.buildOrder = (Array.isArray(j.buildOrder) ? j.buildOrder : []).filter(function (id) { return custOk[id]; });
+    if (d.buildOrder.length < (j.buildOrder || []).length) notes.push('Some blocks in the build order are not open yet');
+    // interchanges
+    d.interchanges = Array.isArray(j.interchanges) ? j.interchanges.slice() : [];
+    const ixKept = selectedInterchanges(d);
+    const ixOff = d.interchanges.filter(function (id) { return ixKept.indexOf(migrateIxId(id)) < 0; });
+    d.interchanges = ixKept;
+    if (ixOff.length) notes.push(ixOff.map(function (id) { const ix = interchangeById(id); return ix ? ix.name : id; }).join(', ') + ' not open on this job');
+    // yard tracks and road stops
+    const yt = yardTracks(d.start);
+    d.classify = (Array.isArray(j.classify) ? j.classify : []).map(function (r) { return { dest: r.dest || '', carType: r.carType || '', track: yt.indexOf(r.track) >= 0 ? r.track : yt[0] }; });
+    d.buildTrack = yt.indexOf(j.buildTrack) >= 0 ? j.buildTrack : (yt[0] || d.buildTrack);
+    const rt = roadTracks();
+    d.stops = (Array.isArray(j.stops) ? j.stops : []).filter(function (x) { return x && rt.indexOf(x.track) >= 0; }).map(function (x) { return { act: x.act === 'pickup' ? 'pickup' : 'setout', track: x.track }; });
+    if (d.stops.length < (j.stops || []).length) notes.push('Some road stops are not open yet');
+    d.yardTab = j.yardTab || d.yardTab;
+    // on-duty time: same time of day if it is still ahead today
+    const slots = dutySlots();
+    if (j.startTod != null) {
+      const day0 = Math.floor(nowT() / 86400) * 86400, want0 = day0 + j.startTod;
+      const hit = slots.filter(function (t) { return t >= want0; })[0];
+      if (hit != null) d.startAt = hit;
+      else { d.startAt = slots[0]; notes.push(clockStr(want0) + ' has passed today, so it goes on duty at ' + clockStr(slots[0])); }
+    }
+    d.savedFrom = j.id;
+    d.loadNote = { name: j.name, notes: notes };
+    return d;
+  }
+  function loadSaved(id) {
+    const j = savedById(id); if (!j) return;
+    sjRename = null; sjDelAsk = null; sjName = j.name;
+    draft = savedToDraft(j);
+    showSheet(false);
+  }
+  function savedSummary(j) {
+    const T = { yard: 'Yard', local: 'Local', road: 'Road' }[j.type] || 'Local';
+    const where = j.start && j.tieUp && j.tieUp !== j.start ? townName(j.start) + '–' + townName(j.tieUp) : townName(j.start || 'mattoon');
+    const bits = [T + ' · ' + where];
+    const nC = (j.industries || []).length, nX = (j.interchanges || []).length, nS = (j.stops || []).length, nR = (j.classify || []).length;
+    if (nC) bits.push(nC + ' customer' + (nC === 1 ? '' : 's'));
+    if (nX) bits.push(nX + ' interchange' + (nX === 1 ? '' : 's'));
+    if (nR) bits.push(nR + ' classify rule' + (nR === 1 ? '' : 's'));
+    if (nS) bits.push(nS + ' stop' + (nS === 1 ? '' : 's'));
+    if (j.symbol) bits.push(j.symbol);
+    return bits.join(' · ');
+  }
+  function savedListHtml(where) {
+    const list = savedJobs();
+    if (where === 'sheet' && !list.length) return '';
+    let h = '<div id="csSaved">' + lab('Saved jobs', where === 'sheet' ? 'load one, then add or take off customers' : 'your named setups');
+    if (!list.length) h += '<p class="cs-hint">No saved jobs yet. Set up a call sheet, give it a name under Save this job, and it shows up here.</p>';
+    list.forEach(function (j) {
+      const id = esc(j.id);
+      if (sjRename === j.id) {
+        h += '<div class="cs-ord cs-sj"><input type="text" class="cs-f" data-cs-field="sj-rename" data-id="' + id + '" value="' + esc(j.name) + '" maxlength="40" autocomplete="off">' +
+          '<button class="cs-sjb" data-cs="sj-ren-ok" data-id="' + id + '">Save</button><button class="cs-sjb alt" data-cs="sj-ren-no">Cancel</button></div>';
+      } else if (sjDelAsk === j.id) {
+        h += '<div class="cs-ord cs-sj ask"><span class="t"><b>Delete "' + esc(j.name) + '"?</b><small>Jobs already on the board stay.</small></span>' +
+          '<button class="cs-sjb red" data-cs="sj-del-ok" data-id="' + id + '">Delete</button><button class="cs-sjb alt" data-cs="sj-del-no">Keep</button></div>';
+      } else {
+        const cur = draft && draft.savedFrom === j.id && where === 'sheet';
+        h += '<div class="cs-ord cs-sj' + (cur ? ' cur' : '') + '"><span class="t"><b>' + esc(j.name) + '</b><small>' + esc(savedSummary(j)) + '</small></span>' +
+          '<button class="cs-sjb" data-cs="sj-load" data-id="' + id + '">' + (where === 'sheet' ? (cur ? 'Reload' : 'Load') : 'Use') + '</button>' +
+          '<button class="cs-lnk" data-cs="sj-ren" data-id="' + id + '">Rename</button><button class="cs-lnk" data-cs="sj-del" data-id="' + id + '">Delete</button></div>';
+      }
+    });
+    return h + '</div>';
+  }
+  function saveRowHtml(d) {
+    const cur = d.savedFrom && savedById(d.savedFrom);
+    const val = sjName || (cur ? cur.name : '');
+    return lab('Save this job', 'keeps this setup for next time') +
+      '<div class="cs-addrow"><input type="text" class="cs-f cs-sjn" data-cs-field="sj-name" value="' + esc(val) + '" placeholder="Name it, e.g. Mattoon house run" maxlength="40" autocomplete="off">' +
+      '<button class="cs-add" data-cs="sj-save">Save job</button></div>' +
+      '<p class="cs-hint">Saves the work type, towns, customers, interchanges, stops, crew, engines and on-duty time. Using a name already on the list updates that saved job.</p>';
   }
 
   function ensure() {
@@ -1838,6 +2020,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!s.crewSeq) s.crewSeq = 1;
     if (!s.crewAssigned) s.crewAssigned = {};
     if (!s.crewTieUps) s.crewTieUps = [];
+    if (!Array.isArray(s.savedJobs)) s.savedJobs = []; // Nov 16: Saved jobs (older saves have none)
     try {
       mergeExtraCustomers();
     } catch (e) {}
@@ -2078,6 +2261,15 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .cs-foot button:disabled{background:#c8c3b8;color:#7b776f}' +
     '#modal .csheet .cs-banner{display:flex;align-items:center;gap:8px;border-radius:10px;background:#fff1e2;border:1px solid #f0b07a;box-shadow:inset 3px 0 0 var(--orange);padding:8px 10px;margin:0 0 8px;font-size:13px}' +
     '#modal .csheet .cs-banner span{flex:1}#modal .csheet .cs-banner button{height:40px;padding:0 14px;border:0;border-radius:10px;background:var(--navy);color:#fff;font-weight:700}' +
+    '#modal .csheet .cs-chk.cs-nada{opacity:.62}#modal .csheet .cs-chk.cs-nada small{font-style:italic}' +
+    '#modal .csheet .cs-skip{font-style:italic;margin-top:-6px}' +
+    '#modal .csheet .cs-sj{gap:6px;padding:4px 6px 4px 10px}#modal .csheet .cs-sj.cur{border-color:var(--orange)}#modal .csheet .cs-sj.ask{background:#fff1e2;border-color:#f0b07a}' +
+    '#modal .csheet .cs-sj span.t b{display:block;font-size:14px;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+    '#modal .csheet .cs-sj input.cs-f{height:38px;flex:1;min-width:0;font:14px Arial,sans-serif;color:var(--ink)}' +
+    '#modal .csheet .cs-sjb{height:36px;padding:0 12px;border:0;border-radius:8px;background:var(--navy);color:#fff;font-weight:700;font-size:13px;flex:none}' +
+    '#modal .csheet .cs-sjb.alt{background:var(--alt);color:var(--ink)}#modal .csheet .cs-sjb.red{background:var(--red)}' +
+    '#modal .csheet .cs-lnk{border:0;background:none;color:var(--muted);font-size:12px;text-decoration:underline;padding:0 2px;flex:none}' +
+    '#modal .csheet .cs-addrow input.cs-sjn{height:40px;font:14px Arial,sans-serif;color:var(--ink);flex:1;min-width:0}' +
     '#modal .csheet .cs-empty{border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:14px;margin:0 0 8px}';
 
   function CSS() { return '<style id="csheet-css">' + CSS_TEXT + '</style>'; }
@@ -2209,6 +2401,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '<div class="cs-job' + (c.id === lastPosted ? ' new' : '') + (open ? ' open' : '') + '">';
       h += '<div class="cs-jt"><code>' + esc(c.symbol) + '</code><b>' + esc(jobName(c)) + '</b><button class="cs-del" data-cs="del" data-id="' + esc(c.id) + '">Remove</button></div>';
       h += '<div class="cs-jp">' + esc(jobPlaces(c)) + '</div>';
+      if ((c.skipped || []).length) h += '<div class="cs-jp cs-skip">Passed by, nothing to do: ' + esc(c.skipped.map(custName).join(', ')) + '</div>';
       if (crew) {
         h += '<div class="cs-jcrew"><span data-cs="roster" data-crew="' + esc(crew.id) + '">' + face(leadOf(crew), 'thumb', 'cs-th') + '</span><span class="cs-rt"><b>' + esc(crew.name) + '</b> called · ' + esc(crewSub(crew)) +
           '<small>' + esc((c.est && c.est.label) || '') + (c.est && c.est.hogRisk ? ' · past the 12-hour mark' : '') + '</small></span></div>' + simCardHtml(c);
@@ -2220,6 +2413,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '</div>';
       if (open) h += dropHtml(c, c.crewId, 'pick-call', c.id, false) + '<div style="height:8px"></div>';
     });
+    h += savedListHtml('list');
     h += '<p class="cs-note">A hired crew goes on duty at its call time and works on the game clock. You won\'t see them switch: their cars show up as each piece of work finishes. Tap a face to see the whole crew.</p>';
     h += '<div class="cs-foot"><button data-cs="close" class="alt">Back to game</button></div>'; // Nov 13: same data-cs as the × — Mattoon's data-act=close hook does not run in Effingham or Neoga
     render(h, keep);
@@ -2249,8 +2443,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         h += '<label class="cs-chk off cs-locked" aria-disabled="true"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '" disabled>' + esc(c.name) + '<small>opens at 100 reputation</small></label>';
         return;
       }
-      h += '<label class="cs-chk' + (set[c.id] ? '' : ' off') + '"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '"' + (set[c.id] ? ' checked' : '') + '>' + esc(c.name) + '<small>' + countIndustry(c.id) + ' car' + (countIndustry(c.id) === 1 ? '' : 's') + '</small></label>';
+      const n = countIndustry(c.id), none = !(n > 0);
+      h += '<label class="cs-chk' + (set[c.id] ? '' : ' off') + (none ? ' cs-nada' : '') + '"><input type="checkbox" data-cs="' + act + '" data-id="' + esc(c.id) + '"' + (set[c.id] ? ' checked' : '') + '>' + esc(c.name) +
+        '<small>' + (none ? (set[c.id] ? 'nothing to do · skipped' : 'nothing to do') : n + ' car' + (n === 1 ? '' : 's')) + '</small></label>';
     });
+    if ((selected || []).some(function (id) { return set[id] && !neogaCustLocked(id) && !(countIndustry(id) > 0); }))
+      h += '<p class="cs-hint">Checked customers with nothing to spot or pull are passed by. They add no switching time.</p>';
     return h;
   }
   function classCarsOpts(rule) {
@@ -2356,6 +2554,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     view = 'sheet';
     const d = draft, C = R(), job = draftToJob(d), crew = crewById(d.crewId);
     let h = head('NI&I Call Sheet', 'Create a job symbol · ' + esc(dateLabel(G.dayNo())), 'back');
+    if (d.loadNote) h += '<div class="cs-box o"><b>Loaded "' + esc(d.loadNote.name) + '"</b>' + (d.loadNote.notes.length ? esc(d.loadNote.notes.join('. ')) + '.' : 'Add or take off customers, then post it.') + '</div>';
+    h += savedListHtml('sheet');
     h += lab('Job symbol') + '<input type="text" class="cs-f cs-sym" data-cs-field="symbol" value="' + esc(d.symbol) + '" placeholder="L-21" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">';
     h += '<p class="cs-hint">Type your own symbol — any format. Left blank it posts as ' + esc(defaultSymbol(d)) + '.</p>';
     h += lab('Engines');
@@ -2372,6 +2572,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += ixHtml(d);
     } else h += roadHtml(d);
 
+    h += saveRowHtml(d);
     h += lab('Called crew');
     if (crew) h += '<button class="cs-pick" data-cs="sheet-drop">' + face(leadOf(crew), 'thumb', 'cs-th') + '<span class="cs-rt"><b>' + esc(crew.name) + '</b><small>' + esc(crewSub(crew)) + '</small></span><span class="cs-chev' + (d.crewOpen ? ' up' : '') + '"></span></button>';
     else h += '<button class="cs-pick empty" data-cs="sheet-drop"><span class="cs-th ini">—</span><span class="cs-rt"><b>No crew yet</b><small>Optional — you can call one from the board</small></span><span class="cs-chev' + (d.crewOpen ? ' up' : '') + '"></span></button>';
@@ -2412,6 +2613,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     G.save();
     draft = null;
     dropFor = null;
+    sjName = ''; sjRename = null; sjDelAsk = null;
     showList();
     G.toast(job.symbol + (crew ? ' posted — ' + crew.name + ' called.' : ' posted to the board.'), 'good');
   }
@@ -2466,14 +2668,15 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       delete v.cid;
     });
   }
+  function clrOf(s) { try { const c = G.segClear && G.segClear(s); return c && c[1] - c[0] > 100 ? c : null; } catch (e) { return null; } }
   function trackSeg(trackId) {
     const m = /^YARD (\d+)$/.exec(trackId);
-    if (m) { const s = G.YARD[+m[1]]; return { s: s, d0: 20, d1: G.SEG[s].len - 20 }; }
+    if (m) { const s = G.YARD[+m[1]], c = clrOf(s); return { s: s, d0: Math.max(20, c ? c[0] + 2 : 20), d1: Math.min(G.SEG[s].len - 20, c ? c[1] - 2 : G.SEG[s].len - 20) }; } // Nov 16: inside the clearance points (was 20 ft from the switch: fouled the lead)
     if (trackId === 'IC Inbound') {
       const s = G.SI.ICI, len = G.SEG[s].len, high = len - (G.ICI_N || 40), low = high - (G.ICI_ROOM || 780);
       return { s: s, d0: low, d1: high };
     }
-    if (trackId === 'IC Outbound') { const s = G.SI.ICO; return { s: s, d0: 20, d1: G.SEG[s].len - 20 }; }
+    if (trackId === 'IC Outbound') { const s = G.SI.ICO, c = clrOf(s); return { s: s, d0: Math.max(20, c ? c[0] + 2 : 20), d1: Math.min(G.SEG[s].len - 20, c ? c[1] - 2 : G.SEG[s].len - 20) }; }
     if (trackId === 'HOUSE' && G.FH) return { s: G.FH.s, d0: G.FH.d0, d1: G.FH.d1 };
     if (G.SPOTS && G.SPOTS[trackId]) { const S = G.SPOTS[trackId]; return { s: S.s, d0: S.d0, d1: S.d1 }; }
     if (trackId === 'ENGINE') { const s = G.SI.ENG; return { s: s, d0: 20, d1: G.SEG[s].len - 20 }; }
@@ -2528,7 +2731,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!tgt || !ids.length) return { placed: [], left: ids.slice(), why: tgt ? 'nothing to place' : 'no track' };
     const ex = (/^YARD \d+$/.test(trackId) || trackId === 'IC Outbound') ? packedTrack(tgt, ids) : null;
     if (ex) {
-      const top = ex.length ? Math.max(ex[0].f.d, ex[0].r.d) : tgt.d1;
+      const top = ex.length ? Math.min(tgt.d1, Math.max(ex[0].f.d, ex[0].r.d)) : tgt.d1; // Nov 16: never past the clearance point
       let room = top - tgt.d0 - ex.reduce(function (a, v) { return a + (v.L || 50); }, 0);
       if (room >= 0) {
         const fit = [], left = [];
@@ -2934,6 +3137,25 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     try { if (EF.save) EF.save(); } catch (e) { }
     return n ? ['brought ' + n + ' Effingham car' + (n > 1 ? 's' : '') + ' held on the Neoga runaround into the Effingham yard'] : [];
   }
+  // Nov 16 load repair: cars the overnight staging set on a yard track past its clearance point (fouling the lead) are packed back inside it
+  function repairYardFoul() {
+    if (hereTown() !== 'mattoon' || visiting()) return [];
+    const notes = [];
+    for (let n = 1; n <= (G.NY || 6); n++) {
+      const tgt = trackSeg('YARD ' + n); if (!tgt) continue;
+      const on = Object.values(st().veh).filter(function (v) { return isFreight(v) && v.f && v.r && (v.f.s === tgt.s || v.r.s === tgt.s); });
+      const out = on.filter(function (v) { return v.f.s !== tgt.s || v.r.s !== tgt.s || Math.min(v.f.d, v.r.d) < tgt.d0 - 0.5 || Math.max(v.f.d, v.r.d) > tgt.d1 + 0.5; });
+      if (!out.length || !on.some(function (v) { return v.stagedDay != null; })) continue;
+      const ex = packedTrack(tgt, []); if (!ex || !ex.length) continue;
+      const total = ex.reduce(function (a, v) { return a + (v.L || 50); }, 0); if (total > tgt.d1 - tgt.d0) continue;
+      let top = Math.min(tgt.d1, Math.max(ex[0].f.d, ex[0].r.d)); if (top - total < tgt.d0) top = tgt.d0 + total;
+      const all = ex.map(function (v) { return v.id; }), aF = ex.map(function (v) { return v.f.d >= v.r.d ? v.aFront : !v.aFront; });
+      takeIds(all); G.place(all, { s: tgt.s, d: top, dir: 1 }, aF);
+      notes.push('moved ' + all.length + ' car' + (all.length > 1 ? 's' : '') + ' on Yard ' + n + ' clear of the lead');
+    }
+    if (notes.length) { try { if (G.reindex) G.reindex(); if (G.save) G.save(); } catch (e) { } }
+    return notes;
+  }
   function takeMtNwOut(day) {
     const C = R();
     const cars = Object.values(st().veh || {}).filter(function (v) {
@@ -3155,6 +3377,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       const land = C.landRoadTrain(job, lifted);
       const dest = setoutMattoon.track || pickYard();
       const r = placeOnTrack(lifted, dest);
+      if (r.left.length && /^YARD \d+$/.test(dest)) { const q = placeInYards(r.left); r.placed = r.placed.concat(q.placed); r.left = q.left; } // Nov 16: the rest go on other yard tracks, never past the clearance point
       notes.push('set out ' + r.placed.length + ' car' + (r.placed.length === 1 ? '' : 's') + ' on ' + dest + (land.autoSpotInterchange ? '' : ' (not spotted to an interchange)'));
       if (r.left.length) notes.push(r.left.length + ' car' + (r.left.length === 1 ? '' : 's') + ' could not fit');
     }
@@ -3732,7 +3955,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     });
     const staged = C.stageReleasedCars(candidates, { today: today, assignedIndustryKeys: keys, playerPulledIds: pulled });
     const lines = [];
-    if (staged.staged.length) {
+    // Nov 16 (Stephen: crews pulled cars after they had already worked the customer): the overnight staging moved cars released AFTER
+    // yesterday's crew had been there (a loaded car at the spout, the house cars) to the yard with no crew. Crews pull released cars only
+    // when they work the customer (runIndustry, at that time); cars released later wait at the customer for the next call.
+    if (staged.staged.length) lines.push(staged.staged.length + ' released car' + (staged.staged.length === 1 ? '' : 's') + ' wait at the customer for the next crew called there');
+    if (false) {
       const yard = pickYard();
       const r = placeOnTrack(staged.staged.map(function (c) { return c.id; }), yard);
       r.placed.forEach(function (id) {
@@ -3829,10 +4056,23 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (modal && !modal.contains(b)) return;
     const a = b.getAttribute('data-cs');
     const ix = +b.getAttribute('data-i');
-    if (a === 'new') { draft = blankDraft(); showSheet(); }
-    else if (a === 'back') { draft = null; showList(); }
+    if (a === 'new') { draft = blankDraft(); sjName = ''; sjRename = null; sjDelAsk = null; showSheet(); }
+    else if (a === 'back') { draft = null; sjName = ''; sjRename = null; sjDelAsk = null; showList(); }
     else if (a === 'close') { G.hideModal(); }
     else if (a === 'markup') markup();
+    else if (a === 'sj-load') loadSaved(b.getAttribute('data-id'));
+    else if (a === 'sj-save') { const el = document.querySelector('#modal [data-cs-field="sj-name"]'); saveDraftAs(el ? el.value : sjName); }
+    else if (a === 'sj-ren' || a === 'sj-ren-no' || a === 'sj-del' || a === 'sj-del-no' || a === 'sj-ren-ok' || a === 'sj-del-ok') {
+      const id = b.getAttribute('data-id');
+      if (a === 'sj-ren') { sjRename = id; sjDelAsk = null; }
+      else if (a === 'sj-ren-no') sjRename = null;
+      else if (a === 'sj-del') { sjDelAsk = id; sjRename = null; }
+      else if (a === 'sj-del-no') sjDelAsk = null;
+      else if (a === 'sj-ren-ok') { const el = document.querySelector('#modal [data-cs-field="sj-rename"]'); renameSaved(id, el ? el.value : ''); }
+      else deleteSaved(id);
+      if (view === 'sheet' && draft) showSheet(true); else showList(true);
+      if (a === 'sj-ren') { const el = document.querySelector('#modal [data-cs-field="sj-rename"]'); if (el) { el.focus(); el.select(); } }
+    }
     else if (a === 'del') delCall(b.getAttribute('data-id'));
     else if (a === 'take') takeJob(b.getAttribute('data-id'));
     else if (a === 'drop') { const id = b.getAttribute('data-id'); dropFor = dropFor === id ? null : id; showList(true); }
@@ -3896,8 +4136,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
 
   function onField(el) {
-    if (!draft) return;
     const f = el.getAttribute('data-cs-field');
+    if (f === 'sj-name') { sjName = el.value; return; }
+    if (f === 'sj-rename') return;
+    if (!draft) return;
     if (f === 'symbol') { draft.symbol = el.value; return; }
     if (f === 'startAt') { draft.startAt = +el.value; return; }
     if (f === 'start' || f === 'tieUp' || f === 'buildTrack' || f === 'stopAct' || f === 'stopTrack') {
@@ -3942,7 +4184,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       e.preventDefault();
       openSimTime();
     });
-    document.addEventListener('input', function (e) { if (e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field') === 'symbol') onField(e.target); });
+    document.addEventListener('input', function (e) { const f = e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field'); if (f === 'symbol' || f === 'sj-name') onField(e.target); });
+    document.addEventListener('keydown', function (e) { // Enter in a saved-job name box = Save
+      const f = e.key === 'Enter' && e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field');
+      if (f === 'sj-name') { e.preventDefault(); saveDraftAs(e.target.value); }
+      else if (f === 'sj-rename') { e.preventDefault(); renameSaved(e.target.getAttribute('data-id'), e.target.value); if (view === 'sheet' && draft) showSheet(true); else showList(true); }
+    });
     document.addEventListener('change', function (e) {
       const el = e.target;
       if (!el || !el.getAttribute) return;
@@ -3983,8 +4230,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
     tick: tick, guard: guard, runDayOut: runDayOut, nextQueuedAt: nextQueuedAt, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
     openSimTime: openSimTime, simAhead: simAhead, parseSimInput: parseSimInput,
-    efOverflow: efOverflow, applyEfIn: applyEfIn, fetchHeldToEf: fetchHeldToEf, heldMattoonToRA: heldMattoonToRA, // Nov 16: Effingham yard-full overflow (runaround, Mattoon yard, N&W Interchange)
+    efOverflow: efOverflow, applyEfIn: applyEfIn, fetchHeldToEf: fetchHeldToEf, heldMattoonToRA: heldMattoonToRA, repairYardFoul: repairYardFoul, // Nov 16: Effingham yard-full overflow (runaround, Mattoon yard, N&W Interchange)
     _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, simAhead: simAhead, parseSimInput: parseSimInput, reportLine: reportLine },
+    savedJobs: function () { return savedJobs(); }, _draftToJob: function () { return draft ? draftToJob(draft) : null; },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show
   };
@@ -5018,6 +5266,14 @@ function showDaySummary(r) {
     ${r.crewHtml || ''}
     <p>Now ${weekday(r.next)} · Day ${r.next}, 7:00 AM.</p><div class="btns"><button data-act="${r.crewTieUps && r.crewTieUps.length ? 'dayDone' : 'close'}">Start ${weekday(r.next)}</button></div>`);
 }
+// Nov 16 (Stephen: crew cars on track 2 hung out onto the yard lead): each track's clearance points, the first place from each end that is
+// 13 ft from every other track (inside the switch's fouling point). Cars a crew sets out must stand between them. Cached per segment.
+const SEG_CLR = {};
+function segClear(s) { if (SEG_CLR[s]) return SEG_CLR[s]; const g = SEG[s]; if (!g) return null; const L = g.len, near = [];
+  for (const end of [0, L]) { const [ex, ey] = xy(s, end); SEG.forEach((h, i) => { if (i === s) return; for (let d = 0; d <= h.len; d += 2) { const [x, y] = xy(i, d); if (Math.hypot(x - ex, y - ey) < 400) near.push([x, y]); } }); }
+  const clear = d => { const [x, y] = xy(s, d); for (const p of near) if (Math.hypot(p[0] - x, p[1] - y) < 13) return false; return true; };
+  let a = 0; while (a < L && !clear(a)) a += 1; let b = L; while (b > a && !clear(b)) b -= 1;
+  return (SEG_CLR[s] = [a, b]); }
 function carWhere(v) {
   const onSeg = (s, d0, d1) => v.f.s === s && v.r.s === s && Math.min(v.f.d, v.r.d) >= d0 - 0.5 && Math.max(v.f.d, v.r.d) <= d1 + 0.5;
   return { spot: k => !!SPOTS[k] && onSeg(SPOTS[k].s, SPOTS[k].d0, SPOTS[k].d1), house: onSeg(FH.s, FH.d0, FH.d1), yard: n => onSeg(YARD[n], 0, SEG[YARD[n]].len), icOut: onSeg(SI.ICO, 0, SEG[SI.ICO].len), icIn: onSeg(SI.ICI, 0, SEG[SI.ICI].len) };
@@ -7253,7 +7509,7 @@ function bindCallSheet() {
   if (!window.NII_CALLSHEET) return;
   NII_CALLSHEET.bind({
     getState: () => state, dayNo, weekday, showModal, hideModal, toast, save, book, place, reindex,
-    carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM,
+    carWhere, locoCons, locoOf, cicDay, cicNext, roadOf, TYPES, SI, SEG, YARD, SPOTS, ECON, FH, NY, ICI_N, ICI_ROOM, segClear,
     env: () => NII.env(), myEngineId, claimEngine, releaseEngine,
     town: 'mattoon', now: () => state.time, skip: skipClock, pass: sec => { passClock(sec); reindex(); }, stopTrain: stopTrainForSim
   });
@@ -7262,6 +7518,7 @@ function boot() {
   startState(); load(); reindex();
   try { bindCallSheet(); } catch (e) { }
   try { sendStraysHome(); } catch (e) { console.warn('stray cars', e); }
+  try { if (window.NII_CALLSHEET && NII_CALLSHEET.repairYardFoul && !VISIT) { const n = NII_CALLSHEET.repairYardFoul(); if (n && n.length) setTimeout(() => toast(n.join('; ') + '.', 'good'), 1600); } } catch (e) { console.warn('yard foul repair', e); } // Nov 16
   try { if (window.NII_CALLSHEET && NII_CALLSHEET.applyEfIn && !VISIT) { const n = NII_CALLSHEET.applyEfIn(); if (n && n.length) setTimeout(() => toast(n.join('; ') + '.', 'good'), 1200); } } catch (e) { console.warn('ef overflow', e); } // Nov 16
   try { const E = NII.env(); if (E.jump && E.jump.to === 'mattoon') delete E.jump; catchUpClock(); if (window.NII_CALLSHEET && !VISIT) NII_CALLSHEET.applyQueued(); } catch (e) { console.warn('catch-up', e); } // Nov 16: every arrival catches up to the shared clock
   // Nov 5 (Stephen): never move cars on load. If a car was auto-spotted / work started while not really at its spot, clear that work so jobs and timers match the real place.
