@@ -278,7 +278,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef122";</script>
+<script>window.NII_BUILD = "mw59ef123";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -306,6 +306,7 @@ const newSeed = () => (Math.floor(Math.random() * 0x7fffffff) ^ (Date.now() & 0x
 function gameSeed(day) { const e = env(); if (!e.seed) { const t = e.towns && e.towns.mattoon ? e.time || e.towns.mattoon.time || 0 : null; e.seed = newSeed(); e.seedFrom = t == null ? 0 : Math.floor(t / 86400) + 2; if (!VISIT) write(); }
   return day >= (e.seedFrom || 0) ? e.seed : 0; }
 function shuffleIn(a, r) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+let TOWN_PINNED = false;
 function env() {
   if (ENV) return ENV;
   try { ENV = JSON.parse(localStorage.getItem(KEY)); } catch (e) { ENV = null; }
@@ -313,7 +314,10 @@ function env() {
     try { const o = JSON.parse(localStorage.getItem(OLD_KEY)); if (o && o.veh && o.cons) { ENV.towns.mattoon = o; ENV.fromV9 = true; } } catch (e) { } }
   if (!TOWNS[ENV.town]) ENV.town = 'mattoon';
   // Local-only force: ?town=effingham (or any known id) for testing a locked pack without publishing
-  try { const ft = new URLSearchParams(location.search).get('town'); if (ft && TOWNS[ft]) ENV.town = ft; } catch (e) { }
+  // Nov 16 fix (Stephen: tap run Effingham -> Neoga kept reloading back into Effingham and his engine ended up 'in Neoga'): ?town= is one-shot now. It picks the town
+  // on the load that has it, then comes off the address, so a town change (which reloads) can't be pinned back to the old town. A pending trip to another town wins.
+  try { const u = new URL(location.href), ft = u.searchParams.get('town'); if (ft && TOWNS[ft]) { const pend = ENV.trainIn && ENV.travel && ENV.travel.to && ENV.travel.to !== ft;
+      if (!pend) { if (ENV.town !== ft) TOWN_PINNED = true; ENV.town = ft; } u.searchParams.delete('town'); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } } catch (e) { }
   // Nov 13: stamp starting reputation on the Mattoon record so a direct ?town=effingham / neoga boot still gets 100 or 200.
   if (TEST) {
     ENV.towns = ENV.towns || {};
@@ -329,6 +333,13 @@ function env() {
 const VKEY = 'nii-visit', XKEY = 'nii-visit-cross';
 let VISIT = null; try { const v = JSON.parse(sessionStorage.getItem(VKEY) || 'null'); if (v && TOWNS[v.town]) VISIT = v; } catch (e) { }
 let ENG_SEEN; // Nov 13 (Stephen): the town where the player last picked an engine, for the 'your engine is in' note
+// Nov 16 save repair: 'your engine is in X' (myEngineTown) is checked against where the engine really is (a town's cars, or the train on its way in).
+// The ?town= bug above left it saying Neoga while the engine sat in Effingham. If the engine is found in exactly one town, that town is used.
+function engineRepair() { const e = env(), id = e.myEngine; if (!id) return false; const hit = new Set();
+  try { if ((e.trainIn || []).some(v => v && v.id === id)) hit.add(e.town);
+    for (const [k, t] of Object.entries(e.towns || {})) { if (!t || !TOWNS[k]) continue; const vh = t.veh; if (vh && (Array.isArray(vh) ? vh.some(v => v && v.id === id) : vh[id])) hit.add(k);
+      if (Array.isArray(t.cuts) && t.cuts.some(c => c && (c.veh || []).some(v => v && v.id === id))) hit.add(k); } } catch (er) { return false; }
+  if (hit.size !== 1) return false; const w = [...hit][0]; if (e.myEngineTown === w) return false; e.myEngineTown = w; return true; }
 function write() { if (VISIT) return; try { if (ENV && ENG_SEEN !== undefined && ENV.myEngine !== ENG_SEEN) { ENV.myEngineTown = ENV.myEngine ? ENV.town : null; } if (ENV) ENG_SEEN = ENV.myEngine || null; localStorage.setItem(KEY, JSON.stringify(ENV)); } catch (e) { } }
 function runInfo(from, to) { const T = TOWNS[from], mi = T.south === to ? T.southMi : T.northMi, sec = Math.round(mi / RUN_MPH * 3600); return { mi, mph: RUN_MPH, sec, min: Math.round(sec / 60) }; }
 // ---- loading screen
@@ -548,6 +559,7 @@ function tuckTab() { if ($('tuckTab')) return;
   const bg = new Image(); bg.onload = () => { $('loading').style.backgroundImage = `url(${bg.src})`; $('loading').classList.add('pic'); }; bg.src = 'loading/loading-scene.png'; // Danny's picture when it's there; plain screen otherwise
   if (VISIT) { sessionStorage.removeItem(VKEY); VISIT = null; } // Nov 13: no view-only visits any more (Towns = a full session)
   ENG_SEEN = env().myEngine || null;
+  { const fixed = engineRepair(); if (fixed || TOWN_PINNED) write(); } // Nov 16: keep the picked town and a corrected engine town in the save
   if (VISIT) VISIT.home = env().town;
   const e = env(), TID = VISIT ? VISIT.town : e.town, T = TOWNS[TID];
   if (VISIT) { showLoading(T.name, 'Looking around', `Your train is in ${TOWNS[VISIT.home].name}`); setProg(0.5, 600); }
