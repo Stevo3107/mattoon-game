@@ -8189,13 +8189,16 @@ boot();
     const placed = [];
     const hadLoco = (S.cuts || []).some(c => (c.veh || []).some(v => v.type === 'gp9'));
 
+    const haveId = new Set(allVeh(E).map(v => v && v.id)); // Nov 17: Effingham now seeds these same units itself (efHomePower); never make an id twice
     for (let i = 1; i <= 2; i++) {
+      if (haveId.has('efsp-gp9-' + i)) continue;
       const num = nextFree(used, proto.road || 'NII', 1752 + i);
       const v = Object.assign({}, proto, { id: 'efsp-gp9-' + i, num });
       const at = placeOnTrack(EF, v, engineTracks);
       if (at) placed.push({ kind: 'engine', num: v.num, id: v.id, track: at.track, name: at.name });
     }
     for (let i = 1; i <= 2; i++) {
+      if (haveId.has('efsp-cab-' + i)) continue;
       const num = nextFree(used, 'NII', 855 + i);
       const v = { id: 'efsp-cab-' + i, type: 'caboose', num, wt: 24, L: 45.67, road: 'NII' };
       const at = placeOnTrack(EF, v, cabooseTracks, { stackOn: ['CB'] });

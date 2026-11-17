@@ -4582,6 +4582,38 @@ const EF_IX_TS = ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'];
 const onPcIx = c => !c.veh.some(isLoco) && c.path.every(g => EF_IX_TS.includes(g.t));
 // Nov 15 (Stephen): ?seed=ef on a test save only. One time per save, drops a mixed batch of interchange cars
 // for Effingham customers (8 on the PC Interchange, 8 spread over the yard) so there is something to sort and switch.
+// Nov 17 (Stephen: "Just need my engines and cabooses in Effingham"): Effingham never had its own power on a fresh save; it only came
+// from the test-only ?spawn=effingham hook (rep100/rep200). Every save now gets Effingham's standard set the first time Effingham loads
+// with no engine (or no caboose) of its own: NI&I GP9s efsp-gp9-1/2 (1753/1754) in the engine stalls and cabooses efsp-cab-1/2 (856/857)
+// on the caboose track, the same ids and numbers the spawn used. A unit whose id is anywhere in the save (this town, Mattoon, Neoga, a
+// train on the road) is never made again.
+function efHomePower() {
+  if (VISIT) return 0;
+  const ids = new Set(), nums = new Set(), seen = new Set();
+  (function walk(o, d) { if (!o || typeof o !== 'object' || d > 9 || seen.has(o)) return; seen.add(o);
+    if (Array.isArray(o)) { for (const x of o) walk(x, d + 1); return; }
+    if (typeof o.id === 'string' && typeof o.type === 'string') { ids.add(o.id); if (o.num != null) nums.add((o.road || (o.type === 'gp9' || o.type === 'caboose' ? 'NII' : '')) + ' ' + o.num); }
+    for (const k in o) if (o[k] && typeof o[k] === 'object') walk(o[k], d + 1); })(E, 0);
+  for (const c of S.cuts) for (const v of c.veh || []) { ids.add(v.id); if (v.num != null) nums.add((v.road || (isLoco(v) || v.type === 'caboose' ? 'NII' : '')) + ' ' + v.num); }
+  const here = S.cuts.flatMap(c => c.veh || []), needEng = !here.some(isLoco), needCab = !here.some(v => v.type === 'caboose');
+  if (!needEng && !needCab) return 0;
+  const free = (road, n) => { while (nums.has(road + ' ' + n)) n++; nums.add(road + ' ' + n); return String(n); };
+  const busy = t => S.cuts.some(c => (c.path || []).some(g => g.t === t));
+  const put = (v, tracks, stack) => { const L = vL(v), ok = tracks.filter(t => T[t] && T[t].len >= L + 10);
+    const order = stack ? ok : ok.filter(t => !busy(t)).concat(ok.filter(busy));
+    for (const t of order) for (let hd = T[t].len - 4; hd >= L + 4; hd -= 6) { const c = placeCut([v], [true], t, hd, 1);
+      if (c.path.some(g => g.t !== t) || S.cuts.some(o => segsOverlap(o, c, 2))) continue; S.cuts.push(c); return t; }
+    return null; };
+  const mt = M.veh && Object.values(M.veh).find(v => isLoco(v) && (v.road || 'NII') === 'NII'), made = [];
+  if (needEng) for (let i = 1; i <= 2; i++) { const id = 'efsp-gp9-' + i; if (ids.has(id)) continue;
+    const v = { id, type: 'gp9', road: 'NII', num: free('NII', 1752 + i), L: (mt && mt.L) || 56.17, wt: (mt && mt.wt) || 124, fuel: 320, sand: 60 }; if (mt && mt.art) v.art = mt.art;
+    const t = put(v, ['FESTALL1', 'FESTALL2', 'FELEAD', 'Y2', 'Y1'], false); if (t) { ids.add(id); made.push('GP9 ' + v.num); } }
+  if (needCab) for (let i = 1; i <= 2; i++) { const id = 'efsp-cab-' + i; if (ids.has(id)) continue;
+    const v = { id, type: 'caboose', road: 'NII', num: free('NII', 855 + i), wt: 24, L: 45.67 };
+    const t = put(v, ['CB', 'Y2', 'Y3', 'Y1'], true); if (t) { ids.add(id); made.push('caboose ' + v.num); } }
+  if (made.length) { S.homePower = 1; console.log('Effingham home power: ' + made.join(', ')); save(); }
+  return made.length;
+}
 function efTestSeed() {
   const ixOnly = /[?&]seed=efix(&|$)/.test(location.search); // Nov 15 (Stephen): blank yard, interchange cars only
   if (NII.TEST && /[?&]seed=efix2(&|$)/.test(location.search) && !S.efSeed1) { efTestSeed2(); return; } // Nov 16
@@ -4825,7 +4857,7 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } if ((csT += dt) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
 try { NII_SHARED.setPlacePicker((v, c, r) => { const k = kindOf(v) || 'box'; return wbPickStrict(k, c, r) || wbPickStrict(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[k] || 'none', c, r); }); } catch (e) { } // Nov 17: consignees for released loads (routing follows the far end)
-build(); nwiClear(); if (!VISIT) { try { let n = 0; for (const c of S.cuts) { const ix = (c.path || []).length && onWyeInterchange(c); for (const v of c.veh || []) if (!isLoco(v) && v.type !== 'caboose' && SH.repairRoute(v, 'effingham', ix)) n++; } if (n) console.log('route repair (effingham): ' + n + ' car(s)'); } catch (e) { console.warn('route repair', e); } /* Nov 17: old saves' released cars get today's routing */ try { efCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
+build(); nwiClear(); if (!VISIT) { try { let n = 0; for (const c of S.cuts) { const ix = (c.path || []).length && onWyeInterchange(c); for (const v of c.veh || []) if (!isLoco(v) && v.type !== 'caboose' && SH.repairRoute(v, 'effingham', ix)) n++; } if (n) console.log('route repair (effingham): ' + n + ' car(s)'); } catch (e) { console.warn('route repair', e); } /* Nov 17: old saves' released cars get today's routing */ try { efCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } try { efHomePower(); } catch (e) { console.warn('home power', e); } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
