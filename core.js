@@ -5855,6 +5855,7 @@ function sendStraysHome() {
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (env.town !== 'mattoon' || !env.travel) return; // Nov 13: only a real train arrival (a Towns jump brings no train)
   if (!state.awayTrain && !(env.trainIn && env.trainIn.length)) return;
+  if (env.modeIn === 'tap' || env.modeIn === 'drive') state.mode = env.modeIn; delete env.modeIn; // Nov 16 (Stephen): same Drive / Tap as the town you left
   const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - (state.awayTrain ? state.awayTrain.left : state.time)); // Nov 16: catchUpClock() moves the clock (car hire, customers, crews, End days) after load
   const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; if (v.mattoonN && !v.via) v.via = 'NW'; state.veh[v.id] = v; }
   if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;

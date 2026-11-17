@@ -194,13 +194,14 @@ const NODE = {}; // "M1b" -> { sw, role } | { join: [t,e] } | { end }
 for (const [k, s] of Object.entries(SWITCHES)) for (const r of ['stem', 'N', 'R']) NODE[s[r][0] + s[r][1]] = { sw: k, role: r };
 for (const [a, b] of JOINS) { NODE[a[0] + a[1]] = { join: b }; NODE[b[0] + b[1]] = { join: a }; }
 for (const [k, v] of Object.entries(ENDS)) NODE[k] = { end: v };
-function ptAt(t, d) { const tr = T[t], c = tr.cum; d = Math.max(0, Math.min(tr.len, d)); let i = 1; while (i < c.length - 1 && c[i] < d) i++;
+function ptAt(t, d) { const tr = T[t], c = tr.cum; d = Math.max(0, Math.min(tr.len, d)); let i = 1, hi = c.length - 1; while (i < hi) { const m = (i + hi) >> 1; if (c[m] < d) i = m + 1; else hi = m; } // Nov 16: binary search, same point as the old walk along the track (cum only grows)
   const k = (d - c[i - 1]) / ((c[i] - c[i - 1]) || 1), a = tr.p[i - 1], b = tr.p[i]; return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, Math.atan2(b[1] - a[1], b[0] - a[0])]; }
 function dOfX(t, x) { const tr = T[t]; let best = 0, bd = 1e9; for (let d = 0; d <= tr.len; d += 1) { const p = ptAt(t, d); const e = Math.abs(p[0] - x); if (e < bd) { bd = e; best = d; } } return best; }
 // next track when leaving track t through end e ('a' or 'b'): { t, e (entry end) } or { stop: reason }
+let SW_TOUCH = null; // Nov 16: set only while planRoute simulates a run
 function nextFrom(t, e) { const n = NODE[t + e]; if (!n) return { stop: 'end of track' }; if (n.end) return { stop: n.end };
   if (n.join) return { t: n.join[0], e: n.join[1] };
-  const s = SWITCHES[n.sw], st = S.sw[n.sw];
+  const s = SWITCHES[n.sw], st = S.sw[n.sw]; if (SW_TOUCH) SW_TOUCH.add(n.sw); // Nov 16: planner notes which switches a trial run actually read
   if (n.role === 'stem') { const o = s[st]; return { t: o[0], e: o[1] }; }
   if (n.role !== st) return { stop: 'lined', sw: n.sw };
   return { t: s.stem[0], e: s.stem[1] }; }
@@ -547,33 +548,49 @@ const swBetween = (t1, t2) => Object.keys(SWITCHES).find(k => { const s = SWITCH
 const cutName = o => { const v = o.veh.find(v => !isLoco(v)) || o.veh[0]; return `${roadOf(v)} ${v.num}`; };
 // Mattoon's planRoute, on Neoga's track: cheapest set of moves (distance + REV_COST per reversal, at most MAX_REV), lining switches on the way;
 // a move may reverse once the whole train is CLEAR past a switch it trailed through; cars in the way block, the goal car is coupled to.
-function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c), keys = Object.keys(SWITCHES), save0 = { ...S.sw };
+function planRoute(c, goal, noCars) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c && (!noCars || o === goal.cut)), // noCars: the same search with only the goal car on the map (see the end)
+  keys = Object.keys(SWITCHES), save0 = { ...S.sw };
+  const OCC = {}; others.forEach((o, i) => { for (const h of o.path) (OCC[h.t] || (OCC[h.t] = [])).push([Math.min(h.d0, h.d1), Math.max(h.d0, h.d1), i]); });
+  const hitOf = p => { let bi = -1; for (const g of p.path) { const L = OCC[g.t]; if (!L) continue; const lo = Math.min(g.d0, g.d1), hi = Math.max(g.d0, g.d1); for (const [a, b, i] of L) if (Math.min(hi, b) - Math.max(lo, a) > 0 && (bi < 0 || i < bi)) bi = i; } return bi < 0 ? null : others[bi]; }; // Nov 16: same test as others.find(o => segsOverlap(p, o, 0)), indexed by track
+  const QK = new Map(); // queued reversal states by spot (see below)
+  const LEN = cutLen(c), LE = (p, sgn) => sgn > 0 ? pathPt(p, LEN) : pathPt(p, 0); // Nov 16: leadingEnd with the train's length worked out once (every trial step called it 4 times)
   let best = null; const blocks = [], seen = new Set(), queue = [{ p: cloneCut(c), sgn: 1, sw: { ...S.sw }, legs: [], cost: 0 }, { p: cloneCut(c), sgn: -1, sw: { ...S.sw }, legs: [], cost: 0 }];
   try { for (let guard = 0; queue.length && guard < 200; guard++) {
     queue.sort((a, b) => a.cost - b.cost); const q = queue.shift(); if (best && q.cost >= best.cost) break;
     const le = leadingEnd(q.p, q.sgn), key = `${le.t}:${Math.round(le.d / 4)}:${q.sgn}:${q.legs.length ? 1 : 0}`; if (seen.has(key)) continue; seen.add(key);
     const free = keys.filter(k => !busyFor(k, [q.p, ...others])), runs = new Set();
-    for (let m = 0; m < (1 << free.length); m++) { const sw = { ...q.sw }; free.forEach((k, i) => { if ((m >> i) & 1) sw[k] = sw[k] === 'N' ? 'R' : 'N'; }); Object.assign(S.sw, sw);
+    // Nov 16: try only linings that make a different run (as lined, then flip each free switch the run reached, keeping the ones before it), not all 2^N
+    const todo = [{}]; while (todo.length) { const fx = todo.pop(), sw = { ...q.sw, ...fx };
+      Object.assign(S.sw, sw); const touch = SW_TOUCH = new Set();
       const p = cloneCut(q.p), trav = [], revs = []; let dist = 0, sig = '';
-      for (let i = 0; i < 5000; i++) { const l0 = leadingEnd(p, q.sgn), t0 = leadingEnd(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = leadingEnd(p, q.sgn), t1 = leadingEnd(p, -q.sgn);
+      for (let i = 0; i < 5000; i++) { const l0 = LE(p, q.sgn), t0 = LE(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = LE(p, q.sgn), t1 = LE(p, -q.sgn);
         if (l1.t !== l0.t) { const k = swBetween(l0.t, l1.t); if (k) { trav.push([k, S.sw[k], dist]); sig += k + S.sw[k]; } }
         if (t1.t !== t0.t) { const k = swBetween(t0.t, t1.t); if (k) revs.push({ at: dist + CLEAR, req: trav.map(x => [x[0], x[1]]) }); }
         for (const rv of revs) if (!rv.p && dist >= rv.at) { rv.p = cloneCut(p); rv.dist = dist; }
         if (goal.t && l1.t === goal.t && (Math.abs(l1.d - goal.d) <= 2.5 || (e0.t === goal.t && (e0.d - goal.d) * (l1.d - goal.d) <= 0))) { if (runs.has(sig + '|g')) break; runs.add(sig + '|g');
           const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, legs: q.legs.concat([{ sgn: q.sgn, left: dist, req: trav.map(x => [x[0], x[1]]) }]) }; break; }
-        const hit = others.find(o => segsOverlap(p, o, 0));
+        const hit = hitOf(p);
         if (hit) { const hp = leadingEnd(p, q.sgn), A = pathPt(hit, 0), B = pathPt(hit, cutLen(hit)), he = (A.t === hp.t ? Math.abs(A.d - hp.d) : 1e9) <= (B.t === hp.t ? Math.abs(B.d - hp.d) : 1e9) ? 'a' : 'b';
           if (goal.cut === hit && (!goal.end || goal.end === he)) { const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, hit: he, legs: q.legs.concat([{ sgn: q.sgn, left: dist + 3, req: trav.map(x => [x[0], x[1]]), couple: true }]) }; }
           else blocks.push({ cost: q.cost + dist, o: hit }); break; }
         if (r.stop || r.moved < 1.9) break; }
+      SW_TOUCH = null; { const tk = [...touch].filter(k => free.includes(k)); tk.forEach((k, i) => { if (k in fx) return; const ch = { ...fx }; for (let j = 0; j < i; j++) ch[tk[j]] = sw[tk[j]]; ch[k] = sw[k] === 'N' ? 'R' : 'N'; todo.push(ch); }); }
       if (q.legs.length < MAX_REV) for (const rv of revs) if (rv.p && !runs.has(sig + '|r' + Math.round(rv.dist))) { runs.add(sig + '|r' + Math.round(rv.dist));
-        queue.push({ p: rv.p, sgn: -q.sgn, sw: { ...S.sw }, legs: q.legs.concat([{ sgn: q.sgn, left: rv.dist, req: rv.req }]), cost: q.cost + rv.dist + REV_COST }); }
-      Object.assign(S.sw, save0); } } } finally { Object.assign(S.sw, save0); }
-  if (best) return best;
-  blocks.sort((a, b) => a.cost - b.cost); if (blocks[0]) return { msg: `Route blocked by ${cutName(blocks[0].o)}.` };
+        const nq = { p: rv.p, sgn: -q.sgn, sw: { ...S.sw }, legs: q.legs.concat([{ sgn: q.sgn, left: rv.dist, req: rv.req }]), cost: q.cost + rv.dist + REV_COST };
+        // Nov 16: one queue entry per reversing spot (the cheapest), not one per lining that reaches it; the copies used up the search's step budget
+        const ne = LE(nq.p, nq.sgn), nk = `${ne.t}:${Math.round(ne.d / 4)}:${nq.sgn}:1`, ex = QK.get(nk); if (seen.has(nk) || (ex && ex.cost <= nq.cost)) continue; if (ex) Object.assign(ex, nq); else { queue.push(nq); QK.set(nk, nq); } }
+      Object.assign(S.sw, save0); } } } finally { SW_TOUCH = null; Object.assign(S.sw, save0); }
+  if (best || noCars) return best || { msg: '' };
+  // Nov 16 (Stephen: Tap said a car was in the way when it wasn't): only blame a car when it is really what stops the move. Plan again as if no other
+  // cars were there; if that fails too the cars aren't the reason, so say there's no way. If it works, name the first car that route runs into.
+  const free = planRoute(c, goal, true); if (free.legs) { const all = S.cuts.filter(o => o !== c && o !== goal.cut), OC = {}; all.forEach((o, i) => { for (const h of o.path) (OC[h.t] || (OC[h.t] = [])).push([Math.min(h.d0, h.d1), Math.max(h.d0, h.d1), i]); });
+    const first = p => { let bi = -1; for (const g of p.path) { const L = OC[g.t]; if (!L) continue; const lo = Math.min(g.d0, g.d1), hi = Math.max(g.d0, g.d1); for (const [a, b, i] of L) if (Math.min(hi, b) - Math.max(lo, a) > 0 && (bi < 0 || i < bi)) bi = i; } return bi < 0 ? null : all[bi]; };
+    let hit = null; const p = cloneCut(c); try { for (const L of free.legs) { for (const [k, g] of L.req) S.sw[k] = g; for (let left = L.left; left > 0.01 && !hit; left -= 2) { const r = moveCut(p, L.sgn * Math.min(2, left)); hit = first(p); if (r.stop) break; } if (hit) break; } } finally { Object.assign(S.sw, save0); }
+    if (hit) return { msg: `Route blocked by ${cutName(hit)}.` }; blocks.sort((a, b) => a.cost - b.cost); if (blocks[0]) return { msg: `Route blocked by ${cutName(blocks[0].o)}.` }; }
   return { msg: goal.cut ? `Can't reach ${cutName(goal.cut)} from here: there's no clear way around to it.` : 'No way to get there from here.' }; }
 function apTo(t, d, goal) { const c = liveCut(); if (!c) return; { const gt = t || (goal && goal.cut && goal.cut.path[0] && goal.cut.path[0].t); if (gt && !c.path.some(g => g.t === gt) && window.NII_CALLSHEET && NII_CALLSHEET.guard && NII_CALLSHEET.guard('neoga', gt)) return false; } // Nov 13 clock sim // Mattoon's tapTarget: plan, line the switches, run (reversing as needed)
   if (!goal) { const o = S.cuts.find(o => o !== c && o.path.some(g => g.t === t && Math.min(g.d0, g.d1) - 1 <= d && Math.max(g.d0, g.d1) + 1 >= d)); goal = o ? { cut: o } : { t, d }; } // a spot under a car: couple to it (either end)
+  if (goal.t && c.path.some(g => g.t === goal.t && Math.min(g.d0, g.d1) - 1 <= goal.d && Math.max(g.d0, g.d1) + 1 >= goal.d)) { toast('That spot is under your train. Tap ahead of it or behind it.'); return false; } // Nov 16: Mattoon's rule (a tap under your own train used to plan a strange run or say the way was blocked)
   if (ctl.ap && ctl.v > 0.5 * FTS) { ctl.ap = { replan: { t, d, goal }, sgn: ctl.ap.sgn, legs: [], k: 0, pend: [], tw: 0, left: 0 }; toast('Stopping first, then lining the new route.'); return true; }
   if (ngOpen()) for (const K in BFN) if (BFNX.up(K) && !cutInBFN(K, c) && (goal.t ? inBFN(K, { t: goal.t, d: goal.d }) : goal.cut && cutInBFN(K, goal.cut))) { toast(BFNX.blockMsg(K), 'bad'); return false; }
   const r = planRoute(c, goal); if (!r.legs) { toast(r.msg, 'bad'); return false; }
@@ -628,7 +645,7 @@ function pullOut(c, i) { const pre = c.veh.slice(0, i).reduce((a, v) => a + vL(v
 function stripStrays(c) { const out = []; if (!c) return 0;
   for (let k = 0; k < 60 && c.veh.length > 1; k++) { const i = c.veh.findIndex(strayCar); if (i < 0) break; out.push(pullOut(c, i)); }
   if (out.length) { for (const v of out) { if (v.ngDest) { v.dest = v.ngDest; } delete v.ngDest; } S.pendIC = (S.pendIC || []).concat(out); dropIC(); toast(`${out.length} car${out.length > 1 ? 's' : ''} you never coupled came off your train and went to the interchange track.`); } return out.length; }
-function arrive() { const tr = E.trainIn; if (!tr) return; ARRIVED_FROM = (E.travel && E.travel.from) || null; if (ARRIVED_FROM && ARRIVED_FROM === (NII.TOWNS[HERE] || {}).south) return arriveSouth(tr); const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
+function arrive() { const tr = E.trainIn; if (!tr) return; if (E.modeIn === 'tap' || E.modeIn === 'drive') S.mode = E.modeIn; delete E.modeIn; /* Nov 16: same Drive / Tap as the town you left */ ARRIVED_FROM = (E.travel && E.travel.from) || null; if (ARRIVED_FROM && ARRIVED_FROM === (NII.TOWNS[HERE] || {}).south) return arriveSouth(tr); const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
   stripStrays(c); clearNorth(c); dropIC(); save(); }
@@ -1227,6 +1244,7 @@ function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV
   let best = null;
   for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const p = ptAt(t, d), e = Math.hypot(p[0] - x.x, p[1] - x.y); if (!best || e < best.e) best = { t, d, e }; }
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Neoga map. Stopped at the edge.", 'bad'); return; }
+  if ((S.mode || 'drive') !== 'tap') { const mb = document.querySelector('[data-mode="tap"]'); if (mb && mb.onclick) mb.onclick(); else S.mode = 'tap'; } // Nov 16 (Stephen): a run to a spot picked on the town tab arrives in Tap mode like Mattoon (it used to roll in under Drive, so taps and the tower requests didn't work)
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Neoga jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Neoga\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
