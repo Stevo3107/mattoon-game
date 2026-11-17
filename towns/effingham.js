@@ -2545,14 +2545,17 @@ function sampIv(id) { // d ranges of track id near the screen (screen box + 60 f
   const [vL, vR] = visX(), hh = H / 2 / (cam.z * K), yT = cam.y - hh - 60 - SAMP_C, yB = cam.y + hh + 60 + SAMP_C, xL = vL - SAMP_C, xR = vR + SAMP_C, co = sampCoarse(id), iv = [];
   let a = null; for (let i = 0; i < co.length; i++) { const [, x, y] = co[i], on = x >= xL && x <= xR && y >= yT && y <= yB; if (on && a == null) a = Math.max(0, i - 1); if ((!on || i === co.length - 1) && a != null) { iv.push([co[a][0], co[i][0]]); a = null; } }
   return sampIv.memo[id] = iv; }
+const SV_C = new Map(); // track id | start | step -> points by index (fixed track geometry, so a point never changes)
+function svCache(id, d0, st) { const key = id + '|' + d0 + '|' + st; let a = SV_C.get(key); if (!a) { if (SV_C.size > 600) SV_C.clear(); SV_C.set(key, a = []); } return a; }
+const offSC = (p, o) => { const k = 'o' + o; const w = p[k] || (p[k] = offW(p, o)); return [sx(w[0]), sy(w[1])]; }; // offS with the world offset kept on the (cached) point
 function sampVis(tk, d0, d1, skipKey, skip) { // -> list of point runs (each one polygon / stroke)
   if (d1 == null) d1 = tk.len; if (d0 == null) d0 = 0;
   const full = () => { const q = samp(tk, d0, d1); return [skip ? q.filter(p => !skip(p)) : q]; };
   if (!tk.tt || !T[tk.id]) return full(); // view-made pieces (map-edge tails) are short: drawn as before if (skip && sampHasSkip(tk.id, skipKey, skip)) return full();
   const iv = sampIv(tk.id); if (!iv.length) return [];
-  const st = Math.max(0.5, Math.min(8, 3 / cam.z)), runs = [];
+  const st = Math.max(0.5, Math.min(8, 3 / cam.z)), runs = [], pc = svCache(tk.id, d0, st); // Nov 16 (zoomed-in yard): each point is worked out once per zoom step, not every frame
   for (let [a0, b0] of iv) { a0 = Math.max(d0, a0); b0 = Math.min(d1, b0); if (b0 < a0) continue; const o = []; let k = Math.max(0, Math.floor((a0 - d0) / st));
-    for (let d = d0 + k * st; d < d1 && d <= b0 + st; k++, d = d0 + k * st) o.push(tk.P(d)); if (b0 + st >= d1) o.push(tk.P(d1)); runs.push(skip ? o.filter(p => !skip(p)) : o); }
+    for (let d = d0 + k * st; d < d1 && d <= b0 + st; k++, d = d0 + k * st) o.push(pc[k] || (pc[k] = tk.P(d))); if (b0 + st >= d1) o.push(tk.P(d1)); runs.push(skip ? o.filter(p => !skip(p)) : o); }
   return runs; }
 let bedImg = null;
 // BEGIN SWITCH TIES (Nov 15, Stephen + Ricky's prototype spec + Danny's handoff cody-switch-ties-spec-2026-11-15.md).
@@ -2593,7 +2596,7 @@ function tieExtend(u, q, p, tk, o) { // widen [o0, o1] for a tie q ft past u's p
   if (q <= u.qZ) { const r = u.R(q), sep = tieSep(p, r), cap = tieLatCap(tk, p, sep > 0 ? 1 : -1); if (sep > 0) o[1] = Math.max(o[1], Math.min(sep + TIE_H, cap)); else o[0] = Math.min(o[0], Math.max(sep - TIE_H, -cap)); }
   if (u.hb.some(h => Math.abs(h - q) < 0.05)) { const sd = u.hbW[0] * -Math.sin(p[2]) + u.hbW[1] * Math.cos(p[2]); if (sd > 0) o[1] = Math.max(o[1], u.hbReach); else o[0] = Math.min(o[0], -u.hbReach); return true; } return false; }
 function drawTies(L, TU, vis, band) {
-  if (band) { for (const tk of L) for (const q of sampVis(tk, 0, tk.bl || tk.len, 'band', tieSkipBand)) { if (q.length > 1) polyS(q.map(p => offS(p, TIE_H)).concat(q.map(p => offS(p, -TIE_H)).reverse()), TIE_BAND); } return; }
+  if (band) { for (const tk of L) for (const q of sampVis(tk, 0, tk.bl || tk.len, 'band', tieSkipBand)) { if (q.length > 1) polyS(q.map(p => offSC(p, TIE_H)).concat(q.map(p => offSC(p, -TIE_H)).reverse()), TIE_BAND); } return; }
   const skip = {}, longT = {}; let gU = null;
   for (const u of TU) { tieTurnInfo(u); const s = SWITCHES[u.k]; if (!s) { skip[TIE_SYN_R] = u.qZ; gU = u; continue; } skip[s.R[0] + s.R[1]] = Math.max(skip[s.R[0] + s.R[1]] || 0, u.qZ); (longT[s.N[0] + s.N[1]] = longT[s.N[0] + s.N[1]] || []).push(u); }
   const P = new Path2D(), HB = new Path2D(), [vL, vR] = visX(); // HB: the headblocks, filled last so they lie whole over the machine's ballast patch
@@ -2608,7 +2611,7 @@ function drawTies(L, TU, vis, band) {
       if (T0) for (const e of ['a', 'b']) for (const u of (longT[tk.id + e] || [])) hb = tieExtend(u, e === 'a' ? d : tk.len - d, p, tk, o) || hb;
       if (tk.nw !== undefined && gU) { const y0 = gU.N(0)[1], sg = gU.N(1)[1] >= y0 ? 1 : -1, q = (p[1] - y0) * sg; if (q >= -0.01 && Math.abs(p[0] - gU.N(0)[0]) < 0.5) hb = tieExtend(gU, q, p, tk, o) || hb; }
       const th = hb ? TIE_TH_HB : TIE_TH, c = Math.cos(p[2]) * th, s = Math.sin(p[2]) * th, A = offW(p, o[0]), B = offW(p, o[1]), Q = hb ? HB : P;
-      Q.moveTo(sx(A[0] - c), sy(A[1] - s)); Q.lineTo(sx(A[0] + c), sy(A[1] + s)); Q.lineTo(sx(B[0] + c), sy(B[1] + s)); Q.lineTo(sx(B[0] - c), sy(B[1] - s)); Q.closePath(); } }
+      Q.moveTo(sx(A[0] - c), sy(A[1] - s)); Q.lineTo(sx(A[0] + c), sy(A[1] + s)); Q.lineTo(sx(B[0] + c), sy(B[1] + s)); Q.lineTo(sx(B[0] - c), sy(B[1] - s)); } } // Nov 16 (Stephen: zoomed in over the yard was choppy): no closePath per tie, fill closes each one the same way and Path2D.closePath was most of the frame
   g.fillStyle = TIE_C; g.fill(P); g.fill(HB); } // each headblock is one solid timber from the far tie end out past the machine (Nov 15, Ricky)
 // END SWITCH TIES
 const TIE_SYN_R = 'PCXb';
@@ -2625,10 +2628,10 @@ function drawRails() { const L = trkList(), TU = turns(), [vL, vR] = visX();
   // ballast: toe then shoulder
   const padSkip = p => efInBurgessPad(p[0], p[1]), BAL = L.map(tk => sampVis(tk, 0, tk.bl || tk.len, 'pad', padSkip)); // Nov 16: visible stretches only, worked out once for both passes
   L.forEach((tk, i) => { for (const q of BAL[i])
-    if (q.length > 1) polyS(q.map(p => offS(p, 8.2)).concat(q.map(p => offS(p, -8.2)).reverse()), '#7a7266');
+    if (q.length > 1) polyS(q.map(p => offSC(p, 8.2)).concat(q.map(p => offSC(p, -8.2)).reverse()), '#7a7266');
   });
   L.forEach((tk, i) => { for (const q of BAL[i])
-    if (q.length > 1) polyS(q.map(p => offS(p, 6.5)).concat(q.map(p => offS(p, -6.5)).reverse()), '#948b7d');
+    if (q.length > 1) polyS(q.map(p => offSC(p, 6.5)).concat(q.map(p => offSC(p, -6.5)).reverse()), '#948b7d');
   });
   // fuel spur: Danny's spur bed (21 x 13 ft tile), centred on the track under the rails
   if (!globalThis.EF_PHASE1_REVIEW) { const bi = img(BA('effingham-spur-bed@2x')); if (ok(bi)) { for (let d = T.FL.len - FD.railEnd + 10; d < T.FL.len; d += 20) { const p = ptAt('FL', Math.min(T.FL.len, d + 10.5)); if (!vis(p)) continue;
@@ -2653,7 +2656,7 @@ function drawRails() { const L = trkList(), TU = turns(), [vL, vR] = visX();
   g.lineCap = 'round';
   for (const tk of L) for (const o of [2.35, -2.35]) { let a = 0, b = tk.len; const sg = o > 0 ? 1 : -1; if (T[tk.id]) { a = trimA[tk.id + 'a' + sg] || 0; b = tk.len - (trimA[tk.id + 'b' + sg] || 0); } if (b <= a) continue;
     for (const qq of (globalThis.EF_INDUSTRY_LAYOUT ? sampVis(tk, a, b) : sampVis(tk, a, b, 'pad', p => efInBurgessPad(p[0], p[1]))))
-    if (qq.length > 1) railStroke(qq.map(p => offS(p, o))); }
+    if (qq.length > 1) railStroke(qq.map(p => offSC(p, o))); }
   drawEFIndustryDiamondGuards();
   // PC locked switch: our PCX's inner rail is trimmed too
   // diamond guard rails
