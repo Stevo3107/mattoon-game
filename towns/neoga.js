@@ -112,7 +112,9 @@ const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH
   'EF PROPANE': ['Crossroads Propane', 'Effingham, IL'],
   'EF SCRAP': ['Effingham Iron & Metal', 'Effingham, IL'],
   'EF GLASS': ['Midstate Glass Container Co.', 'Effingham, IL'],
-  'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'] };
+  'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'],
+  'EF BURGESS': ['Burgess Building Supply', 'Effingham, IL'], 'EF HOUSE': ['Effingham Freight House (house track)', 'Effingham, IL'], // Nov 17: these were missing, so a car for them in Mattoon billed 'No orders: hold at Mattoon'
+  'NG COAL': ['Miller & Sons Fuel (coal)', 'Neoga, IL'], 'NG OIL': ['Miller & Sons Fuel (fuel oil)', 'Neoga, IL'], 'NG HOUSE': ['Neoga Freight House (house track)', 'Neoga, IL'] };
 // car owner's home / pool for empty returns
 const WB_HOME = { IC: ['ICG car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
   ACFX: ['ACF Industries lessee', 'St. Charles, MO'], UTLX: ['Union Tank Car lessee', 'Whiting, IN'], PC: ['PC car distributor', 'Philadelphia, PA'], CNW: ['C&NW car distributor', 'Chicago, IL'],
@@ -339,7 +341,7 @@ function routeOut(road, via) { if (via === 'NW') return road === 'N&W' ? 'NI&I�
   if (via === 'PC') return road === 'PC' ? 'NI&I–Neoga–Effingham–PC' : `NI&I–Neoga–Effingham–PC–${road}`;
   return 'NI&I–Neoga–Mattoon–' + wbRouteOut(road === 'N&W' || !wbJctKnown(road) ? 'IC' : road).replace(/^NI&I–Mattoon–/, ''); }
 function waybill(v) { fixLoad(v); if (v.wb && v.load && /^(Coal \(stoker\)|Fuel oil)/.test(v.wb.what)) v.wb.what = v.load.c;
-  const key = (v.dest || '') + '|' + (v.loaded ? 'L' : 'E') + '|' + (v.outVia || v.via || ''); if (v.wb && v.wb.key === key) return v.wb;
+  const key = (v.dest || '') + '|' + (v.loaded ? 'L' : 'E') + '|' + (v.outVia || v.via || ''), oc = !DEST[v.dest] && SH.CUST && SH.CUST[v.dest]; if (v.wb && v.wb.key === key && !(oc && v.wb.cons !== oc[1])) return v.wb; // Nov 17: another town's customer by name (old saves' cars rebill)
   const r = seeded((+v.num || 7) * 31 + key.length * 977), road = roadOf(v), kind = kindOf(v), cu = DEST[v.dest];
   let w;
   if (cu) { // inbound to a Neoga customer
@@ -351,6 +353,7 @@ function waybill(v) { fixLoad(v); if (v.wb && v.load && /^(Coal \(stoker\)|Fuel 
     else w = { from: `${at.name}, Neoga, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'NW' ? 'N&W' : via === 'PC' ? 'PC' : 'ICG', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
     if (v.reassigned) { const was = v.mainVia || (via === 'NW' ? 'IC' : 'NW'); w.route += ' (REROUTED: car reassigned, was via ' + (was === 'PC' ? 'PC' : was === 'NW' ? 'N&W' : 'ICG') + ')'; } }
   else if (v.dest === 'RA' || v.idle || !v.dest) w = { from: 'Neoga, IL', fromRoad: 'NI&I', to: 'Neoga, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'Held in the yard', what: v.load ? v.load.c : 'EMPTY' };
+  else if (oc) w = { from: 'Neoga, IL', fromRoad: 'NI&I', to: `${oc[1]}, ${oc[2]}`, toRoad: 'NI&I', route: 'Local (NI&I)', cons: oc[1], what: v.load ? v.load.c : 'EMPTY' };
   else w = { from: 'Neoga, IL', fromRoad: 'NI&I', to: 'Mattoon, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'Back to Mattoon', what: v.load ? v.load.c : 'EMPTY' };
   return (v.wb = Object.assign(w, { key, no: String(10000 + Math.floor(r() * 89999)), date: wbDate(E.time), kname: kind === 'coal' ? 'HT HOPPER 40FT' : WB_KNAME[kind] || 'XM BOX', lbs: v.load ? (v.load.t * 2000).toLocaleString() : '', loaded: !!v.loaded })); }
 const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
