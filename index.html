@@ -192,6 +192,26 @@ body.visit header{visibility:hidden}
 </style>
 </head>
 <body>
+<script>/* Nov 16 full-screen shell (Stephen: "I just want the thing to stay full screen on each map you go to"). Changing towns reloads the page, and a reload
+   always drops full screen. So index.html opens as a thin outer page that holds the game in a full-size frame (index.html?...&inner=1). Full screen is put on this
+   outer page, and only the frame reloads when you change towns, so full screen stays on. Same address and same saves. Skipped where it can't help (iPhone has no
+   page full screen, a file opened from disk) and inside the frame itself. */
+(function () { var L = location, q = L.search;
+  if (/[?&]inner=1(&|$)/.test(q) || L.protocol === 'file:' || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return;
+  window.NII_SHELL = 1; try { window.stop(); } catch (e) { }
+  var st = document.createElement('style');
+  st.textContent = 'html,body{margin:0;height:100%;overflow:hidden;background:#1b1f27;overscroll-behavior:none}#niiGame{position:fixed;left:env(safe-area-inset-left,0px);top:env(safe-area-inset-top,0px);width:calc(100% - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px));height:calc(100% - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));border:0;margin:0;padding:0;display:block;background:#1b1f27}';
+  document.head.appendChild(st);
+  var b = document.body || document.documentElement.appendChild(document.createElement('body'));
+  var f = document.createElement('iframe'); f.id = 'niiGame'; f.title = 'NI&I'; f.setAttribute('allow', 'fullscreen; screen-wake-lock; autoplay'); f.setAttribute('allowfullscreen', '');
+  f.src = L.pathname + (q ? q + '&' : '?') + 'inner=1' + L.hash; b.appendChild(f);
+  function sync() { try { var w = f.contentWindow, u = new URL(w.location.href); if (u.origin !== L.origin) return; u.searchParams.delete('inner');
+      var s = u.pathname + u.search + u.hash; if (s !== L.pathname + L.search + L.hash) history.replaceState(history.state, '', s); if (w.document.title) document.title = w.document.title; } catch (e) { } }
+  function focusGame() { try { f.focus(); f.contentWindow.focus(); } catch (e) { } }
+  f.addEventListener('load', function () { sync(); focusGame(); try { var w = f.contentWindow; w.addEventListener('pagehide', sync); w.addEventListener('beforeunload', sync); } catch (e) { } });
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (ev) { document.addEventListener(ev, function () { try { f.contentDocument.dispatchEvent(new Event(ev)); } catch (e) { } setTimeout(focusGame, 50); }); });
+  window.addEventListener('focus', function () { setTimeout(focusGame, 0); });
+})();</script>
 <div id="loading" class="show"><div class="ldBox"><div id="ldTitle">Mattoon</div><div id="ldSub"></div><div class="ldTrack"><i id="ldBar"></i><span id="ldTrain">🚂</span></div><div id="ldInfo"></div></div></div>
 <div id="app">
   <header id="top">
@@ -258,7 +278,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef121";</script>
+<script>window.NII_BUILD = "mw59ef122";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -352,17 +372,35 @@ function runSimClock(fn) { // Nov 13 (Stephen): Sim time / "Sim until they finis
 function fail(msg) { $('ldSub').textContent = ''; $('ldInfo').innerHTML = msg; $('loading').classList.add('fail'); }
 const travelText = (from, to) => { const r = runInfo(from, to); return `${TOWNS[from].name} to ${TOWNS[to].name}: ${r.mi} mi at ${r.mph} mph, ${r.min} min`; };
 function travel(from, to, train) { if (VISIT) return; const e = env(), mt = e.towns.mattoon; e.town = to; e.trainIn = train; e.travel = { from, to }; delete e.jump;
+  e.modeIn = document.body.classList.contains('tapmode') ? 'tap' : 'drive'; // Nov 16 (Stephen): Drive / Tap rides along with the train to the next town
   if (e.myEngine && (train || []).some(v => v && v.id === e.myEngine)) { e.myEngineTown = to; ENG_SEEN = e.myEngine; }
   if (from === 'mattoon') e.time = mt.time; else e.time = (e.time || mt.time) + runInfo(from, to).sec;
-  write(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
+  write(); fsKeep(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
   setTimeout(() => location.reload(), 1700); }
 function loadScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src + (window.NII_BUILD ? '?v=' + NII_BUILD : ''); s.onload = ok; s.onerror = () => no(new Error(src)); document.head.appendChild(s); }); }
 // ---- Full screen (Nov 1): Menu entry in both towns and in visit mode. Canvases pick the new size up on fullscreenchange (a resize event is sent too).
-const FS = { el: () => document.fullscreenElement || document.webkitFullscreenElement, on() { return !!FS.el(); }, label() { return FS.on() ? 'Exit full screen' : 'Full screen'; },
-  toggle() { const d = document.documentElement; try { if (FS.on()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
-      const p = (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: 'hide' }); const lock = () => { try { if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => { }); } catch (e) { } };
+// Nov 16: inside the full-screen shell (see the top of index.html) full screen belongs to the outer page, so it stays on when this frame reloads for a town change.
+const FS_TOP = (() => { try { return window.parent !== window && window.parent.NII_SHELL && window.parent.document ? window.parent : null; } catch (e) { return null; } })(), FSD = FS_TOP ? FS_TOP.document : document, FSW = FS_TOP || window;
+const FS = { el: () => FSD.fullscreenElement || FSD.webkitFullscreenElement, on() { return !!FS.el(); }, label() { return FS.on() ? 'Exit full screen' : 'Full screen'; },
+  toggle() { const d = FSD.documentElement; try { if (FS.on()) { (FSD.exitFullscreen || FSD.webkitExitFullscreen).call(FSD); return; }
+      const p = (d.requestFullscreen || d.webkitRequestFullscreen).call(d, { navigationUI: 'hide' }); const lock = () => { try { const so = FSW.screen.orientation; if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && so && so.lock) so.lock('landscape').catch(() => { }); } catch (e) { } };
       if (p && p.then) p.then(lock).catch(() => { }); else lock(); } catch (e) { } } };
 for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(ev, () => { setTimeout(() => window.dispatchEvent(new Event('resize')), 60); document.querySelectorAll('[data-fs]').forEach(b => b.textContent = FS.label()); });
+// Nov 16 (Stephen: changing towns took him out of full screen): moving to another town reloads the page (so the last town's art is let go), and a browser always
+// leaves full screen on a reload and only lets a page go back in on a tap or key press. So: remember it was on, and the first tap or key in the next town turns it back on.
+const FS_AGAIN = 'nii-fs-again';
+function fsKeep() { try { if (FS.on()) sessionStorage.setItem(FS_AGAIN, '1'); } catch (e) { } }
+(function fsAgain() { let want = false; try { want = sessionStorage.getItem(FS_AGAIN) === '1'; } catch (e) { } if (!want) return;
+  if (FS.on()) { try { sessionStorage.removeItem(FS_AGAIN); } catch (e) { } return; } // the shell kept full screen on: nothing to do (the pill is only a fallback now)
+  const EVS = ['pointerup', 'touchend', 'mousedown', 'keydown', 'click'];
+  const done = () => { try { sessionStorage.removeItem(FS_AGAIN); } catch (e) { } for (const t of EVS) document.removeEventListener(t, go, true); const b = document.getElementById('fsAgain'); if (b) b.remove(); };
+  const lock = () => { try { const so = FSW.screen.orientation; if (/Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) && so && so.lock) so.lock('landscape').catch(() => { }); } catch (e) { } };
+  function go(e) { if (FS.on()) return done(); if (e && e.type === 'keydown' && e.key === 'Escape') { done(); return; } const d = FSD.documentElement, rq = d.requestFullscreen || d.webkitRequestFullscreen; if (!rq) return done();
+    try { const p = rq.call(d, { navigationUI: 'hide' }); if (p && p.then) p.then(() => { done(); lock(); }, () => { }); else { done(); lock(); } } catch (er) { } }
+  for (const t of EVS) document.addEventListener(t, go, true);
+  const pill = () => { if (!document.body) return setTimeout(pill, 200); if (document.getElementById('fsAgain') || FS.on()) return; const b = document.createElement('button'); b.id = 'fsAgain'; b.type = 'button'; b.textContent = '\u26F6 Tap for full screen';
+    b.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:10000;background:rgba(28,43,80,.92);color:#fff;border:0;border-radius:16px;font:700 13px/1 sans-serif;padding:8px 14px;box-shadow:0 2px 8px rgba(0,0,0,.35)';
+    b.addEventListener('click', e => { e.stopPropagation(); }); document.body.appendChild(b); setTimeout(() => { const x = document.getElementById('fsAgain'); if (x) x.remove(); }, 15000); }; pill(); })();
 // ---- Industries page (Nov 1): one card per customer + one per interchange, both towns, from the shared save (env.ind; old saves start at 0)
 const IND_CARDS = [
   { k: 'M_HOUSE', t: 'mattoon', name: 'Mattoon Freight House', img: 'm-house', days: 'Any day', fact: 'Railway Express Agency, which carried express parcels through depots and freight houses all over the country, went out of business in 1975.' },
@@ -471,10 +509,10 @@ const mapTabs = { show: showTabs, hide: hideTabs, select: selectTab, repaint: pa
 let onLeave = null; // the running town's save, called before a visit starts
 // Nov 13 (Stephen): the Towns button takes you to that town for a full session (call its crews, tags, pick an engine there), not a view-only look
 function goVisit(id) { sessionStorage.removeItem(VKEY); const e = env(), from = e.town; if (!TOWNS[id] || id === from) return closePick(); try { onLeave && onLeave(); } catch (er) { }
-  const e2 = env(); e2.town = id; delete e2.trainIn; delete e2.travel; e2.jump = { from, to: id }; write(); closePick(); try { const u = new URL(location.href); if (u.searchParams.has('town')) { u.searchParams.delete('town'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (er) { } // a test ?town= would pin the old town
-  showLoading(TOWNS[id].name, `Going to ${TOWNS[id].name}`, ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 350); }
+  const e2 = env(); e2.town = id; delete e2.trainIn; delete e2.travel; delete e2.modeIn; e2.jump = { from, to: id }; write(); closePick(); try { const u = new URL(location.href); if (u.searchParams.has('town')) { u.searchParams.delete('town'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (er) { } // a test ?town= would pin the old town
+  fsKeep(); showLoading(TOWNS[id].name, `Going to ${TOWNS[id].name}`, ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 350); }
 function backToTrain(cross) { sessionStorage.removeItem(VKEY); if (cross) sessionStorage.setItem(XKEY, JSON.stringify(cross)); const h = TOWNS[env().town];
-  showLoading(h.name, 'Back to your train', ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 250); }
+  fsKeep(); showLoading(h.name, 'Back to your train', ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 250); }
 function takeCross() { try { const x = JSON.parse(sessionStorage.getItem(XKEY) || 'null'); sessionStorage.removeItem(XKEY); return VISIT ? null : x; } catch (e) { return null; } }
 function closePick() { const p = $('townPick'); if (p) p.remove(); }
 function pickTown() { closePick(); const home = VISIT ? VISIT.home : env().town, here = VISIT ? VISIT.town : home, el = document.createElement('div'); el.id = 'townPick';

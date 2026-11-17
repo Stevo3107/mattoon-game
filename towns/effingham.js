@@ -1426,7 +1426,7 @@ function efCorridorOccupied(){return S.cuts.filter(c=>efRangesHit(c,EF_OPS.corri
 function efCanStartPC(){return !efCorridorOccupied().length&&!NWT.run&&!Object.values(EF_IL.grants).some(Boolean)&&!Object.keys(EF_OPS.crossings).some(k=>efOccupied(k).length)&&!S.cuts.some(efApproachThreat);}
 function efStartPC(dir){if(dir==null)dir=EF_PC_DIR_MODE==='both'?(Math.random()<.5?1:-1):-1;return efPCLineRoute(efPCDefaultRoute(dir)).ok;} // PC double track: +y trains on PC-W, -y on PC-E
 function efRequestLocal(key,c,dir){
-  if(!EF_OPS.crossings[key]||!c||![-1,1].includes(dir)||NWT.run||efCorridorOccupied().length)return false;
+  if(!EF_OPS.crossings[key]||!c||![-1,1].includes(dir)||NWT.run||efCorridorOccupied().some(o=>o!==c))return false; // Nov 16 (Stephen: it said my own train was in the way): your own train never blocks its own route
   const g=EF_IL.grants[key];if(g)return g.dir===dir&&efShares(g.ids,c);
   if(efOccupied(key).some(o=>o!==c))return false;
   // A grant is for this crossing and this consist/direction ONLY.
@@ -1668,12 +1668,13 @@ const FD = { start: 0, wheelStop: 180, railEnd: 200, spots: { hopper1: 40, hoppe
 const RA_S = 5000, RA_N = 1800;
 if (!globalThis.EF_INDUSTRY_LAYOUT && !T.FL) { T.FL = T.PR; T.FL.id = 'FL'; } // propane stands in for Neoga fuel spur in shared scenery bits
 
-function ptAt(t, d) { const tr = T[t], c = tr.cum; d = Math.max(0, Math.min(tr.len, d)); if (tr.analyticAt) return tr.analyticAt(d); let i = 1; while (i < c.length - 1 && c[i] < d) i++;
+function ptAt(t, d) { const tr = T[t], c = tr.cum; d = Math.max(0, Math.min(tr.len, d)); if (tr.analyticAt) return tr.analyticAt(d); let i = 1, hi = c.length - 1; while (i < hi) { const m = (i + hi) >> 1; if (c[m] < d) i = m + 1; else hi = m; } // Nov 16: binary search, same point as the old walk along the track (cum only grows)
   const k = (d - c[i - 1]) / ((c[i] - c[i - 1]) || 1), a = tr.p[i - 1], b = tr.p[i]; return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, Math.atan2(b[1] - a[1], b[0] - a[0])]; }
 function dOfX(t, x) { const tr = T[t]; let best = 0, bd = 1e9; for (let d = 0; d <= tr.len; d += 2) { const p = ptAt(t, d); const e = Math.abs(p[0] - x); if (e < bd) { bd = e; best = d; } } return best; }
+let SW_TOUCH = null; // Nov 16: set only while planRoute simulates a run
 function nextFrom(t, e) { const n = NODE[t + e]; if (!n) return { stop: 'end of track' }; if (n.end) return { stop: n.end };
   if (n.join) return { t: n.join[0], e: n.join[1] };
-  const s = SWITCHES[n.sw], st = S.sw[n.sw];
+  const s = SWITCHES[n.sw], st = S.sw[n.sw]; if (SW_TOUCH) SW_TOUCH.add(n.sw); // Nov 16: planner notes which switches a trial run actually read
   if (n.role === 'stem') { const o = s[st]; return { t: o[0], e: o[1] }; }
   if (n.role !== st) return { stop: 'lined', sw: n.sw };
   return { t: s.stem[0], e: s.stem[1] }; }
@@ -2161,40 +2162,58 @@ function routeSwitchKeys(c, goal) {
   });
   if (!goals.size) keys = keys.filter(k => score(k) <= 6);
   keys.sort((a, b) => pathScore(a) - pathScore(b) || score(a) - score(b));
-  if (keys.length > 8) keys = keys.slice(0, 8);
+  if (keys.length > 14) keys = keys.slice(0, 14); // Nov 16: was 8; the planner now skips repeat linings, so it can look at more switches in the same time
   return keys;
 }
-function planRoute(c, goal) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c), keys = routeSwitchKeys(c, goal), save0 = { ...S.sw };
+function planRoute(c, goal, noCars) { const { CLEAR, REV_COST, MAX_REV } = SH.PLAN, others = S.cuts.filter(o => o !== c && (!noCars || o === goal.cut)), // noCars: the same search with only the goal car on the map (see the end)
+  keys = routeSwitchKeys(c, goal), save0 = { ...S.sw };
+  const OCC = {}; others.forEach((o, i) => { for (const h of o.path) (OCC[h.t] || (OCC[h.t] = [])).push([Math.min(h.d0, h.d1), Math.max(h.d0, h.d1), i]); });
+  const hitOf = p => { let bi = -1; for (const g of p.path) { const L = OCC[g.t]; if (!L) continue; const lo = Math.min(g.d0, g.d1), hi = Math.max(g.d0, g.d1); for (const [a, b, i] of L) if (Math.min(hi, b) - Math.max(lo, a) > 0 && (bi < 0 || i < bi)) bi = i; } return bi < 0 ? null : others[bi]; }; // Nov 16: same test as others.find(o => segsOverlap(p, o, 0)), indexed by track
+  const QK = new Map(); // queued reversal states by spot (see below)
+  const LEN = cutLen(c), LE = (p, sgn) => sgn > 0 ? pathPt(p, LEN) : pathPt(p, 0); // Nov 16: leadingEnd with the train's length worked out once (every trial step called it 4 times)
   let best = null; const blocks = [], seen = new Set(), queue = [{ p: cloneCut(c), sgn: 1, sw: { ...S.sw }, legs: [], cost: 0 }, { p: cloneCut(c), sgn: -1, sw: { ...S.sw }, legs: [], cost: 0 }];
   const tPlan = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-  try { for (let guard = 0; queue.length && guard < 200; guard++) {
+  try { for (let guard = 0; queue.length && guard < 1500; guard++) {
     if (((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - tPlan > 800) break;
     queue.sort((a, b) => a.cost - b.cost); const q = queue.shift(); if (best && q.cost >= best.cost) break;
     const le = leadingEnd(q.p, q.sgn), key = `${le.t}:${Math.round(le.d / 4)}:${q.sgn}:${q.legs.length ? 1 : 0}`; if (seen.has(key)) continue; seen.add(key);
     const free = keys.filter(k => !busyFor(k, [q.p, ...others])), runs = new Set();
-    for (let m = 0; m < (1 << free.length); m++) {
+    // Nov 16 (Stephen: Tap said cars were in the way): instead of trying every lining of every free switch (2^N, which ran out of time and then
+    // reported whatever car the first lining hit), try only linings that make a different run: start as lined, then flip each free switch the
+    // run actually reached, keeping the ones before it. Every distinct run is tried once; the answer is the same, found in a fraction of the time.
+    const todo = [{}]; for (let m = 0; todo.length; m++) {
       if (best && m > 0 && ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - tPlan > 200) break;
-      const sw = { ...q.sw }; free.forEach((k, i) => { if ((m >> i) & 1) sw[k] = sw[k] === 'N' ? 'R' : 'N'; }); Object.assign(S.sw, sw);
+      const fx = todo.pop(), sw = { ...q.sw, ...fx };
+      Object.assign(S.sw, sw); const touch = SW_TOUCH = new Set();
       const p = cloneCut(q.p), trav = [], revs = []; let dist = 0, sig = '';
-      for (let i = 0; i < 5000; i++) { const l0 = leadingEnd(p, q.sgn), t0 = leadingEnd(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = leadingEnd(p, q.sgn), t1 = leadingEnd(p, -q.sgn);
+      for (let i = 0; i < 5000; i++) { const l0 = LE(p, q.sgn), t0 = LE(p, -q.sgn), e0 = l0, r = moveCut(p, q.sgn * 2); dist += r.moved; const l1 = LE(p, q.sgn), t1 = LE(p, -q.sgn);
         if (l1.t !== l0.t) { const k = swBetween(l0.t, l1.t); if (k) { trav.push([k, S.sw[k], dist]); sig += k + S.sw[k]; } }
         if (t1.t !== t0.t) { const k = swBetween(t0.t, t1.t); if (k) revs.push({ at: dist + CLEAR, req: trav.map(x => [x[0], x[1]]) }); }
         for (const rv of revs) if (!rv.p && dist >= rv.at) { rv.p = cloneCut(p); rv.dist = dist; }
         if (goal.t && l1.t === goal.t && (Math.abs(l1.d - goal.d) <= 2.5 || (e0.t === goal.t && (e0.d - goal.d) * (l1.d - goal.d) <= 0))) { if (runs.has(sig + '|g')) break; runs.add(sig + '|g');
           const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, legs: q.legs.concat([{ sgn: q.sgn, left: dist, req: trav.map(x => [x[0], x[1]]) }]) }; break; }
-        const hit = others.find(o => segsOverlap(p, o, 0));
+        const hit = hitOf(p);
         if (hit) { const hp = leadingEnd(p, q.sgn), A = pathPt(hit, 0), B = pathPt(hit, cutLen(hit)), he = (A.t === hp.t ? Math.abs(A.d - hp.d) : 1e9) <= (B.t === hp.t ? Math.abs(B.d - hp.d) : 1e9) ? 'a' : 'b';
           if (goal.cut === hit && (!goal.end || goal.end === he)) { const cost = q.cost + dist; if (!best || cost < best.cost) best = { cost, hit: he, legs: q.legs.concat([{ sgn: q.sgn, left: dist + 3, req: trav.map(x => [x[0], x[1]]), couple: true }]) }; }
           else blocks.push({ cost: q.cost + dist, o: hit }); break; }
         if (r.stop || r.moved < 1.9) break; }
+      SW_TOUCH = null; { const tk = [...touch].filter(k => free.includes(k)); tk.forEach((k, i) => { if (k in fx) return; const ch = { ...fx }; for (let j = 0; j < i; j++) ch[tk[j]] = sw[tk[j]]; ch[k] = sw[k] === 'N' ? 'R' : 'N'; todo.push(ch); }); }
       if (q.legs.length < MAX_REV) for (const rv of revs) if (rv.p && !runs.has(sig + '|r' + Math.round(rv.dist))) { runs.add(sig + '|r' + Math.round(rv.dist));
-        queue.push({ p: rv.p, sgn: -q.sgn, sw: { ...S.sw }, legs: q.legs.concat([{ sgn: q.sgn, left: rv.dist, req: rv.req }]), cost: q.cost + rv.dist + REV_COST }); }
-      Object.assign(S.sw, save0); } } } finally { Object.assign(S.sw, save0); }
-  if (best) return best;
-  blocks.sort((a, b) => a.cost - b.cost); if (blocks[0]) return { msg: `Route blocked by ${cutName(blocks[0].o)}.` };
+        const nq = { p: rv.p, sgn: -q.sgn, sw: { ...S.sw }, legs: q.legs.concat([{ sgn: q.sgn, left: rv.dist, req: rv.req }]), cost: q.cost + rv.dist + REV_COST };
+        // Nov 16: one queue entry per reversing spot (the cheapest), not one per lining that reaches it; the copies used up the search's step budget
+        const ne = LE(nq.p, nq.sgn), nk = `${ne.t}:${Math.round(ne.d / 4)}:${nq.sgn}:1`, ex = QK.get(nk); if (seen.has(nk) || (ex && ex.cost <= nq.cost)) continue; if (ex) Object.assign(ex, nq); else { queue.push(nq); QK.set(nk, nq); } }
+      Object.assign(S.sw, save0); } } } finally { SW_TOUCH = null; Object.assign(S.sw, save0); }
+  if (best || noCars) return best || { msg: '' };
+  // Nov 16 (Stephen: Tap said a car was in the way when it wasn't): only blame a car when it is really what stops the move. Plan again as if no other
+  // cars were there; if that fails too the cars aren't the reason, so say there's no way. If it works, name the first car that route runs into.
+  const free = planRoute(c, goal, true); if (free.legs) { const all = S.cuts.filter(o => o !== c && o !== goal.cut), OC = {}; all.forEach((o, i) => { for (const h of o.path) (OC[h.t] || (OC[h.t] = [])).push([Math.min(h.d0, h.d1), Math.max(h.d0, h.d1), i]); });
+    const first = p => { let bi = -1; for (const g of p.path) { const L = OC[g.t]; if (!L) continue; const lo = Math.min(g.d0, g.d1), hi = Math.max(g.d0, g.d1); for (const [a, b, i] of L) if (Math.min(hi, b) - Math.max(lo, a) > 0 && (bi < 0 || i < bi)) bi = i; } return bi < 0 ? null : all[bi]; };
+    let hit = null; const p = cloneCut(c); try { for (const L of free.legs) { for (const [k, g] of L.req) S.sw[k] = g; for (let left = L.left; left > 0.01 && !hit; left -= 2) { const r = moveCut(p, L.sgn * Math.min(2, left)); hit = first(p); if (r.stop) break; } if (hit) break; } } finally { Object.assign(S.sw, save0); }
+    if (hit) return { msg: `Route blocked by ${cutName(hit)}.` }; blocks.sort((a, b) => a.cost - b.cost); if (blocks[0]) return { msg: `Route blocked by ${cutName(blocks[0].o)}.` }; }
   return { msg: goal.cut ? `Can't reach ${cutName(goal.cut)} from here: there's no clear way around to it.` : 'No way to get there from here.' }; }
 function apTo(t, d, goal) { const c = liveCut(); if (!c) return; // Mattoon's tapTarget: plan, line the switches, run (reversing as needed)
   if (!goal) { const o = S.cuts.find(o => o !== c && o.path.some(g => g.t === t && Math.min(g.d0, g.d1) - 1 <= d && Math.max(g.d0, g.d1) + 1 >= d)); goal = o ? { cut: o } : { t, d }; } // a spot under a car: couple to it (either end)
+  if (goal.t && c.path.some(g => g.t === goal.t && Math.min(g.d0, g.d1) - 1 <= goal.d && Math.max(g.d0, g.d1) + 1 >= goal.d)) { toast('That spot is under your train. Tap ahead of it or behind it.'); return false; } // Nov 16: Mattoon's rule (a tap under your own train used to plan a strange run or say the way was blocked)
   if (ctl.ap && ctl.v > 0.5 * FTS) { AP_GOAL = { t, d, goal }; SIG_WAIT = null; ctl.ap = { replan: { t, d, goal }, sgn: ctl.ap.sgn, legs: [], k: 0, pend: [], tw: 0, left: 0 }; toast('Stopping first, then lining the new route.'); return true; }
   if (ngOpen()) for (const K in BFN) if (BFNX.up(K) && !cutInBFN(K, c) && (goal.t ? inBFN(K, { t: goal.t, d: goal.d }) : goal.cut && cutInBFN(K, goal.cut))) { toast(BFNX.blockMsg(K), 'bad'); return false; }
   { const gt = goal.t || (goal.cut && goal.cut.path[0] && goal.cut.path[0].t); if (gt && !c.path.some(g => g.t === gt) && window.NII_CALLSHEET && NII_CALLSHEET.guard && NII_CALLSHEET.guard('effingham', gt)) return false; } // Nov 13 clock sim
@@ -2249,7 +2268,7 @@ function pullOut(c, i) { const pre = c.veh.slice(0, i).reduce((a, v) => a + vL(v
 function stripStrays(c) { const out = []; if (!c) return 0;
   for (let k = 0; k < 60 && c.veh.length > 1; k++) { const i = c.veh.findIndex(strayCar); if (i < 0) break; out.push(pullOut(c, i)); }
   if (out.length) { for (const v of out) { if (v.ngDest) { v.dest = v.ngDest; } delete v.ngDest; } S.pendIC = (S.pendIC || []).concat(out); dropIC(); toast(`${out.length} car${out.length > 1 ? 's' : ''} you never coupled came off your train and went to the interchange track.`); } return out.length; }
-function arrive() { const tr = E.trainIn; if (!tr) return; ARRIVED_FROM = (E.travel && E.travel.from) || null; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
+function arrive() { const tr = E.trainIn; if (!tr) return; if (E.modeIn === 'tap' || E.modeIn === 'drive') S.mode = E.modeIn; delete E.modeIn; /* Nov 16: same Drive / Tap as the town you left */ ARRIVED_FROM = (E.travel && E.travel.from) || null; const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
   stripStrays(c); clearNorth(c); dropIC(); save(); }
@@ -2489,7 +2508,7 @@ function legOf(t, end) { const tr = T[t]; return end === 'a' ? q => ptAt(t, Math
 const offW = (p, o) => [p[0] - Math.sin(p[2]) * o, p[1] + Math.cos(p[2]) * o]; // world point o ft to the track's side
 const offS = (p, o) => { const w = offW(p, o); return [sx(w[0]), sy(w[1])]; };
 function trkList() { const [vL, vR] = visX(), hh = H / 2 / (cam.z * K), yT = cam.y - hh - 30, yB = cam.y + hh + 30, L = [];
-  for (const t of Object.keys(T)) { if (globalThis.EF_PHASE1_TRACK_OK && !globalThis.EF_PHASE1_TRACK_OK(t)) continue; L.push({ id: t, len: T[t].len, P: d => ptAt(t, d), bl: t === 'FL' ? T.FL.len - FD.railEnd + 3 : undefined, nw: globalThis.EF_PHASE1_REVIEW && (['PCN','PCS'].includes(t) || EF_PC2.tracksW.includes(t) || EF_PC2.tracksE.includes(t)) ? T[t].p[0][1] : undefined }); } // Nov 4 (Danny): FL ballast + ties run under the coal fade, stopping just short of the dirty bed (f0+10); the pad track is buried
+  for (const t of Object.keys(T)) { if (globalThis.EF_PHASE1_TRACK_OK && !globalThis.EF_PHASE1_TRACK_OK(t)) continue; L.push({ id: t, tt: 1, len: T[t].len, P: d => ptAt(t, d), bl: t === 'FL' ? T.FL.len - FD.railEnd + 3 : undefined, nw: globalThis.EF_PHASE1_REVIEW && (['PCN','PCS'].includes(t) || EF_PC2.tracksW.includes(t) || EF_PC2.tracksE.includes(t)) ? T[t].p[0][1] : undefined }); } // Nov 4 (Danny): FL ballast + ties run under the coal fade, stopping just short of the dirty bed (f0+10); the pad track is buried
   for (const [x0, x1] of [[Math.min(vL - 20, XN - 1), XN + 0.5], [XS - 0.5, Math.max(vR + 20, XS + 1)]]) if (x1 - x0 > 1) L.push({ id: 'off' + x0, len: x1 - x0, P: d => [x0 + d, 0, 0] });
   const y0 = Math.max(-3000, yT), y1 = Math.min(EF_YB + 200, yB);
   if(globalThis.EF_PHASE1_REVIEW&&T.PCN&&T.PCS) {
@@ -2515,6 +2534,26 @@ function turns() { if (TURNS) return TURNS; TURNS = [];
 const railStroke = (pts, w = 1) => { g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.strokeStyle = '#3b3a3a'; g.lineWidth = Math.max(1.1 * w, 0.42 * cam.z * w); g.stroke(); g.strokeStyle = '#b8b6b0'; g.lineWidth = Math.max(0.6 * w, 0.16 * cam.z * w); g.stroke(); };
 const polyS = (pts, col) => { g.fillStyle = col; g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fill(); };
 function samp(tk, d0 = 0, d1 = tk.len) { const st = Math.max(0.5, Math.min(8, 3 / cam.z)), o = []; for (let d = d0; d < d1; d += st) o.push(tk.P(d)); o.push(tk.P(d1)); return o; }
+// Nov 16 (Stephen: Effingham ran super choppy): the rails, ballast and tie band used to be worked out for every foot of every track in town, every frame
+// (about 190 ms a frame on a laptop). sampVis gives the same points, on the same spacing, but only for the stretches near the screen (whatever is
+// off screen is skipped), so the picture is unchanged. Tracks that pass through the Burgess pad keep the full walk, so the pad gap is drawn as before.
+const SAMP_CO = {}, SAMP_SKIPT = {}, SAMP_C = 10;
+function sampCoarse(id) { let o = SAMP_CO[id]; if (o) return o; o = SAMP_CO[id] = []; const len = T[id].len; for (let d = 0; d < len; d += SAMP_C) { const p = ptAt(id, d); o.push([d, p[0], p[1]]); } const p = ptAt(id, len); o.push([len, p[0], p[1]]); return o; }
+function sampHasSkip(id, key, skip) { const k = id + '|' + key; if (SAMP_SKIPT[k] != null) return SAMP_SKIPT[k]; let hit = false; const len = T[id].len; for (let d = 0; d <= len && !hit; d += 1) { if (skip(ptAt(id, d))) hit = true; } if (!hit && skip(ptAt(id, len))) hit = true; return SAMP_SKIPT[k] = hit; }
+function sampIv(id) { // d ranges of track id near the screen (screen box + 60 ft, on a 10 ft grid); cached per frame
+  const key = cam.x + ',' + cam.y + ',' + cam.z + ',' + W + ',' + H; if (sampIv.key !== key) { sampIv.key = key; sampIv.memo = {}; } const m = sampIv.memo[id]; if (m) return m;
+  const [vL, vR] = visX(), hh = H / 2 / (cam.z * K), yT = cam.y - hh - 60 - SAMP_C, yB = cam.y + hh + 60 + SAMP_C, xL = vL - SAMP_C, xR = vR + SAMP_C, co = sampCoarse(id), iv = [];
+  let a = null; for (let i = 0; i < co.length; i++) { const [, x, y] = co[i], on = x >= xL && x <= xR && y >= yT && y <= yB; if (on && a == null) a = Math.max(0, i - 1); if ((!on || i === co.length - 1) && a != null) { iv.push([co[a][0], co[i][0]]); a = null; } }
+  return sampIv.memo[id] = iv; }
+function sampVis(tk, d0, d1, skipKey, skip) { // -> list of point runs (each one polygon / stroke)
+  if (d1 == null) d1 = tk.len; if (d0 == null) d0 = 0;
+  const full = () => { const q = samp(tk, d0, d1); return [skip ? q.filter(p => !skip(p)) : q]; };
+  if (!tk.tt || !T[tk.id]) return full(); // view-made pieces (map-edge tails) are short: drawn as before if (skip && sampHasSkip(tk.id, skipKey, skip)) return full();
+  const iv = sampIv(tk.id); if (!iv.length) return [];
+  const st = Math.max(0.5, Math.min(8, 3 / cam.z)), runs = [];
+  for (let [a0, b0] of iv) { a0 = Math.max(d0, a0); b0 = Math.min(d1, b0); if (b0 < a0) continue; const o = []; let k = Math.max(0, Math.floor((a0 - d0) / st));
+    for (let d = d0 + k * st; d < d1 && d <= b0 + st; k++, d = d0 + k * st) o.push(tk.P(d)); if (b0 + st >= d1) o.push(tk.P(d1)); runs.push(skip ? o.filter(p => !skip(p)) : o); }
+  return runs; }
 let bedImg = null;
 // BEGIN SWITCH TIES (Nov 15, Stephen + Ricky's prototype spec + Danny's handoff cody-switch-ties-spec-2026-11-15.md).
 // One colour (#5c4835) for every tie, no alpha, no second layer. Each tie is laid once: at a turnout the straight (N) leg owns
@@ -2554,7 +2593,7 @@ function tieExtend(u, q, p, tk, o) { // widen [o0, o1] for a tie q ft past u's p
   if (q <= u.qZ) { const r = u.R(q), sep = tieSep(p, r), cap = tieLatCap(tk, p, sep > 0 ? 1 : -1); if (sep > 0) o[1] = Math.max(o[1], Math.min(sep + TIE_H, cap)); else o[0] = Math.min(o[0], Math.max(sep - TIE_H, -cap)); }
   if (u.hb.some(h => Math.abs(h - q) < 0.05)) { const sd = u.hbW[0] * -Math.sin(p[2]) + u.hbW[1] * Math.cos(p[2]); if (sd > 0) o[1] = Math.max(o[1], u.hbReach); else o[0] = Math.min(o[0], -u.hbReach); return true; } return false; }
 function drawTies(L, TU, vis, band) {
-  if (band) { for (const tk of L) { const q = samp(tk, 0, tk.bl || tk.len).filter(p => !tieSkipBand(p)); if (q.length > 1) polyS(q.map(p => offS(p, TIE_H)).concat(q.map(p => offS(p, -TIE_H)).reverse()), TIE_BAND); } return; }
+  if (band) { for (const tk of L) for (const q of sampVis(tk, 0, tk.bl || tk.len, 'band', tieSkipBand)) { if (q.length > 1) polyS(q.map(p => offS(p, TIE_H)).concat(q.map(p => offS(p, -TIE_H)).reverse()), TIE_BAND); } return; }
   const skip = {}, longT = {}; let gU = null;
   for (const u of TU) { tieTurnInfo(u); const s = SWITCHES[u.k]; if (!s) { skip[TIE_SYN_R] = u.qZ; gU = u; continue; } skip[s.R[0] + s.R[1]] = Math.max(skip[s.R[0] + s.R[1]] || 0, u.qZ); (longT[s.N[0] + s.N[1]] = longT[s.N[0] + s.N[1]] || []).push(u); }
   const P = new Path2D(), HB = new Path2D(), [vL, vR] = visX(); // HB: the headblocks, filled last so they lie whole over the machine's ballast patch
@@ -2562,7 +2601,8 @@ function drawTies(L, TU, vis, band) {
     if (tk.nw !== undefined) { const y0 = tk.P(0)[1]; ds = []; for (let d = Math.ceil(y0 / TIE_SP) * TIE_SP - y0; d < d1; d += TIE_SP) ds.push(d); }
     else if (T0) ds = tieDsOf(tk.id);
     else { const a = tk.P(0)[0]; let d0 = Math.max(0.9, vL - 20 - a + 0.9); d0 = Math.ceil((a + d0) / TIE_SP) * TIE_SP - a; ds = []; for (let d = d0; d < Math.min(d1, vR + 20 - a); d += TIE_SP) ds.push(d); }
-    for (const d of ds) { if (d > d1) break; const p = tk.P(d); if (!vis(p) || tieSkipPt(tk, p)) continue;
+    const ivs = tk.tt && T0 ? sampIv(tk.id) : null; let ivk = 0; // Nov 16: skip ties on stretches nowhere near the screen (no ptAt for them)
+    for (const d of ds) { if (d > d1) break; if (ivs) { while (ivk < ivs.length && ivs[ivk][1] < d) ivk++; if (ivk >= ivs.length) break; if (d < ivs[ivk][0]) continue; } const p = tk.P(d); if (!vis(p) || tieSkipPt(tk, p)) continue;
       if (T0) { if (skip[tk.id + 'a'] && d < skip[tk.id + 'a']) continue; if (skip[tk.id + 'b'] && d > tk.len - skip[tk.id + 'b']) continue; }
       const o = [-TIE_H, TIE_H]; let hb = false;
       if (T0) for (const e of ['a', 'b']) for (const u of (longT[tk.id + e] || [])) hb = tieExtend(u, e === 'a' ? d : tk.len - d, p, tk, o) || hb;
@@ -2583,14 +2623,13 @@ function tieLatCap(tk, p, sg) { // PC double track: a PC track's long ties end e
 function drawRails() { const L = trkList(), TU = turns(), [vL, vR] = visX();
   const vis = p => p[0] > vL - 40 && p[0] < vR + 40;
   // ballast: toe then shoulder
-  for (const tk of L) {
-    const q = samp(tk, 0, tk.bl || tk.len).filter(p => !efInBurgessPad(p[0], p[1]));
+  const padSkip = p => efInBurgessPad(p[0], p[1]), BAL = L.map(tk => sampVis(tk, 0, tk.bl || tk.len, 'pad', padSkip)); // Nov 16: visible stretches only, worked out once for both passes
+  L.forEach((tk, i) => { for (const q of BAL[i])
     if (q.length > 1) polyS(q.map(p => offS(p, 8.2)).concat(q.map(p => offS(p, -8.2)).reverse()), '#7a7266');
-  }
-  for (const tk of L) {
-    const q = samp(tk, 0, tk.bl || tk.len).filter(p => !efInBurgessPad(p[0], p[1]));
+  });
+  L.forEach((tk, i) => { for (const q of BAL[i])
     if (q.length > 1) polyS(q.map(p => offS(p, 6.5)).concat(q.map(p => offS(p, -6.5)).reverse()), '#948b7d');
-  }
+  });
   // fuel spur: Danny's spur bed (21 x 13 ft tile), centred on the track under the rails
   if (!globalThis.EF_PHASE1_REVIEW) { const bi = img(BA('effingham-spur-bed@2x')); if (ok(bi)) { for (let d = T.FL.len - FD.railEnd + 10; d < T.FL.len; d += 20) { const p = ptAt('FL', Math.min(T.FL.len, d + 10.5)); if (!vis(p)) continue;
       g.save(); g.translate(sx(p[0]), sy(p[1])); g.scale(1, K); g.rotate(p[2]); g.drawImage(bi, -10.75 * cam.z, -6.5 * cam.z, 21.5 * cam.z, 13 * cam.z); g.restore(); } }
@@ -2613,7 +2652,7 @@ function drawRails() { const L = trkList(), TU = turns(), [vL, vR] = visX();
     trimA[s.N[0] + s.N[1] + u.inN] = PL; trimA[s.R[0] + s.R[1] + u.inR] = PL; }
   g.lineCap = 'round';
   for (const tk of L) for (const o of [2.35, -2.35]) { let a = 0, b = tk.len; const sg = o > 0 ? 1 : -1; if (T[tk.id]) { a = trimA[tk.id + 'a' + sg] || 0; b = tk.len - (trimA[tk.id + 'b' + sg] || 0); } if (b <= a) continue;
-    const qq = globalThis.EF_INDUSTRY_LAYOUT ? samp(tk,a,b) : samp(tk, a, b).filter(p => !efInBurgessPad(p[0], p[1]));
+    for (const qq of (globalThis.EF_INDUSTRY_LAYOUT ? sampVis(tk, a, b) : sampVis(tk, a, b, 'pad', p => efInBurgessPad(p[0], p[1]))))
     if (qq.length > 1) railStroke(qq.map(p => offS(p, o))); }
   drawEFIndustryDiamondGuards();
   // PC locked switch: our PCX's inner rail is trimmed too
@@ -4258,6 +4297,7 @@ function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV
   let best = null;
   for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 2) { const p = ptAt(t, d), e = Math.hypot(p[0] - x.x, p[1] - x.y); if (!best || e < best.e) best = { t, d, e }; }
   if (!best || best.e > 40) { toast("Couldn't find that spot on the Effingham map. Stopped at the edge.", 'bad'); return; }
+  if ((S.mode || 'drive') !== 'tap') { const mb = document.querySelector('[data-mode="tap"]'); if (mb && mb.onclick) mb.onclick(); else S.mode = 'tap'; } // Nov 16 (Stephen): a run to a spot picked on the town tab arrives in Tap mode like Mattoon (it used to roll in under Drive, so taps and the tower requests didn't work)
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('effingham', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 200 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
