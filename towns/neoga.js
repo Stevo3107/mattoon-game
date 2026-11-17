@@ -113,7 +113,7 @@ const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH
   'EF GLASS': ['Midstate Glass Container Co.', 'Effingham, IL'],
   'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'] };
 // car owner's home / pool for empty returns
-const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
+const WB_HOME = { IC: ['ICG car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
   ACFX: ['ACF Industries lessee', 'St. Charles, MO'], UTLX: ['Union Tank Car lessee', 'Whiting, IN'], PC: ['PC car distributor', 'Philadelphia, PA'], CNW: ['C&NW car distributor', 'Chicago, IL'],
   'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'],
   NATX: ['NATX lessee (North American)', 'Chicago, IL'], SUNX: ['Sun Energy', 'Columbus, OH'], PRR: ['PC car distributor (ex-PRR)', 'Philadelphia, PA'],
@@ -121,14 +121,25 @@ const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illin
   ACY: ['Akron, Canton & Youngstown', 'Akron, OH'],
   BN: ['Burlington Northern', 'St. Paul, MN'],
   GN: ['Great Northern', 'St. Paul, MN'] };
-const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'IC–Mattoon–NI&I' : `${road}–${j}–IC–Mattoon–NI&I`; };
-const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–IC' : `NI&I–Mattoon–IC–${j}–${road}`; };
+const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'ICG–Mattoon–NI&I' : `${road}–${j}–ICG–Mattoon–NI&I`; };
+const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–ICG' : `NI&I–Mattoon–ICG–${j}–${road}`; };
 const wbRouteOutVia = (road, via) => { if (via === 'NW') return road === 'N&W' ? 'NI&I–Neoga–N&W' : `NI&I–Neoga–N&W–${road}`;
   if (via === 'PC') return road === 'PC' ? 'NI&I–Effingham–PC' : `NI&I–Effingham–PC–${road}`;
   return wbRouteOut(road); };
 const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon' };
 const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', ps2: 'LO PS-2 35FT', cf: 'LO CTR FLOW 54FT', cf2: 'LO CTR FLOW 40FT', gon: 'GB GON 52FT' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
+// Nov 17 (Stephen): routing follows the far end. wbPickStrict = a firm of this kind that really ships / takes this commodity (null if none: then the
+// car owner's road is the proxy). wbPickRoute = the same, preferring firms whose road's main route to this town is the interchange the car used.
+function wbPickStrict(kind, c, r, filt) { const L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && (!filt || filt(p))); return L.length ? L[Math.floor(r() * L.length)] : null; }
+function wbPickRoute(kind, c, r, town, via) { const SH = NII_SHARED; const k2 = ({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[kind];
+  for (const k of [kind, k2].filter(Boolean)) { const p = wbPickStrict(k, c, r, p => SH.routeMain(p[0], town) === via) || wbPickStrict(k, c, r); if (p) return p; } return null; }
+// inbound routing text for a car that came in by `via` for a customer in `town` (ICG at Mattoon, N&W at Neoga, PC at Effingham), then by the NI&I
+function wbRouteInVia(road, via, town) { const TN = { mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' }, ixTown = via === 'NW' ? 'neoga' : via === 'PC' ? 'effingham' : 'mattoon';
+  const tail = ixTown === town ? '' : '–' + TN[town];
+  if (via === 'NW') return (road === 'N&W' ? 'N&W–Neoga–NI&I' : `${road}–N&W–Neoga–NI&I`) + tail;
+  if (via === 'PC') return (road === 'PC' ? 'PC–Effingham–NI&I' : `${road}–PC–Effingham–NI&I`) + tail;
+  return wbRoute(road in WB_JCT && road !== 'PC' && road !== 'N&W' ? road : 'IC') + tail; }
 
 const VISIT = !!NII.visit; // Look around (Nov 1): view-only visit, the train is in another town; nothing here is run or saved
 const $ = id => document.getElementById(id), C = window.NII_CORE, E = NII.env(), M = E.towns.mattoon || (E.towns.mattoon = {});
@@ -306,10 +317,16 @@ function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC
     const used = NII_SHARED.usedNums(E, S.cuts.flatMap(c => c.veh).concat(S.pendIC || [], S.nwPend || []), NEW_CARS);
     const num = range ? NII_SHARED.freeNum(range, v.road, painted, used, R) : null; if (num) v.num = num; else while (used.has(v.road + ' ' + v.num)) v.num = String(+v.num + 1 + Math.floor(R() * 50));
     NEW_CARS.push(v); if (NEW_CARS.length > 200) NEW_CARS.shift(); }
+  if (dest !== 'NG COAL' && dest !== 'NG OIL') { // Nov 17 (Stephen): route by the far end (the shipper of a load, else the car owner's road), fewest handoffs; 20% the other route.
+    // Nov 17 (Stephen): ICG-routed cars come by the ICG to Mattoon (ICG Inbound) and the NI&I brings them down; N&W-routed cars come on the N&W Interchange. Coal and oil keep their
+    // shipper-by-road pairs (Southern Illinois Coal / Bayou Refining on the ICG, Big Sandy / Maumee on the N&W), which already match the route.
+    const SH = NII_SHARED, kd = kindOf(v) || 'box'; let road = null; delete v.far;
+    if (v.load) { const p = wbPickStrict(kd, v.load.c, R); if (p) { v.far = { dir: 'in', road: p[0], city: p[1], state: p[2], name: p[3] }; road = p[0]; } }
+    const pr = SH.pickRoute(road || SH.ownerRoad(v), 'neoga', R, ['IC', 'NW']); via = pr.via; v.inMain = pr.main; }
   v.loaded = !!v.load; v.wt = 30 + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
 const SHIP = { coal: { IC: ['Southern Illinois Coal Co.', 'Marion, IL', 'IC'], NW: ['Big Sandy Coal Co.', 'Williamson, WV', 'N&W'] }, tank: { IC: ['Bayou Refining Co.', 'Norco, LA', 'IC'], NW: ['Maumee Refining Co.', 'Toledo, OH', 'N&W'] } };
-function routeIn(road, via) { return via === 'NW' ? (road === 'N&W' ? 'N&W–Neoga–NI&I' : `${road}–N&W–Neoga–NI&I`) : wbRoute(road === 'N&W' || !(road in WB_JCT) ? 'IC' : road) + '–Neoga'; }
+function routeIn(road, via) { return wbRouteInVia(road, via, 'neoga'); } // Nov 17: same text in every town
 function routeOut(road, via) { if (via === 'NW') return road === 'N&W' ? 'NI&I–Neoga–N&W' : `NI&I–Neoga–N&W–${road}`;
   if (via === 'PC') return road === 'PC' ? 'NI&I–Neoga–Effingham–PC' : `NI&I–Neoga–Effingham–PC–${road}`;
   return 'NI&I–Neoga–Mattoon–' + wbRouteOut(road === 'N&W' || !(road in WB_JCT) ? 'IC' : road).replace(/^NI&I–Mattoon–/, ''); }
@@ -318,13 +335,13 @@ function waybill(v) { fixLoad(v); if (v.wb && v.load && /^(Coal \(stoker\)|Fuel 
   const r = seeded((+v.num || 7) * 31 + key.length * 977), road = roadOf(v), kind = kindOf(v), cu = DEST[v.dest];
   let w;
   if (cu) { // inbound to a Neoga customer
-    if (v.loaded) { const sh = kind === 'coal' || kind === 'tank' ? SHIP[kind][v.via] : (() => { const p = wbPick(kind === 'box40' ? 'box40' : 'box', v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
+    if (v.loaded) { const sh = (v.far && v.far.dir === 'in') ? [v.far.name, v.far.city + ', ' + v.far.state, v.far.road] : kind === 'coal' || kind === 'tank' ? SHIP[kind][v.via === 'NW' ? 'NW' : 'IC'] : (() => { const p = wbPick(kind === 'box40' ? 'box40' : 'box', v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
       w = { from: `${sh[0]}, ${sh[1]}`, fromRoad: sh[2], to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(sh[2], v.via), cons: cu.name, what: v.load.c }; }
     else w = { from: (WB_HOME[road] || WB_HOME.IC).join(', '), fromRoad: road, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(road, v.via), cons: cu.name, what: 'EMPTY for loading' }; }
   else if (v.dest === 'IC-INT' || v.dest === 'NW-INT' || v.dest === 'PC-INT') { const via = v.outVia || (v.dest === 'NW-INT' ? 'NW' : v.dest === 'PC-INT' ? 'PC' : 'IC'), home = WB_HOME[road] || WB_HOME.IC, at = DEST[v.from] || DEST['NG HOUSE'];
-    if (v.loaded) { const p = v.niiOut, cn = p ? [p.road, p.city, p.state, p.name] : (via === 'NW' ? ['N&W', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : via === 'PC' ? ['PC', 'Indianapolis', 'IN', 'Hoosier Canning Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']); w = { from: `${at.name}, Neoga, IL`, fromRoad: 'NI&I', to: `${cn[1]}, ${cn[2]}`, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
-    else w = { from: `${at.name}, Neoga, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'NW' ? 'N&W' : 'IC', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
-    if (v.reassigned) w.route += ' (REROUTED: car reassigned, was via ' + (via === 'NW' ? 'IC' : 'N&W') + ')'; }
+    if (v.loaded) { const p = v.niiOut || (v.far && v.far.dir === 'out' ? v.far : null), cn = p ? [p.road, p.city, p.state, p.name] : (via === 'NW' ? ['N&W', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : via === 'PC' ? ['PC', 'Indianapolis', 'IN', 'Hoosier Canning Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']); w = { from: `${at.name}, Neoga, IL`, fromRoad: 'NI&I', to: `${cn[1]}, ${cn[2]}`, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
+    else w = { from: `${at.name}, Neoga, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'NW' ? 'N&W' : via === 'PC' ? 'PC' : 'ICG', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
+    if (v.reassigned) { const was = v.mainVia || (via === 'NW' ? 'IC' : 'NW'); w.route += ' (REROUTED: car reassigned, was via ' + (was === 'PC' ? 'PC' : was === 'NW' ? 'N&W' : 'ICG') + ')'; } }
   else if (v.dest === 'RA' || v.idle || !v.dest) w = { from: 'Neoga, IL', fromRoad: 'NI&I', to: 'Neoga, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'Held in the yard', what: v.load ? v.load.c : 'EMPTY' };
   else w = { from: 'Neoga, IL', fromRoad: 'NI&I', to: 'Mattoon, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'Back to Mattoon', what: v.load ? v.load.c : 'EMPTY' };
   return (v.wb = Object.assign(w, { key, no: String(10000 + Math.floor(r() * 89999)), date: wbDate(E.time), kname: kind === 'coal' ? 'HT HOPPER 40FT' : WB_KNAME[kind] || 'XM BOX', lbs: v.load ? (v.load.t * 2000).toLocaleString() : '', loaded: !!v.loaded })); }
@@ -361,7 +378,7 @@ function startWorkN(v, sp) { if (typeof v.work === 'number') v.work = { until: E
 function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.work || !DEST[v.dest]) continue; if (typeof v.work === 'number') { const sp = carAtSpot(v, q.pm); if (sp) startWorkN(v, sp); else continue; }
     if (!SH.ngRelease(v, E.time)) continue; const via = v.outVia;
     if (SH.isNii && SH.isNii(v) && v.loaded) { book('earn', ECON.NII_LOADED); IND(v.from, 'inc', ECON.NII_LOADED); }
-    const tag = !v.loaded && SH.isNii && SH.isNii(v) ? 'the run-around (company empty)' : via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : via === 'PC' ? 'PC (take it to Effingham)' : via ? 'IC (take it to Mattoon)' : 'the yard';
+    const tag = !v.loaded && SH.isNii && SH.isNii(v) ? 'the run-around (company empty)' : via === 'NW' ? 'N&W (leave it on the N&W Interchange)' : via === 'PC' ? 'PC (take it to Effingham)' : via ? 'ICG (take it to Mattoon)' : 'the yard';
     toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${tag}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
 function advance(dt) { // game time passes in Neoga: car hire, work at the spots, demurrage
   if (dt <= 0) return; const t0 = E.time; E.time += dt; S.clockT = E.time; /* Nov 16: last time this town was run (catch-up) */ let hire = 0;
@@ -380,7 +397,7 @@ function advance(dt) { // game time passes in Neoga: car hire, work at the spots
 }
 function onWyeInterchange(c) { return c.path.every(g => g.t === 'NWI') && !c.veh.some(isLoco); } // N&W Interchange (one track, in + out)
 // Nov 2: Neoga's customers are locked until the railroad's reputation reaches 100 (one-time, permanent flag in Mattoon's record)
-const NG_MSG = '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; N&amp;W cars are set on the N&amp;W Interchange.</p>';
+const NG_MSG = '<h2>Neoga is open for business!</h2><p>Your reputation reached 100. <b>Neoga Freight House</b> and <b>Miller &amp; Sons Fuel</b> will start getting cars. ICG cars come by the ICG to Mattoon, and the NI&amp;I brings them down; N&amp;W cars are set on the N&amp;W Interchange.</p>';
 function ngOpen() { return !!(M.unlocks && M.unlocks.neoga); }
 function ngNwOpen() { return ngOpen() || (M.rep || 0) >= 100; } // Nov 13 (Stephen): N&W stays idle until 100 reputation
 function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 100) return; (M.unlocks || (M.unlocks = {})).neoga = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
@@ -393,16 +410,18 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
     if (r.fee) { book('crew', r.fee); IND('NW', 'cost', r.fee); }
     if (r.cuts) note(SH.nwMsg(r, v => roadOf(v) + ' ' + v.num).replace(/^./, x => x.toUpperCase()) + '.'); }
   if (ngOpen()) { const bl = BFNX.newDay(d); if (bl.length) note(bl.join('. ') + '.'); }
+  let viaIC = 0;
   if (ngNwOpen()) { const nw = (S.nwPend || []).splice(0); delete S.nwPend; // Nov 13: do not add N&W cars to NWI before 100 reputation; leftover cars already on the track stay put
   { const specs = (S.awayIn || []).splice(0); delete S.awayIn; // Nov 4: days rolled by Mattoon while the crew was away (shared.js ngAway), then any left
     if (ngOpen()) for (let dd = Math.max(d0 + 1, (S.rollDay || 0) + 1, d - 13); dd <= d; dd++) specs.push(...SH.ngRoll(dd, NII.gameSeed(dd)));
-    S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; (o.via === 'NW' ? nw : S.pendIC).push(v); } }
+    S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; if (v.via === 'NW') nw.push(v); else { (M.efIc = M.efIc || []).push(v); viaIC++; } } } // Nov 17 (Stephen): ICG cars by Mattoon, never the N&W track
   { const due = (S.nwBack || []).filter(b => b.back <= d); if (due.length) { S.nwBack = S.nwBack.filter(b => b.back > d); nw.push(...due.map(b => b.v)); const hire = Math.round(due.reduce((a, b) => a + (b.back - b.out) * 24 * ECON.DEM[0][1], 0) * 100) / 100; if (hire) { book('hire', hire); IND('NW', 'cost', hire); }
       note(`The N&W brought back ${due.length} car${due.length > 1 ? 's' : ''} it took by mistake (${due.map(b => roadOf(b.v) + ' ' + b.v.num + ', ' + (b.back - b.out) + ' day' + (b.back - b.out > 1 ? 's' : '')).join('; ')}): car hire $${hire.toFixed(2)}.`); } } // set out below, waiting for room like any N&W car
-  NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
+  NII.shuffle(nw, R);
   if (nw.length) { let k = nw.length; while (k > 0 && !setOutNWI(nw.slice(0, k))) k--; // Nov 4: as many as fit; the rest wait (was all-or-nothing, so a big batch never came)
     if (k) { IND('NW', 'in', k); note(`N&W left ${k} car${k > 1 ? 's' : ''} on the N&W Interchange.`); } if (k < nw.length) { S.nwPend = nw.slice(k); note(`The N&W Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } } }
   dropIC();
+  if (viaIC) note(`${viaIC} ICG car${viaIC > 1 ? 's' : ''} for Neoga ${viaIC > 1 ? 'are' : 'is'} coming by the ICG to Mattoon (ICG Inbound); bring ${viaIC > 1 ? 'them' : 'it'} down from there.`);
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
 // Nov 3 (late): the N&W Interchange's clearance point. No car may stand past it (closer to the N&W main than 13 ft track centres)
@@ -413,10 +432,13 @@ function clampNWI() { const K = nwiClear(); let n = 0; for (const c of S.cuts) {
 function setOutNWI(cars) { let hd = nwiClear() - 2; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)).map(x => x - 2));
   const L = cars.reduce((a, v) => a + vL(v), 0), c = placeCut(cars, cars.map(() => true), 'NWI', hd, 1);
   if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) return false; S.cuts.push(c); return true; }
-// Nov 2 fix: IC cars for Neoga are set out on the interchange by the IC way freight, never hung on the player's train
+// Nov 17 (Stephen): no ICG way freight at Neoga any more. ICG cars for Neoga still waiting from an older save go by the ICG to Mattoon (ICG Inbound) instead.
 function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendIC.length;
-  if (setOutNWI(S.pendIC.slice())) { S.pendIC = []; note(`The IC way freight set out ${n} car${n > 1 ? 's' : ''} for Neoga on the interchange track.`); }
-  else note(`${n} IC car${n > 1 ? 's' : ''} for Neoga wait at Mattoon: the interchange track is full.`); }
+  M.efIc = (M.efIc || []).concat(S.pendIC); S.pendIC = []; note(`${n} ICG car${n > 1 ? 's' : ''} for Neoga ${n > 1 ? 'are' : 'is'} coming by the ICG to Mattoon (ICG Inbound); bring ${n > 1 ? 'them' : 'it'} down from there.`); }
+// a cut set on the runaround's far end, coupled behind what is already there; false if no room (cars from Mattoon land here)
+function setOutRA(cars) { if (!T.RA || !cars.length) return false; let hd = T.RA.len - 6; for (const o of S.cuts) if (o.path.length && o.path.every(g => g.t === 'RA')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1) - 2));
+  const L = cars.reduce((a, v) => a + vL(v), 0); if (hd - L < 6) return false; const c = placeCut(cars, cars.map(() => true), 'RA', hd, 1);
+  if (S.cuts.some(o => segsOverlap(o, c, 2))) return false; S.cuts.push(c); return true; }
 function jobs() { const L = [], cars = standingCars(); for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest] && ngHeld(v, cars)) continue; // HOLD: no job until a spot opens (Mattoon's CIC rule)
     if (DEST[v.dest]) { const sp = carAtSpot(v, q.pm), what = v.dest === 'NG HOUSE' ? 'the freight house door or team spot' : v.dest === 'NG COAL' ? 'coal pit 1 or 2' : 'the fuel oil rack';
@@ -424,7 +446,7 @@ function jobs() { const L = [], cars = standingCars(); for (const q of cars) { c
     else if (v.dest === 'NW-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the N&W - leave it on the N&W Interchange${v.reassigned ? ' (rerouted)' : ''}` });
     else if (v.dest === 'PC-INT') L.push({ car: v, text: `${w}: to the PC - take it to Effingham${v.reassigned ? ' (rerouted)' : ''}` });
     else if (SH.isNii && SH.isNii(v) && !v.loaded && (v.dest === 'RA' || v.idle || !v.dest)) L.push({ car: v, text: `${w}: company empty - hold on the run-around` });
-    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}${!q.live && onWyeInterchange(q.c) && q.c.veh.some(o => o.dest === 'NW-INT') ? ` - WARNING: coupled to N&W cars, the N&W will take it ($${SH.NW_WRONG_FEE} fee)` : ''}` });
+    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the ICG - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}${!q.live && onWyeInterchange(q.c) && q.c.veh.some(o => o.dest === 'NW-INT') ? ` - WARNING: coupled to N&W cars, the N&W will take it ($${SH.NW_WRONG_FEE} fee)` : ''}` });
     else if (v.mattoonN) L.push({ car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): for ${v.dest} in Mattoon - came off the N&W, take it to Mattoon` }); }
   return L; }
 // ================================================================= TOWER & SIGNALS (aspect logic only; drawing below)
@@ -633,9 +655,9 @@ function throwSw(k, X, Y) { const s = SWITCHES[k];
   S.sw[k] = S.sw[k] === 'N' ? 'R' : 'N'; TAP_FLASH = { x: X, y: Y, t: performance.now(), bad: false }; SH.sfx('sw'); save(); return true; }
 // ================================================================= TRAVEL
 // Nov 3 fix: an inbound loaded car for a Neoga customer that the player never coupled to himself is a stray from the old 'IC cars ride down on your train'
-// rule (it then rode back to Mattoon and down again every trip). Take strays off the ends of a cut and set them out on the interchange track.
+// rule (it then rode back to Mattoon and down again every trip). Take strays off the ends of a cut (Nov 17: N&W cars to the N&W Interchange, others to the runaround).
 // Nov 3 (late): a car the player never coupled himself (no ngPicked) that is still inbound and unworked comes off the train wherever it
-// sits (end or middle, loaded or empty). The cars on either side close up toward the engine; the car goes to the interchange track.
+// sits (end or middle, loaded or empty). The cars on either side close up toward the engine.
 const strayCar = v => !isLoco(v) && v.type !== 'caboose' && v.ngIn && !v.ngPicked && !v.doneAt && !v.spotT && !v.work;
 function pullOut(c, i) { const pre = c.veh.slice(0, i).reduce((a, v) => a + vL(v), 0), Ls = vL(c.veh[i]), [pa, rest] = splitPath(c, pre), [, pb] = splitPath({ path: rest }, Ls);
   const A = { veh: c.veh.slice(0, i), aT: c.aT.slice(0, i), path: pa }, B = { veh: c.veh.slice(i + 1), aT: c.aT.slice(i + 1), path: pb }, v = c.veh[i];
@@ -644,7 +666,11 @@ function pullOut(c, i) { const pre = c.veh.slice(0, i).reduce((a, v) => a + vL(v
   return v; }
 function stripStrays(c) { const out = []; if (!c) return 0;
   for (let k = 0; k < 60 && c.veh.length > 1; k++) { const i = c.veh.findIndex(strayCar); if (i < 0) break; out.push(pullOut(c, i)); }
-  if (out.length) { for (const v of out) { if (v.ngDest) { v.dest = v.ngDest; } delete v.ngDest; } S.pendIC = (S.pendIC || []).concat(out); dropIC(); toast(`${out.length} car${out.length > 1 ? 's' : ''} you never coupled came off your train and went to the interchange track.`); } return out.length; }
+  if (out.length) { for (const v of out) { if (v.ngDest) { v.dest = v.ngDest; } delete v.ngDest; } // Nov 17: N&W-routed cars back to the N&W Interchange, the rest to the runaround (no ICG way freight here)
+    const nwC = out.filter(v => v.via === 'NW'), icC = out.filter(v => v.via !== 'NW'), where = [];
+    if (nwC.length) { if (setOutNWI(nwC)) where.push('the N&W Interchange'); else { S.nwPend = (S.nwPend || []).concat(nwC); where.push('the N&W (the interchange is full)'); } }
+    if (icC.length) { if (setOutRA(icC)) where.push('the runaround'); else { M.efIc = (M.efIc || []).concat(icC); where.push('the ICG at Mattoon (the runaround is full)'); } }
+    toast(`${out.length} car${out.length > 1 ? 's' : ''} you never coupled came off your train and went to ${where.join(' and ')}.`); } return out.length; }
 function arrive() { const tr = E.trainIn; if (!tr) return; if (E.modeIn === 'tap' || E.modeIn === 'drive') S.mode = E.modeIn; delete E.modeIn; /* Nov 16: same Drive / Tap as the town you left */ ARRIVED_FROM = (E.travel && E.travel.from) || null; if (ARRIVED_FROM && ARRIVED_FROM === (NII.TOWNS[HERE] || {}).south) return arriveSouth(tr); const veh = tr.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = tr.map(v => v.aFrontN !== false);
   const L = veh.reduce((a, v) => a + vL(v), 0), c = { id: 'c' + (S.nid++), veh, aT, path: [{ t: 'M1', dir: 1, d0: 0, d1: 0 }] }; extendHead(c, L + 15); trimTail(c, 15);
   S.cuts.push(c); NII.trainDelivered(); delete E.travel;
@@ -1248,13 +1274,13 @@ function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('neoga', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Neoga jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Neoga\'s customers open at 100 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
-  <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the IC (down from Mattoon) or the N&amp;W (set on the N&amp;W Interchange; leave N&amp;W cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
+  <p style="font-size:13px">Customers: <b>Neoga Freight House</b> (house track, 2 spots) and <b>Miller &amp; Sons Fuel</b> (coal pits 1 &amp; 2, fuel oil rack). Cars come by the road with the fewest handoffs from where they were shipped: ICG cars by the ICG to Mattoon (bring them down; they wait on ICG Inbound or in the Mattoon yard), N&amp;W cars on the N&amp;W Interchange here (leave N&amp;W cars there too). Outbound cars go the same way for where they are going (ICG cars back to Mattoon); 1 in 5 takes the other route.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length, mine = isLoco(v) && myEngineId() === v.id;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
   const locoNote = isLoco(v) ? (mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.') : '';
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it to Mattoon.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: leave it on the N&amp;W Interchange.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: take it to Effingham.' : v.dest === 'RA' || v.idle ? '<b>Hold</b>: company empty, leave it on the run-around.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && !isLoco(v) ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for ICG</b>: take it to Mattoon.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: leave it on the N&amp;W Interchange.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: take it to Effingham.' : v.dest === 'RA' || v.idle ? '<b>Hold</b>: company empty, leave it on the run-around.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && !isLoco(v) ? ` · at the spot ${Math.floor(v.work)}/${WORK_H} h` : ''}</p>
   <div class="btns">${isLoco(v) && !mine ? '<button data-a="makeEngine">Make this my engine</button>' : ''}${mine ? '<button data-a="giveUpEngine">Give up engine</button>' : ''}${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live && !isLoco(v) ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
@@ -1333,7 +1359,9 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
 const NG_YARD_TS = ['RA']; // Nov 16 fix: declared before load runs; the crew catch-up used it too early ('Cannot access NG_YARD_TS before initialization') and skipped the crew's work
-build(); nwiClear(); if (!VISIT) { try { ngCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); if (S.fixBack) { delete S.fixBack; try { dropIC(); } catch (e) { } } /* Nov 16: cars Mattoon sent back (a crew had pulled them off the N&W Interchange by mistake) go straight back on the interchange track */ releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
+try { NII_SHARED.setPlacePicker((v, c, r) => { const k = kindOf(v) || 'box'; return wbPickStrict(k, c, r) || wbPickStrict(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[k] || 'none', c, r); }); } catch (e) { } // Nov 17: consignees for released loads (routing follows the far end)
+build(); nwiClear(); if (!VISIT && S.pendIC && S.pendIC.length) { try { dropIC(); save(); } catch (e) { } } // Nov 17: older saves' ICG cars waiting for the way freight go by Mattoon
+build(); nwiClear(); if (!VISIT) { try { let n = 0; for (const c of S.cuts) { const ix = (c.path || []).length && onWyeInterchange(c); for (const v of c.veh || []) if (!isLoco(v) && v.type !== 'caboose' && SH.repairRoute(v, 'neoga', ix)) n++; } if (n) console.log('route repair (neoga): ' + n + ' car(s)'); } catch (e) { console.warn('route repair', e); } /* Nov 17: old saves' released cars get today's routing */ try { ngCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); if (S.fixBack) { delete S.fixBack; try { dropIC(); } catch (e) { } } /* Nov 16: cars Mattoon sent back (a crew had pulled them off the N&W Interchange by mistake) go straight back on the interchange track */ releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
 // Nov 13 (Stephen): the call board works from Neoga too (crews are still only called where they are based); the crews' clock runs while you are here
