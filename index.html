@@ -110,10 +110,16 @@ body.tapmode #drive{display:none}body.tapmode #tap{display:flex}
   #speedo{height:42px}.seg.mode button{width:52px}
   #drive{grid-template-columns:138px 1fr 62px;grid-template-areas:"rev thr thr" "brk brk sand";gap:2px 8px}
   .g-rev .seg button{width:auto}.g-sand .act{font-size:13px;padding:0 2px}
-  #drawerBtn{display:none}body.drawer #controls{display:flex}
-  .seg.mode button{width:46px;font-size:13px}.thr button{min-width:40px}
+  .row.top{gap:4px}#drawerBtn{width:32px}body.drawer #controls{display:none}
+  .seg.mode button{width:42px;font-size:12px}.thr button{min-width:40px}
   .grp>small{font-size:10px}
   #tap{flex-direction:column;align-items:stretch}#tap .big{width:auto}
+  body.drawer #app{grid-template-columns:minmax(0,1fr) 300px;grid-template-rows:auto 1fr auto;grid-template-areas:"top top" "scene scene" "job panel"}
+  body.drawer #panel{border-top:1px solid #c9c0ad;border-left:1px solid #c9c0ad;padding:4px 8px;overflow:hidden;gap:0;height:50px;min-height:0}
+  body.drawer #jobbar{border-left:0;border-bottom:0;border-top:1px solid #c9c0ad;display:flex;align-items:center;gap:8px;min-width:0;height:50px;padding:0 10px;overflow:hidden;line-height:1.2}
+  body.drawer #jobText,body.drawer #jobStatus{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;margin:0}
+  body.drawer #jobText{flex:1 1 auto}body.drawer #jobStatus{flex:0 1 auto;max-width:46%}
+  body.drawer #warn{display:none}
 }
 @media (max-width:370px){#top{gap:4px;padding:6px}.stat{min-width:0;margin-right:4px}.tb,#restartBtn{min-width:40px}#speedo{min-width:72px}#speedo b{font-size:21px}.seg.mode button{width:48px;font-size:13px}#drawerBtn{width:40px}.gauge em{font-size:10.5px}.gauge span{width:27px;font-size:11px}}
 
@@ -278,7 +284,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef123";</script>
+<script>window.NII_BUILD = "mw59ef124";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
