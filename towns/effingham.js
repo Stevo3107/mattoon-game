@@ -111,7 +111,7 @@ const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH
   'EF GLASS': ['Midstate Glass Container Co.', 'Effingham, IL'],
   'EF GRAIN': ['Illini Grain Corp', 'Effingham, IL'] };
 // car owner's home / pool for empty returns
-const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
+const WB_HOME = { IC: ['ICG car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illinois Terminal)', 'Decatur, IL'], UP: ['UP car distributor', 'Omaha, NE'], GATX: ['GATX lessee', 'East Chicago, IN'],
   ACFX: ['ACF Industries lessee', 'St. Charles, MO'], UTLX: ['Union Tank Car lessee', 'Whiting, IN'], PC: ['PC car distributor', 'Philadelphia, PA'], CNW: ['C&NW car distributor', 'Chicago, IL'],
   'N&W': ['N&W car distributor', 'Roanoke, VA'], GTW: ['GTW car distributor', 'Detroit, MI'], NII: ['NI&I car pool', 'Mattoon, IL'],
   NATX: ['NATX lessee (North American)', 'Chicago, IL'], SUNX: ['Sun Energy', 'Columbus, OH'], PRR: ['PC car distributor (ex-PRR)', 'Philadelphia, PA'],
@@ -119,14 +119,25 @@ const WB_HOME = { IC: ['IC car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illin
   ACY: ['Akron, Canton & Youngstown', 'Akron, OH'],
   BN: ['Burlington Northern', 'St. Paul, MN'],
   GN: ['Great Northern', 'St. Paul, MN'] };
-const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'IC–Mattoon–NI&I' : `${road}–${j}–IC–Mattoon–NI&I`; };
-const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–IC' : `NI&I–Mattoon–IC–${j}–${road}`; };
+const wbRoute = road => { const j = WB_JCT[road]; return road === 'IC' ? 'ICG–Mattoon–NI&I' : `${road}–${j}–ICG–Mattoon–NI&I`; };
+const wbRouteOut = road => { const j = WB_JCT[road]; return road === 'IC' ? 'NI&I–Mattoon–ICG' : `NI&I–Mattoon–ICG–${j}–${road}`; };
 const wbRouteOutVia = (road, via) => { if (via === 'NW') return road === 'N&W' ? 'NI&I–Neoga–N&W' : `NI&I–Neoga–N&W–${road}`;
   if (via === 'PC') return road === 'PC' ? 'NI&I–Effingham–PC' : `NI&I–Effingham–PC–${road}`;
   return wbRouteOut(road); };
 const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon' };
 const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', ps2: 'LO PS-2 35FT', cf: 'LO CTR FLOW 54FT', cf2: 'LO CTR FLOW 40FT', gon: 'GB GON 52FT' };
 function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
+// Nov 17 (Stephen): routing follows the far end. wbPickStrict = a firm of this kind that really ships / takes this commodity (null if none: then the
+// car owner's road is the proxy). wbPickRoute = the same, preferring firms whose road's main route to this town is the interchange the car used.
+function wbPickStrict(kind, c, r, filt) { const L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && (!filt || filt(p))); return L.length ? L[Math.floor(r() * L.length)] : null; }
+function wbPickRoute(kind, c, r, town, via) { const SH = NII_SHARED; const k2 = ({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[kind];
+  for (const k of [kind, k2].filter(Boolean)) { const p = wbPickStrict(k, c, r, p => SH.routeMain(p[0], town) === via) || wbPickStrict(k, c, r); if (p) return p; } return null; }
+// inbound routing text for a car that came in by `via` for a customer in `town` (ICG at Mattoon, N&W at Neoga, PC at Effingham), then by the NI&I
+function wbRouteInVia(road, via, town) { const TN = { mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' }, ixTown = via === 'NW' ? 'neoga' : via === 'PC' ? 'effingham' : 'mattoon';
+  const tail = ixTown === town ? '' : '–' + TN[town];
+  if (via === 'NW') return (road === 'N&W' ? 'N&W–Neoga–NI&I' : `${road}–N&W–Neoga–NI&I`) + tail;
+  if (via === 'PC') return (road === 'PC' ? 'PC–Effingham–NI&I' : `${road}–PC–Effingham–NI&I`) + tail;
+  return wbRoute(road in WB_JCT && road !== 'PC' && road !== 'N&W' ? road : 'IC') + tail; }
 
 const VISIT = !!NII.visit;
 const $ = id => document.getElementById(id), C = window.NII_CORE, E = NII.env(), M = E.towns.mattoon || (E.towns.mattoon = {});
@@ -1866,7 +1877,13 @@ function newCar(dest, via) { // an interchange car for a Effingham customer (via
     v = { id, type: art.startsWith('boxcar50') ? 'boxcar50' : 'boxcar40', art, road: art.startsWith('boxcar50') ? (NUMSP[art] && NUMSP[art].road) || road : road, num: numOf(art) || String(Math.floor(R() * 89999) + 10000) };
     if (R() < NII_SHARED.PS1.SHARE * (art.startsWith('boxcar50dd_') ? 1 : 0.5)) { const P = NII_SHARED.PS1.cars[Math.floor(R() * NII_SHARED.PS1.cars.length)], [lo, hi] = P[2]; v.type = 'boxcar50'; v.art = P[0]; v.road = P[1]; v.num = String(lo + Math.floor(R() * (hi - lo + 1))); } // Nov 4: PS-1 50 footers (shared table); any road can reach Effingham by either interchange
     if (R() < 0.75) v.load = { c: ['Groceries', 'Feed', 'Hardware', 'Bagged fertilizer', 'Seed', 'Appliances'][Math.floor(R() * 6)], t: 30 + Math.floor(R() * 15) }; else v.forLoad = { c: 'Bagged grain', t: 40 }; }
-  if (NII_SHARED.biasVia) via = NII_SHARED.biasVia(via, v, R);
+  { // Nov 17 (Stephen): route by the far end. A load from a firm that really ships it: that firm's road; anything else (empties, glass, Burgess): the car owner's road.
+    // Fewest handoffs for that road (ICG cars mostly by the ICG to Mattoon, PC cars by the PC here, other roads the closest: the PC), 20% the other route.
+    const SH = NII_SHARED, kd = kindOf(v) || 'box', glassC = v.load && /^(Glass Sand|Ground Limestone|Soda Ash)$/.test(v.load.c);
+    const gap = v.load && SH.BURGESS_SHIPPER_GAP && SH.BURGESS_SHIPPER_GAP.includes(v.load.c); let road = null; delete v.far;
+    if (v.load && !glassC && !gap) { const p = wbPickStrict(kd, v.load.c, R) || wbPickStrict(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[kd] || 'none', v.load.c, R); if (p) { v.far = { dir: 'in', road: p[0], city: p[1], state: p[2], name: p[3] }; road = p[0]; } }
+    if (v.road === 'SUNX' || v.art === 'tank_sunx_74300') via = 'PC'; // Sun's own tank: always the PC
+    else { const pr = SH.pickRoute(road || SH.ownerRoad(v), 'effingham', R); via = pr.via; v.inMain = pr.main; } }
   { // Nov 4: numbers like Mattoon (shared.js): the painted number if it is free, else one from the road's series; never twice on the railroad (both towns)
     const SER = NUM_SER(), hop = { NS: [9100, 9199], 'PC': [30000, 39998], IC: [70000, 79998], NYC: [860000, 869998] };
     const kind = v.type === 'hopper' ? 'hopper' : v.type === 'hopper_ps2' ? 'ps2' : v.type === 'hopper_cf' ? 'cf' : v.type === 'hopper_cf2' ? 'cf2' : v.type === 'tank' ? 'tank' : v.type === 'tank_lpg' ? 'lpg' : (v.type === 'gondola' || v.type === 'gon') ? 'gon' : v.type === 'boxcar40' ? 'box40' : 'box';
@@ -1882,7 +1899,7 @@ function newCar(dest, via) { // an interchange car for a Effingham customer (via
   v.loaded = !!v.load; v.wt = tare + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
 const SHIP = { coal: { IC: ['Southern Illinois Coal Co.', 'Marion, IL', 'IC'], NW: ['Big Sandy Coal Co.', 'Williamson, WV', 'PC'] }, tank: { IC: ['Bayou Refining Co.', 'Norco, LA', 'IC'], NW: ['Maumee Refining Co.', 'Toledo, OH', 'PC'] } };
-function routeIn(road, via) { return via === 'PC' ? (road === 'PC' ? 'PC–Effingham–NI&I' : `${road}–PC–Effingham–NI&I`) : wbRoute(road === 'PC' || !(road in WB_JCT) ? 'IC' : road) + '–Effingham'; }
+function routeIn(road, via) { return wbRouteInVia(road, via, 'effingham'); } // Nov 17: ICG via Mattoon, N&W via Neoga, PC here
 function routeOut(road, via) { if (via === 'PC') return (road === 'PC' || !(road in WB_JCT) ? 'NI&I–Effingham–PC' : `NI&I–Effingham–PC–${road}`);
   if (via === 'NW') return road === 'N&W' ? 'NI&I–Effingham–Neoga–N&W' : `NI&I–Effingham–Neoga–N&W–${road}`;
   return 'NI&I–Effingham–Mattoon–' + wbRouteOut(road === 'PC' || !(road in WB_JCT) ? 'IC' : road).replace(/^NI&I–Mattoon–/, ''); }
@@ -1896,23 +1913,23 @@ function waybill(v) { fixLoad(v); if (v.wb && v.load && /^(Coal \(stoker\)|Fuel 
       if (glassC) {
         // Ricky / Stephen: real shippers, picked at random per car (soda ash is tied to the car owner). fromRoad is the interchange the car arrived on — no invented serving railroad.
         const sh = (NII_SHARED.pickGlassShipper && NII_SHARED.pickGlassShipper(v, r)) || null;
-        const fromRoad = v.via === 'PC' ? 'PC' : 'IC';
-        const from = sh ? `${sh.name}, ${sh.city}, ${sh.state}` : (fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : 'IC interchange, Mattoon, IL');
+        const fromRoad = v.via === 'PC' ? 'PC' : v.via === 'NW' ? 'N&W' : 'IC';
+        const from = sh ? `${sh.name}, ${sh.city}, ${sh.state}` : (fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : fromRoad === 'N&W' ? 'N&W interchange, Neoga, IL' : 'ICG interchange, Mattoon, IL');
         w = { from, fromRoad, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(fromRoad, v.via), cons: cu.name, what: v.load.c };
       } else if (NII_SHARED.BURGESS_SHIPPER_GAP && NII_SHARED.BURGESS_SHIPPER_GAP.includes(v.load.c)) {
         // No shipper on file for this commodity — do not invent a firm. Bill from the arrival interchange.
-        const fromRoad = v.via === 'PC' ? 'PC' : 'IC';
-        const from = fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : 'IC interchange, Mattoon, IL';
+        const fromRoad = v.via === 'PC' ? 'PC' : v.via === 'NW' ? 'N&W' : 'IC';
+        const from = fromRoad === 'PC' ? 'PC interchange, Effingham, IL' : fromRoad === 'N&W' ? 'N&W interchange, Neoga, IL' : 'ICG interchange, Mattoon, IL';
         w = { from, fromRoad, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(fromRoad, v.via), cons: cu.name, what: v.load.c };
       } else {
-        const sh = kind === 'coal' || kind === 'tank' ? SHIP[kind][v.via] : (() => { const pk = (kind === 'box40' || kind === 'lpg' || kind === 'gon') ? kind : 'box'; const p = wbPick(pk, v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
+        const sh = (v.far && v.far.dir === 'in') ? [v.far.name, v.far.city + ', ' + v.far.state, v.far.road] : (kind === 'coal' || kind === 'tank') && SHIP[kind][v.via] ? SHIP[kind][v.via] : (() => { const pk = (kind === 'box40' || kind === 'lpg' || kind === 'gon') ? kind : 'box'; const p = wbPick(pk, v.load.c, r); return [p[3], p[1] + ', ' + p[2], p[0]]; })();
         w = { from: `${sh[0]}, ${sh[1]}`, fromRoad: sh[2], to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(sh[2], v.via), cons: cu.name, what: v.load.c };
       }
     } else w = { from: (WB_HOME[road] || WB_HOME.IC).join(', '), fromRoad: road, to: `${cu.name}, ${cu.town}`, toRoad: 'NI&I', route: routeIn(road, v.via), cons: cu.name, what: 'EMPTY for loading' }; }
   else if (v.dest === 'IC-INT' || v.dest === 'PC-INT' || v.dest === 'NW-INT') { const via = v.outVia || (v.dest === 'PC-INT' ? 'PC' : v.dest === 'NW-INT' ? 'NW' : 'IC'), home = WB_HOME[road] || WB_HOME.IC, at = DEST[v.from] || DEST['EF HOUSE'];
-    if (v.loaded) { let cn, to; const sk = NII_SHARED.scrapKindOf && NII_SHARED.scrapKindOf(v.load && v.load.c); if (v.niiOut) { cn = [v.niiOut.road, v.niiOut.city, v.niiOut.state, v.niiOut.name]; to = `${cn[1]}, ${cn[2]}`; } else if (sk) { const p = wbPick('gon', v.load.c, r, via === 'PC' ? 'IC' : 'PC') || wbPick('gon', v.load.c, r); cn = [p[0], p[1], p[2], p[3]]; to = (p[1] && p[1] !== '—') ? `${p[1]}, ${p[2]}` : p[3]; } else if (v.load && v.load.c === 'Bottles in cartons') { const rec = (NII_SHARED.pickBottleConsignee && NII_SHARED.pickBottleConsignee(r)) || { name: 'via ' + via, city: via === 'PC' ? 'Effingham' : 'Mattoon', state: 'IL' }; cn = [via, rec.city, rec.state, rec.name]; to = `${rec.city}, ${rec.state}`; } else { cn = via === 'PC' ? ['PC', 'Indianapolis', 'IN', 'Hoosier Canning Co.'] : via === 'NW' ? ['N&W', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']; to = `${cn[1]}, ${cn[2]}`; } w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
-    else w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'PC' ? 'PC' : 'IC', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
-    if (v.reassigned) w.route += ' (REROUTED: car reassigned, was via ' + (via === 'PC' ? 'IC' : 'PC') + ')'; }
+    if (v.loaded) { let cn, to; const sk = NII_SHARED.scrapKindOf && NII_SHARED.scrapKindOf(v.load && v.load.c); if (v.niiOut) { cn = [v.niiOut.road, v.niiOut.city, v.niiOut.state, v.niiOut.name]; to = `${cn[1]}, ${cn[2]}`; } else if (v.far && v.far.dir === 'out') { cn = [v.far.road, v.far.city, v.far.state, v.far.name]; to = `${cn[1]}, ${cn[2]}`; } else if (sk) { const p = wbPick('gon', v.load.c, r, via === 'PC' ? 'IC' : 'PC') || wbPick('gon', v.load.c, r); cn = [p[0], p[1], p[2], p[3]]; to = (p[1] && p[1] !== '—') ? `${p[1]}, ${p[2]}` : p[3]; } else if (v.load && v.load.c === 'Bottles in cartons') { const rec = (NII_SHARED.pickBottleConsignee && NII_SHARED.pickBottleConsignee(r)) || { name: 'via ' + via, city: via === 'PC' ? 'Effingham' : 'Mattoon', state: 'IL' }; cn = [via, rec.city, rec.state, rec.name]; to = `${rec.city}, ${rec.state}`; } else { cn = via === 'PC' ? ['PC', 'Indianapolis', 'IN', 'Hoosier Canning Co.'] : via === 'NW' ? ['N&W', 'Roanoke', 'VA', 'Blue Ridge Grain Co.'] : ['IC', 'New Orleans', 'LA', 'Crescent City Export Grain']; to = `${cn[1]}, ${cn[2]}`; } w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to, toRoad: cn[0], route: routeOut(cn[0], via), cons: cn[3], what: v.load.c }; }
+    else w = { from: `${at.name}, Effingham, IL`, fromRoad: 'NI&I', to: home[1], toRoad: via === 'PC' ? 'PC' : via === 'NW' ? 'N&W' : 'ICG', route: routeOut(road, via), cons: `Empty return: ${home[0]}`, what: 'EMPTY' };
+    if (v.reassigned) { const was = v.mainVia || (via === 'PC' ? 'IC' : 'PC'); w.route += ' (REROUTED: car reassigned, was via ' + (was === 'PC' ? 'PC' : was === 'NW' ? 'N&W' : 'ICG') + ')'; } }
   else if (/^Y[1-4]$/.test(v.dest || '') || v.idle || !v.dest) w = { from: 'Effingham, IL', fromRoad: 'NI&I', to: 'Effingham, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'Held in the yard', what: v.load ? v.load.c : 'EMPTY' };
   else w = { from: 'Effingham, IL', fromRoad: 'NI&I', to: 'Neoga, IL', toRoad: 'NI&I', route: 'Local (NI&I)', cons: 'North to Neoga', what: v.load ? v.load.c : 'EMPTY' };
   const lbs = v.load ? (v.load.lb != null ? v.load.lb : Math.round(v.load.t * 2000)).toLocaleString() : '';
@@ -1963,7 +1980,7 @@ function startWorkN(v, sp) { if (typeof v.work === 'number') v.work = { until: E
 function releaseDue() { for (const q of standingCars()) { const v = q.v; if (!v.work || !DEST[v.dest]) continue; if (typeof v.work === 'number') { const sp = carAtSpot(v, q.pm); if (sp) startWorkN(v, sp); else continue; }
     if (!SH.ngRelease(v, E.time)) continue; const via = v.outVia;
     if (SH.isNii && SH.isNii(v) && v.loaded) { book('earn', ECON.NII_LOADED); IND(v.from, 'inc', ECON.NII_LOADED); }
-    const tag = !v.loaded && SH.isNii && SH.isNii(v) ? 'the yard (company empty)' : via === 'PC' ? 'PC (leave it on the PC Interchange)' : via === 'NW' ? 'N&W (take it to Neoga)' : via ? 'IC (take it to Mattoon)' : 'the yard';
+    const tag = !v.loaded && SH.isNii && SH.isNii(v) ? 'the yard (company empty)' : via === 'PC' ? 'PC (leave it on the PC Interchange)' : via === 'NW' ? 'N&W (take it to Neoga)' : via ? 'ICG (take it to Mattoon)' : 'the yard';
     toast(`${roadOf(v)} ${v.num} is ready to pull: goes out by the ${tag}${v.reassigned ? ', REROUTED' : ''}.`, 'good'); } }
 function advance(dt,operationalTime=true) { // game time passes in Effingham: car hire, work at the spots, demurrage
   if (dt <= 0) return; if(operationalTime)efAdvanceInterlock(dt);const t0 = E.time; E.time += dt; S.clockT = E.time; /* Nov 16: last time this town was run (catch-up) */ let hire = 0;
@@ -1982,7 +1999,7 @@ function advance(dt,operationalTime=true) { // game time passes in Effingham: ca
 }
 function onWyeInterchange(c) { return c.path.every(g => ['IX1', 'IX2', 'PCX', 'IX1W', 'IX1E', 'IX2W', 'IX2E', 'IXC'].includes(g.t)) && !c.veh.some(isLoco); } // Nov 15 (Stephen): the whole track off the PC is the PC Interchange
 // Nov 2 / Nov 13 (Stephen): Effingham's customers are locked until the railroad's reputation reaches 200 (one-time, permanent flag in Mattoon's record)
-const NG_MSG = '<h2>Effingham is open for business!</h2><p>Your reputation reached 200. <b>Effingham Freight House</b>, <b>Burgess Building Supply</b>, <b>Midstate Glass Container Co.</b>, <b>Illini Grain Corp</b>, <b>Crossroads Propane</b>, and <b>Effingham Iron &amp; Metal</b> will start getting cars. IC cars come down with the way freight and are set out on the interchange track; Penn Central cars are set on the PC Interchange.</p>';
+const NG_MSG = '<h2>Effingham is open for business!</h2><p>Your reputation reached 200. <b>Effingham Freight House</b>, <b>Burgess Building Supply</b>, <b>Midstate Glass Container Co.</b>, <b>Illini Grain Corp</b>, <b>Crossroads Propane</b>, and <b>Effingham Iron &amp; Metal</b> will start getting cars. Penn Central cars are set on the PC Interchange. ICG cars mostly come by the ICG to Mattoon, and the NI&amp;I brings them down.</p>';
 function ngOpen() { return !!(M.unlocks && M.unlocks.effingham); }
 function ngCheckUnlock() { if (VISIT || ngOpen() || (M.rep || 0) < 200) return; (M.unlocks || (M.unlocks = {})).effingham = { day: dayNo() }; save(); showModal(NG_MSG + '<div class="btns"><button data-a="close">OK</button></div>'); }
 function newDay() { // PC works the interchange; tomorrow's IC cars for Effingham wait at Mattoon; customers order cars
@@ -1993,15 +2010,20 @@ function newDay() { // PC works the interchange; tomorrow's IC cars for Effingha
     if (r.fee) { book('crew', r.fee); IND('PC', 'cost', r.fee); }
     if (r.cuts) note(SH.nwMsg(r, v => roadOf(v) + ' ' + v.num).replace(/^./, x => x.toUpperCase()) + '.'); }
   if (ngOpen()) { const bl = BFNX.newDay(d); if (bl.length) note(bl.join('. ') + '.'); }
-  ngCheckUnlock(); const nw = (S.pcPend || []).splice(0); delete S.pcPend; // Nov 4: PC cars for Mattoon customers (from Mattoon's set-out plan)
+  ngCheckUnlock(); const nw = (S.pcPend || []).splice(0); delete S.pcPend; let viaIC = 0, viaNW = 0; // Nov 4: PC cars for Mattoon customers (from Mattoon's set-out plan)
   { const specs = (S.awayIn || []).splice(0); delete S.awayIn; // Nov 4: days rolled by Mattoon while the crew was away (shared.js ngAway), then any left
     if (ngOpen()) for (let dd = Math.max(d0 + 1, (S.rollDay || 0) + 1, d - 13); dd <= d; dd++) specs.push(...SH.ngRoll(dd, NII.gameSeed(dd)));
-    S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; ((v.via || o.via) === 'PC' ? nw : S.pendIC).push(v); } }
+    S.rollDay = Math.max(S.rollDay || 0, d); for (const o of specs) { const v = newCar(o.dest, o.via); v.inDay = o.day; const via = v.via || o.via;
+      if (via === 'PC') nw.push(v);
+      else if (via === 'NW' && E.towns) { const ng = E.towns.neoga = E.towns.neoga || { pendIC: [] }; (ng.nwPend = ng.nwPend || []).push(v); viaNW++; } // the N&W sets it out at Neoga; the crew brings it down
+      else { (M.efIc = M.efIc || []).push(v); viaIC++; } } } // Nov 17 (Stephen): the ICG sets it out at Mattoon (ICG Inbound); the NI&I hauls it to Effingham
+  if (viaIC) note(`${viaIC} ICG car${viaIC > 1 ? 's' : ''} for Effingham ${viaIC > 1 ? 'are' : 'is'} coming by the ICG to Mattoon (ICG Inbound); bring ${viaIC > 1 ? 'them' : 'it'} down from there.`);
+  if (viaNW) note(`${viaNW} car${viaNW > 1 ? 's' : ''} for Effingham ${viaNW > 1 ? 'are' : 'is'} coming by the N&W to Neoga (N&W Interchange).`);
   { const due = (S.nwBack || []).filter(b => b.back <= d); if (due.length) { S.nwBack = S.nwBack.filter(b => b.back > d); nw.push(...due.map(b => b.v)); const hire = Math.round(due.reduce((a, b) => a + (b.back - b.out) * 24 * ECON.DEM[0][1], 0) * 100) / 100; if (hire) { book('hire', hire); IND('PC', 'cost', hire); }
       note(`The PC brought back ${due.length} car${due.length > 1 ? 's' : ''} it took by mistake (${due.map(b => roadOf(b.v) + ' ' + b.v.num + ', ' + (b.back - b.out) + ' day' + (b.back - b.out > 1 ? 's' : '')).join('; ')}): car hire $${hire.toFixed(2)}.`); } } // set out below, waiting for room like any PC car
   NII.shuffle(nw, R); NII.shuffle(S.pendIC, R);
   if (nw.length) { let k = nw.length; while (k > 0 && !setOutPCX(nw.slice(0, k))) k--; // Nov 4: as many as fit; the rest wait (was all-or-nothing, so a big batch never came)
-    if (k) { IND('PC', 'in', k); note(`PC left ${k} car${k > 1 ? 's' : ''} on the PC Interchange.`); } if (k < nw.length) { S.pcPend = nw.slice(k); note(`The PC Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } }
+    if (k) { IND('PC', 'in', k); note(`The PC left ${k} car${k > 1 ? 's' : ''} on the PC Interchange.`); } if (k < nw.length) { S.pcPend = nw.slice(k); note(`The PC Interchange is full: ${nw.length - k} more car${nw.length - k > 1 ? 's' : ''} wait for room.`); } }
   dropIC();
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
@@ -2015,8 +2037,8 @@ function setOutPCX(cars) { let hd = nwiClear() - 2; for (const o of S.cuts) if (
   if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) return false; S.cuts.push(c); return true; }
 // Nov 2 fix: IC cars for Effingham are set out on the interchange by the IC way freight, never hung on the player's train
 function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendIC.length;
-  if (setOutPCX(S.pendIC.slice())) { S.pendIC = []; note(`The IC way freight set out ${n} car${n > 1 ? 's' : ''} for Effingham on the interchange track.`); }
-  else note(`${n} IC car${n > 1 ? 's' : ''} for Effingham wait at Mattoon: the interchange track is full.`); }
+  if (setOutPCX(S.pendIC.slice())) { S.pendIC = []; note(`The PC left ${n} car${n > 1 ? 's' : ''} on the PC Interchange.`); } // Nov 17 (Stephen): Effingham has no ICG interchange, only the PC's (short message)
+  else note(`${n} ICG car${n > 1 ? 's' : ''} for Effingham wait with the PC: the PC Interchange is full.`); }
 function jobs() { const L = [], cars = standingCars(); for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest] && ngHeld(v, cars)) {
       if (isSodaAsh(v)) L.push({ done: false, car: v, hold: true, text: `${w} (Soda Ash): HOLD -- the rear soda-ash spot is busy. Store it in the yard or leave it on the Midstate lead until the rack is free.` });
@@ -2028,7 +2050,7 @@ function jobs() { const L = [], cars = standingCars(); for (const q of cars) { c
     else if (v.dest === 'PC-INT') L.push({ done: !q.live && onWyeInterchange(q.c), car: v, text: `${w}: to the PC - leave it on the PC Interchange${v.reassigned ? ' (rerouted)' : ''}` });
     else if (v.dest === 'NW-INT') L.push({ car: v, text: `${w}: to the N&W - take it to Neoga${v.reassigned ? ' (rerouted)' : ''}` });
     else if (/^Y[1-4]$/.test(v.dest || '') || v.idle) L.push({ car: v, text: `${w}: company empty - hold in the yard` });
-    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the IC - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}${!q.live && onWyeInterchange(q.c) && q.c.veh.some(o => o.dest === 'PC-INT') ? ` - WARNING: coupled to PC cars, the PC will take it ($${SH.PC_WRONG_FEE} fee)` : ''}` });
+    else if (v.dest === 'IC-INT') L.push({ car: v, text: `${w}: to the ICG - take it to Mattoon${v.reassigned ? ' (rerouted)' : ''}${!q.live && onWyeInterchange(q.c) && q.c.veh.some(o => o.dest === 'PC-INT') ? ` - WARNING: coupled to PC cars, the PC will take it ($${SH.PC_WRONG_FEE} fee)` : ''}` });
     else if (v.mattoonN) L.push({ car: v, text: `${w} (${v.loaded ? v.load.c : 'empty'}): for ${v.dest} in Mattoon - came off the PC, take it to Mattoon` }); }
   return L; }
 // ================================================================= TOWER & SIGNALS (aspect logic only; drawing below)
@@ -4304,13 +4326,13 @@ function crossArrive() { const x = E.cross; if (!x) return; const v0 = +E.crossV
   S.crossT = { t: best.t, d: best.d, label: x.label }; if (crossGo()) { carrySpeed(v0); toast(`Continuing to ${x.label}.`); } save(); }
 function save() { if (VISIT) return; try { NII.mapTabs.put('effingham', mapSnap()); } catch (e) { } try { NII.write(); } catch (e) { } }
 function showJobs() { const L = jobs(), held = standingCars().filter(q => ngHeld(q.v)).length; showModal(`<h2>Effingham jobs</h2>${held ? `<p style="font-size:13px">${held} car${held > 1 ? 's' : ''} on HOLD: the customer is full; spot ${held > 1 ? 'them' : 'it'} when a spot opens.</p>` : ''}<ul class="tasks">${L.map(j => `<li class="task${j.done ? ' done' : ''}" data-a="wb" data-id="${j.car.id}"><span class="tt">${esc(j.text)}</span></li>`).join('') || '<li class="task">No cars to work. End the day for new cars.</li>'}</ul>${ngOpen() ? '' : '<p style="font-size:13px"><b>Effingham\'s customers open at 200 reputation</b> (you have ' + (M.rep || 0) + '). Until then no cars come for them, but you can still run down and look around.</p>'}
-  <p style="font-size:13px">Customers: <b>Illini Grain</b>, <b>Burgess Building Supply</b>, <b>Effingham Iron &amp; Metal</b>, <b>Crossroads Propane</b>, <b>Midstate Glass</b>, and the <b>freight house</b> (house track). Cars come by the IC (down from Neoga) or the PC (set on the PC Interchange; leave PC cars there too). They go home the way they came, but 1 in 5 gets reassigned to the other road.</p>
+  <p style="font-size:13px">Customers: <b>Illini Grain</b>, <b>Burgess Building Supply</b>, <b>Effingham Iron &amp; Metal</b>, <b>Crossroads Propane</b>, <b>Midstate Glass</b>, and the <b>freight house</b> (house track). Cars come by the road with the fewest handoffs from where they were shipped: PC (and most other roads) on the PC Interchange here, ICG cars by the ICG to Mattoon (bring them down), N&amp;W cars by the N&amp;W at Neoga. Leave PC cars on the PC Interchange. Outbound cars go the same way for where they are going; 1 in 5 takes the other route.</p>
   <div class="btns"><button data-a="close">Back</button></div>`); }
 function carModal(q) { const v = q.v, c = q.c, live = c.veh.some(isLoco), i = c.veh.indexOf(v), n = c.veh.length, mine = isLoco(v) && myEngineId() === v.id;
   const left = sideOfHead(c) > 0 ? 'tail' : 'head'; // which path end is screen-left
   const canL = left === 'tail' ? i > 0 : i < n - 1, canR = left === 'tail' ? i < n - 1 : i > 0;
   const locoNote = isLoco(v) ? (mine ? '<b>This is your engine.</b>' : 'Tap Make this my engine to run this unit.') : '';
-  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for IC</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: take it to Neoga.' : /^Y[1-4]$/.test(v.dest || '') || v.idle ? '<b>Hold</b>: company empty, leave it in the yard.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && v.work.until ? ` · spotted, done about ${clockWhen(v.work.until)}` : (v.work ? ` · at the spot` : '')}</p>
+  showModal(`<h2>${roadOf(v)} ${v.num}</h2>${wbCard(v)}<p style="font-size:13px">${locoNote || (v.type === 'caboose' || isLoco(v) ? '' : (v.loaded ? 'Load' : 'Empty') + ' · ')}${(!isLoco(v) && v.type !== 'caboose') ? (v.dest === 'IC-INT' ? '<b>Ready for ICG</b>: take it north to Neoga.' : v.dest === 'PC-INT' ? '<b>Ready for PC</b>: leave it on the PC Interchange.' : v.dest === 'NW-INT' ? '<b>Ready for N&amp;W</b>: take it to Neoga.' : /^Y[1-4]$/.test(v.dest || '') || v.idle ? '<b>Hold</b>: company empty, leave it in the yard.' : 'Tag: ' + esc(carTag(v).code)) : ''}${v.work && v.work.until ? ` · spotted, done about ${clockWhen(v.work.until)}` : (v.work ? ` · at the spot` : '')}</p>
   <div class="btns">${isLoco(v) && !mine ? '<button data-a="makeEngine">Make this my engine</button>' : ''}${mine ? '<button data-a="giveUpEngine">Give up engine</button>' : ''}${canL ? '<button data-a="uncL">Uncouple ◀ side</button>' : ''}${canR ? '<button data-a="uncR">Uncouple ▶ side</button>' : ''}${!live && !isLoco(v) ? '<button data-a="apCar">Run engine here</button>' : ''}<button data-a="close" class="alt">Back</button></div>`);
   carModal.q = q; }
 let UNC_ON = false; // Nov 3: the UN-COUPLE button works as in Mattoon: press it, tap a car, the cut is made on the engine side of that car (it and the cars beyond it stay)
@@ -4411,6 +4433,9 @@ function efPackStandingOn(t) { // all standing cars wholly on t become one coupl
   for (const group of pocket.values()) efPackGroup(t, group); }
 function efCoupleStanding(t, dHead, L) { efPackStandingOn(t); }
 function efCrewPackTrack(t) { return !!(t && (YARD_TS.includes(t) || GLASS_LEAD.includes(t) || t === 'PCX' || (typeof EF_IX_TS !== 'undefined' && EF_IX_TS.includes(t)))); }
+// Nov 17 (Stephen: crews split their cars over several tracks when they'd definitely fit on one). Each car still takes the first packed place in
+// track order, but the first track that takes the WHOLE block goes to the front of the order, so the block stays together whenever it fits.
+function efBlockTracks(tracks, vs) { const L = (vs || []).reduce((a, v) => a + vL(v), 0) + 2; if (!vs || vs.length < 2) return tracks; const ok = tracks.find(t => T[t] && efPackedHead(t, L, efOccOnTrack(t)) != null); return ok ? [ok].concat(tracks.filter(t => t !== ok)) : tracks; }
 function yardOrLeadSlot(L) { return efFreeSlot(YARD_TS.concat(GLASS_LEAD).filter(t => T[t]), L || 56); }
 function moveStandingCar(q, t, dHead) {
   const srcT = q.pm && q.pm.t;
@@ -4436,8 +4461,10 @@ function crewSwapMidstate() {
       return ((a.v.inDay || a.v.day || 0) - (b.v.inDay || b.v.day || 0)) || String(a.v.id || a.v.num).localeCompare(String(b.v.id || b.v.num));
     });
   const pullReleasedOn = (track, label) => {
-    for (const o of cars().filter(o => !o.live && o.pm.t === track && o.v.doneAt && (o.v.dest === 'IC-INT' || o.v.dest === 'PC-INT' || o.v.dest === 'NW-INT' || /^Y[1-4]$/.test(o.v.dest || '') || o.v.idle))) {
-      const slot = yardOrLeadSlot(vL(o.v));
+    const todo = cars().filter(o => !o.live && o.pm.t === track && o.v.doneAt && (o.v.dest === 'IC-INT' || o.v.dest === 'PC-INT' || o.v.dest === 'NW-INT' || /^Y[1-4]$/.test(o.v.dest || '') || o.v.idle));
+    const order = efBlockTracks(YARD_TS.concat(GLASS_LEAD).filter(t => T[t]), todo.map(o => o.v)); // Nov 17: keep the pulled cars together
+    for (const o of todo) {
+      const slot = efFreeSlot(order, vL(o.v));
       if (!slot) { notes.push('no room in the yard or on the lead to pull the released ' + label + ' car'); break; }
       if (moveStandingCar(o, slot.t, slot.d)) notes.push((roadOf(o.v) + ' ' + o.v.num) + ' pulled from the ' + label + ' to ' + slot.t);
     }
@@ -4479,9 +4506,10 @@ function efCrewCustomer(key) {
   const spotTs = efCrewTracks(key);
   if (key === 'EF GLASS') notes.push(...crewSwapMidstate()); // soda ash + limestone (the existing Midstate swap)
   // pull released cars (work done, now billed out by the IC or PC) off the customer's tracks
-  for (const v of cars().filter(o => !o.live && spotTs.includes(o.pm.t) && o.v.doneAt && !DEST[o.v.dest]).map(o => o.v)) {
+  const pullVs = cars().filter(o => !o.live && spotTs.includes(o.pm.t) && o.v.doneAt && !DEST[o.v.dest]).map(o => o.v), pullOrder = efBlockTracks(YARD_TS, pullVs); // Nov 17: one block when it fits
+  for (const v of pullVs) {
     const o = cars().find(q => q.v === v); if (!o || o.live) continue; // fresh each time: an earlier move may have split its cut
-    const slot = efFreeSlot(YARD_TS, vL(o.v)) || yardOrLeadSlot();
+    const slot = efFreeSlot(pullOrder, vL(o.v)) || yardOrLeadSlot();
     if (!slot) { notes.push('no room in the yard to pull ' + carName(o.v)); break; }
     if (moveStandingCar(o, slot.t, slot.d)) {
       const SH0 = window.NII_SHARED;
@@ -4594,15 +4622,18 @@ function efCrewPC() { // PC Interchange: outbound PC cars go on it, every other 
   const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
   const fresh = v => standingCars().find(q => q.v === v && !q.live); // re-read each time: an earlier move may have split the cut
   const C = typeof window !== 'undefined' ? window.NII_CREWS : null, today = dayNo();
-  for (const v of standingCars().filter(o => !o.live && o.v.dest === 'PC-INT' && !onPcIx(o.c)).map(o => o.v)) { const o = fresh(v); if (!o) continue;
-    if (C && C.hiredMayTakeToInterchange && today != null && (o.v.relDay != null || o.v.relT != null) && !C.hiredMayTakeToInterchange(o.v, today)) continue;
-    const slot = efFreeSlot(ixTs, vL(o.v)); if (!slot) { notes.push('the PC Interchange is full: ' + carName(o.v) + ' stays'); break; }
+  const mayTake = v => !(C && C.hiredMayTakeToInterchange && today != null && (v.relDay != null || v.relT != null) && !C.hiredMayTakeToInterchange(v, today));
+  const outVs = standingCars().filter(o => !o.live && o.v.dest === 'PC-INT' && !onPcIx(o.c)).map(o => o.v), ixOrder = efBlockTracks(ixTs, outVs.filter(mayTake)); // Nov 17: one block when it fits
+  for (const v of outVs) { const o = fresh(v); if (!o) continue;
+    if (!mayTake(o.v)) continue;
+    const slot = efFreeSlot(ixOrder, vL(o.v)); if (!slot) { notes.push('the PC Interchange is full: ' + carName(o.v) + ' stays'); break; }
     if (moveStandingCar(o, slot.t, slot.d)) nOut++; }
   // Nov 15 (Stephen): every car standing anywhere on the PC Interchange (IX1, IX2, the lead and the switches) comes off to the yard,
   // except outbound PC cars waiting for the PC. That includes IC- and Mattoon-routed cars and anything else (they head on from the yard).
   const inbound = o => !o.live && onPcIx(o.c) && o.v.dest !== 'PC-INT' && !isLoco(o.v) && o.v.type !== 'caboose';
-  for (const v of standingCars().filter(inbound).map(o => o.v).filter((v, i, a) => a.indexOf(v) === i)) { const o = fresh(v); if (!o || !inbound(o)) continue;
-    const slot = efFreeSlot(YARD_TS, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
+  const inVs = standingCars().filter(inbound).map(o => o.v).filter((v, i, a) => a.indexOf(v) === i), yOrder = efBlockTracks(YARD_TS, inVs); // Nov 17: one block when it fits
+  for (const v of inVs) { const o = fresh(v); if (!o || !inbound(o)) continue;
+    const slot = efFreeSlot(yOrder, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
     if (moveStandingCar(o, slot.t, slot.d)) nIn++; }
   { const held = standingCars().filter(o => o.live && !isLoco(o.v) && o.v.type !== 'caboose' && o.v.dest !== 'PC-INT' && o.c.path.every(g => EF_IX_TS.includes(g.t))).length;
     if (held) notes.push(`${held} car${held > 1 ? 's' : ''} coupled to an engine on the PC Interchange stay put`); }
@@ -4669,10 +4700,10 @@ function efApplyPendingCrew(upTo, quiet) { // work finished while you were away 
   for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...efCrewCustomer(k));
   for (const w of yw) out.push(...efCrewWork(w));
   if (nwIn.length) {
-    let n = 0;
+    let n = 0; const nwOrder = efBlockTracks(YARD_TS, nwIn); // Nov 17: one block when it fits
     for (const v of nwIn) {
       const L = vL(v);
-      const slot = efFreeSlot(YARD_TS, L);
+      const slot = efFreeSlot(nwOrder, L);
       if (!slot) { const rest = nwIn.slice(nwIn.indexOf(v)); // Nov 16 (Stephen: the closer to the yard, the better): runaround at Neoga, then the Mattoon yard, then Neoga's N&W Interchange
         let o = null; try { if (window.NII_CALLSHEET && NII_CALLSHEET.efOverflow) o = NII_CALLSHEET.efOverflow(rest); } catch (e) { o = null; }
         if (o) out.push('the Effingham yard is full: ' + (o.join('; ') || 'nothing moved')); else { out.push('no room in the yard for the rest of the N&W inbound cars; they wait for room'); S.pendingNwIn = rest.concat(S.pendingNwIn || []); }
@@ -4785,7 +4816,8 @@ let last = performance.now(), saveT = 0, mapT = 0, bfT = 0, csT = 0;
 function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now; const k = S.speedX || 1;
   if (VISIT) { cam.follow = false; draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } requestAnimationFrame(frame); return; } // looking around: draw only
   for(let i=0;i<k;i++){step(dt);efAdvanceInterlock(dt);}advance(dt*k,false); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } if ((csT += dt) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'effingham' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
-build(); nwiClear(); if (!VISIT) { try { efCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
+try { NII_SHARED.setPlacePicker((v, c, r) => { const k = kindOf(v) || 'box'; return wbPickStrict(k, c, r) || wbPickStrict(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[k] || 'none', c, r); }); } catch (e) { } // Nov 17: consignees for released loads (routing follows the far end)
+build(); nwiClear(); if (!VISIT) { try { let n = 0; for (const c of S.cuts) { const ix = (c.path || []).length && onWyeInterchange(c); for (const v of c.veh || []) if (!isLoco(v) && v.type !== 'caboose' && SH.repairRoute(v, 'effingham', ix)) n++; } if (n) console.log('route repair (effingham): ' + n + ' car(s)'); } catch (e) { console.warn('route repair', e); } /* Nov 17: old saves' released cars get today's routing */ try { efCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); try { efTestSeed(); } catch (e) { } releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampPCX() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'effingham') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Effingham has no cars yet: they come in on your first trip here.'); }
 resize(); draw(); requestAnimationFrame(frame);
