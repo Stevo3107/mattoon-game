@@ -101,11 +101,22 @@ const WB_PLACES = [
   ['IC', 'McCook', 'IL', 'Reynolds Metals Co. (McCook Sheet & Plate)', ['gon'], ['Scrap Aluminum']],
   ['N&W', 'Lafayette', 'IN', 'Aluminum Co. of America', ['gon'], ['Scrap Aluminum']],
   ['RI', 'Riverdale', 'IA', 'Aluminum Co. of America (Davenport Works)', ['gon'], ['Scrap Aluminum']],
+  // Nov 17 (Stephen via Ronny): PRSL glass-sand shippers for Midstate Glass (routed PRSL-PC-Effingham). Millville Silica is fictional (Stephen OK'd).
+  ['PRSL', 'Mauricetown', 'NJ', 'The Morie Company', ['hopper', 'ps2'], ['Glass Sand']],
+  ['PRSL', 'Millville', 'NJ', 'Millville Silica Sand Co.', ['hopper', 'ps2'], ['Glass Sand']],
+  // Nov 17 (Stephen via Ronny): L&N off-line customers (ln-places-1975.json). Main route ICG at Mattoon (L&N-Evansville-ICG), alternate PC at Effingham.
+  ['L&N', 'Clermont', 'KY', 'James B. Beam Distilling Co.', ['hopper', 'box40'], ['Corn']], // only by the Beam move (WB_CAR_ONLY): L&N 4600 / Monon PS-2 4000 cars
+  ['L&N', 'Birmingham', 'AL', 'Jones Valley Steel Co.', ['gon'], ['Scrap Steel']], // fictional
+  ['L&N', 'Fies', 'KY', 'Miners Coal Co. (Fies Mine)', ['coal'], ['Coal (stoker)']],
+  ['L&N', 'Nashville', 'TN', 'Music City Bottling & Grocery Co.', ['box', 'box40'], ['Bottles in cartons', 'Soft drinks', 'Groceries']], // fictional
 ];
+// Nov 17: firms only a special move may bill (never a random pick): Beam takes corn only in its own L&N / Monon covered hoppers, in blocks
+const WB_CAR_ONLY = { 'James B. Beam Distilling Co.': 'beam' };
+const wbFree = p => !WB_CAR_ONLY[p[3]];
 // where each road hands to the IC (1975 junctions; flavour, not a timetable)
 // Nov 17: completed from Ronny's 1975 chart (first ICG junction listed; ICG / GM&O / IC are the ICG itself). C&NW is 'CNW' internally (wbR reads either).
 const WB_JCT = { PC: 'Effingham', 'N&W': 'Decatur', CNW: 'Chicago', ICG: null, 'GM&O': null, NP: 'Chicago', MON: 'Chicago', CSS: 'Kensington', ITC: 'Decatur', PRR: 'Effingham', NYC: 'Mattoon', ACY: 'N&W–Decatur', NS: 'SOU–East St. Louis', GTW: 'Chicago', MILW: 'Chicago', RI: 'Chicago', SLSF: 'Memphis', MP: 'East St. Louis', ATSF: 'Chicago',
-  UP: 'Council Bluffs', SP: 'SSW–East St. Louis', BN: 'East St. Louis', SOU: 'Birmingham', 'L&N': 'Louisville', 'B&O': 'East St. Louis', 'C&O': 'Chicago', SCL: 'L&N–Louisville',
+  UP: 'Council Bluffs', SP: 'SSW–East St. Louis', BN: 'East St. Louis', SOU: 'Birmingham', 'L&N': 'Evansville' /* Nov 17 (Stephen): L&N met the ICG at Evansville (ex-PD&E line to Mattoon); was Louisville */, 'B&O': 'East St. Louis', 'C&O': 'Chicago', SCL: 'L&N–Louisville',
   SOO: 'Chicago', KCS: 'Shreveport', SSW: 'East St. Louis', MKT: 'Kansas City', 'D&RGW': 'MP–Kansas City', RDG: 'PC–Effingham', EL: 'Chicago', WP: 'UP–Council Bluffs', GN: 'Chicago', IC: null };
 const WB_ONLINE = { CIC: ['Central Illinois Corrugated', 'Mattoon, IL'], 'IFS NH3': ['Illini Farm Supply', 'Mattoon, IL'], 'IFS UAN': ['Illini Farm Supply', 'Mattoon, IL'],
   'IFS DOCK': ['Illini Farm Supply', 'Mattoon, IL'], GRAIN: ['Prairie Grain Co.', 'Mattoon, IL'], HOUSE: ['NI&I Freight House (team track)', 'Mattoon, IL'],
@@ -128,7 +139,7 @@ const WB_HOME = { IC: ['ICG car pool', 'Chicago, IL'], ITC: ['ITC car pool (Illi
   ICG: ['ICG car pool', 'Chicago, IL'], 'GM&O': ['ICG car pool (ex-GM&O)', 'Chicago, IL'], NP: ['Burlington Northern (ex-NP)', 'St. Paul, MN'],
   SSW: ['Cotton Belt car distributor (SP)', 'Tyler, TX'], CSS: ['Chicago South Shore & South Bend', 'Michigan City, IN'], MON: ['L&N car distributor (ex-Monon)', 'Louisville, KY'],
   RBOX: ['Railbox pool (next load, any road)', 'Chicago, IL'], RDG: ['Reading Company', 'Philadelphia, PA'], SP: ['SP car distributor', 'San Francisco, CA'],
-  NYC: ['PC car distributor (ex-NYC)', 'Philadelphia, PA'], NS: ['Norfolk Southern (Southern Railway)', 'Raleigh, NC'] };
+  NYC: ['PC car distributor (ex-NYC)', 'Philadelphia, PA'], 'L&N': ['L&N car distributor', 'Louisville, KY'], PRSL: ['PC car distributor (PRSL)', 'Philadelphia, PA'], NS: ['Norfolk Southern (Southern Railway)', 'Raleigh, NC'] };
 const wbR = r => (r === 'C&NW' ? 'CNW' : r === 'GMO' ? 'GM&O' : r); // Nov 17: saves may hold either C&NW spelling
 const wbHome = r => WB_HOME[wbR(r)] || WB_HOME.IC, wbJctKnown = r => wbR(r) in WB_JCT;
 const wbRoute = road => { const j = WB_JCT[wbR(road)]; return (road === 'IC' || j === null) ? 'ICG–Mattoon–NI&I' : `${road}–${j}–ICG–Mattoon–NI&I`; };
@@ -136,12 +147,12 @@ const wbRouteOut = road => { const j = WB_JCT[wbR(road)]; return (road === 'IC' 
 const wbRouteOutVia = (road, via) => { if (via === 'NW') return road === 'N&W' ? 'NI&I–Neoga–N&W' : `NI&I–Neoga–N&W–${road}`;
   if (via === 'PC') return road === 'PC' ? 'NI&I–Effingham–PC' : `NI&I–Effingham–PC–${road}`;
   return wbRouteOut(road); };
-const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', gondola: 'gon' };
+const WB_KIND = { boxcarIC: 'box', boxcar50: 'box', boxcar: 'box', boxcar40: 'box40', tank: 'tank', tank_lpg: 'lpg', hopper: 'hopper', hopper_ps2: 'ps2', hopper_cf: 'cf', hopper_cf2: 'cf2', hopper_ps2_4000: 'hopper', gondola: 'gon' }; // Nov 17: PS-2CD 4000 bills as a covered hopper
 const WB_KNAME = { box: 'XM BOX 50FT', box40: 'XM BOX 40FT', tank: 'TM TANK', lpg: 'TANK LPG 33K', hopper: 'LO COV HOPPER', ps2: 'LO PS-2 35FT', cf: 'LO CTR FLOW 54FT', cf2: 'LO CTR FLOW 40FT', gon: 'GB GON 52FT' };
-function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => p[4].includes(kind)); return L[Math.floor(r() * L.length)]; }
+function wbPick(kind, c, r, not) { let L = WB_PLACES.filter(p => wbFree(p) && p[4].includes(kind) && (!c || p[5].includes(c)) && p[0] !== not); if (!L.length) L = WB_PLACES.filter(p => wbFree(p) && p[4].includes(kind) && !(p[5].length === 1 && p[5][0] === 'Glass Sand')); return L[Math.floor(r() * L.length)]; }
 // Nov 17 (Stephen): routing follows the far end. wbPickStrict = a firm of this kind that really ships / takes this commodity (null if none: then the
 // car owner's road is the proxy). wbPickRoute = the same, preferring firms whose road's main route to this town is the interchange the car used.
-function wbPickStrict(kind, c, r, filt) { const L = WB_PLACES.filter(p => p[4].includes(kind) && (!c || p[5].includes(c)) && (!filt || filt(p))); return L.length ? L[Math.floor(r() * L.length)] : null; }
+function wbPickStrict(kind, c, r, filt) { const L = WB_PLACES.filter(p => wbFree(p) && p[4].includes(kind) && (!c || p[5].includes(c)) && (!filt || filt(p))); return L.length ? L[Math.floor(r() * L.length)] : null; }
 function wbPickRoute(kind, c, r, town, via) { const SH = NII_SHARED; const k2 = ({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[kind];
   for (const k of [kind, k2].filter(Boolean)) { const p = wbPickStrict(k, c, r, p => SH.routeMain(p[0], town) === via) || wbPickStrict(k, c, r); if (p) return p; } return null; }
 // inbound routing text for a car that came in by `via` for a customer in `town` (ICG at Mattoon, N&W at Neoga, PC at Effingham), then by the NI&I
@@ -169,12 +180,12 @@ const monAM = t => { let d = Math.floor(t / 86400); while (d % 7 >= 5) d++; retu
 const FTS = 5280 / 3600, K = 0.6, HK = 0.9;        // mph -> ft/s; screen squash of depth; height scale
 // ================================================================= TRACK (feet; x along the main north->south, y depth: - farm side, + town side)
 const EDGE_PAD = 100, NG_YT = -2900, NG_YB = 1500; // vertical scroll limits (farm side top / town side bottom, N&W is drawn 100+ ft beyond both, so its ends never show)
-const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = 0, XS = 3300;
+const NWX = 1600, SIGS = 1440, SIGN = 1760, XN = -500, XS = 3300; // Nov 17 (Stephen): map 500 ft longer to the north (XN was 0) so a 16-car cut off the N&W Interchange clears S2 in one move; x coordinates did not move
 // ---- YARD LIMIT BOARDS (Nov 4, Stephen fine-tunes these). x = feet along the ICG main from the north end (0, toward Mattoon) to the south end (3,300);
 // y = feet off the main centre line (- farm side, + town side). Between the boards a train needs no caboose; once the REAR of a move goes out past
 // a board, the train needs a caboose anywhere in it (shared.js cabOK, the same rule as Mattoon). Light engines are exempt. warnFt etc. in shared.js.
 const YL_ON = true; // Nov 4: Stephen approved the Neoga boards // Nov 4: OFF until Stephen approves the Neoga boards (true = boards drawn + rule enforced)
-const YARD_LIMIT = { n: { x: 300, y: -10 }, s: { x: 2800, y: -10 } }; // north: before the house track switch (500); south: past run-around south (~2,660)
+const YARD_LIMIT = { n: { x: -450, y: -10 } /* Nov 17: was 300; pulling the interchange stays inside */, s: { x: 2800, y: -10 } }; // north: before the house track switch (500); south: past run-around south (~2,660)
 function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a parallel track `off` ft away, then `tail` ft straight
   const h = Math.abs(off) / 2, th = Math.acos(1 - h / R), sg = Math.sign(off), pts = [], n = 16;
   for (let i = 0; i <= n; i++) { const a = th * i / n; pts.push([x0 + sx * R * Math.sin(a), y0 + sg * R * (1 - Math.cos(a))]); }
@@ -183,7 +194,11 @@ function sCurve(x0, y0, sx, off, R, tail) { // turnout + reverse curve to a para
   const e = pts[pts.length - 1]; if (tail) pts.push([e[0] + sx * tail, e[1]]); return pts;
 }
 function arc(cx, cy, R, a0, a1, n) { const p = []; for (let i = 0; i <= n; i++) { const a = a0 + (a1 - a0) * i / n; p.push([cx + R * Math.cos(a), cy + R * Math.sin(a)]); } return p; }
-const SW_H = 500, SW_WW = 1280, SW_WE = 1960, SW_F = 2150, RW = 320, RE = 360, FUEL_OFF = 150, HOUSE_OFF = 60;
+// Nov 17 (Stephen, Map Men room): N&W Interchange lengthened to ~15 fifty-foot cars. S2 moved west from 1,280 to 600 (just past the house-track switch, which is
+// on the town side); a #10 lead (780 ft, as the run-around) eases 14 ft onto the farm side, straight to 1,280, then the old 320 ft curve toward the N&W ending at a
+// bumper 18 ft short of the N&W centre line (no connection: the locked switch NWL is gone). Cars stay 13 ft clear of the N&W (nwiClear) and clear of our main (NWI_FOUL).
+const NWI_C = 1280, NWI_OFF = -14, NWI_BUMP = 18, SW_WW_OLD = 1280;
+const SW_H = 500, SW_WW = 600, SW_WE = 1960, SW_F = 2150, RW = 320, RE = 360, FUEL_OFF = 150, HOUSE_OFF = 60;
 const houseLead = sCurve(SW_H, 0, 1, HOUSE_OFF, 400, 0), HX0 = houseLead[houseLead.length - 1][0];
 const fuelLead = sCurve(SW_F, 0, 1, FUEL_OFF, 400, 0), FX0 = fuelLead[fuelLead.length - 1][0];
 const FD = { start: 0, wheelStop: 223.5, railEnd: 228, spots: { hopper1: 40, hopper2: 100, tank: 165 } }; // Danny's neoga-fuel-dealer.json (car spots)
@@ -195,7 +210,7 @@ const T = { // tracks: polylines; cls main/other for speed
   M1: { p: [[XN, 0], [SW_H, 0]], cls: 'main', name: 'Main' }, M2: { p: [[SW_H, 0], [SW_WW, 0]], cls: 'main', name: 'Main' },
   M3: { p: [[SW_WW, 0], [RA_N, 0]], cls: 'main', name: 'Main (diamond)' }, M4: { p: [[RA_N, 0], [SW_F, 0]], cls: 'main', name: 'Main' }, M5: { p: [[SW_F, 0], [RA_S, 0]], cls: 'main', name: 'Main' }, M6: { p: [[RA_S, 0], [XS, 0]], cls: 'main', name: 'Main' },
   HT: { p: houseLead.concat([[HX0 + 300, HOUSE_OFF]]), cls: 'other', name: 'House track' },
-  NWI: { p: arc(SW_WW, -RW, RW, Math.PI / 2, 0, 24), cls: 'other', name: 'N&W Interchange' }, // 320 ft radius, tangent (#10) onto the N&W main at the locked switch NWL
+  NWI: { p: sCurve(SW_WW, 0, 1, NWI_OFF, 780, 0).concat(arc(NWI_C, NWI_OFF - RW, RW, Math.PI / 2, Math.acos((RW - NWI_BUMP) / RW), 22)), cls: 'other', name: 'N&W Interchange' }, // Nov 17: #10 lead, straight, 320 ft curve, bumper
   RA: { p: raLead.concat(raTail), cls: 'other', name: 'Run-around' },
   FL: { p: fuelLead.concat([[FX0 + FD.railEnd, FUEL_OFF]]), cls: 'other', name: 'Miller & Sons Fuel spur', dirt: true },
 };
@@ -208,8 +223,8 @@ const SWITCHES = { // stem/N/R are track ends; high stands with lamp on the main
   S5: { at: [RA_S, 0], stem: ['M6', 'a'], N: ['M5', 'b'], R: ['RA', 'b'], high: true, side: -1, name: 'Run-around south' },
 };
 const JOINS = [];
-const ENDS = { 'M1a': 'north', 'M6b': 'south', 'HTb': 'bumper', 'FLb': 'stop', 'NWIb': 'locked' };
-const NWL = { at: [NWX, -RW], name: 'N&W connection (locked)' }; // never thrown: the interchange can't reach the N&W main
+const ENDS = { 'M1a': 'north', 'M6b': 'south', 'HTb': 'bumper', 'FLb': 'stop', 'NWIb': 'bumper' };
+// Nov 17: NWL (the locked N&W connection) removed; the N&W Interchange ends at a bumper.
 const LOCK_MSG = 'This switch is locked. You do not have an N&W key';
 const NODE = {}; // "M1b" -> { sw, role } | { join: [t,e] } | { end }
 for (const [k, s] of Object.entries(SWITCHES)) for (const r of ['stem', 'N', 'R']) NODE[s[r][0] + s[r][1]] = { sw: k, role: r };
@@ -245,12 +260,12 @@ E.towns.neoga = S; if (!E.time) E.time = M.time || 7 * 3600;
 const dayNo = () => Math.floor(E.time / 86400) + 1;
 const seeded = s => () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
 let R = seeded((E.time | 0) ^ 0x5eed);
-const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar50: 55.96, boxcar40: 46.01, tank: 41.99, hopper: 60.54 };
+const TYPE_L = { gp9: 56.17, boxcar: 55.96, caboose: 45.67, boxcarIC: 55.96, boxcar50: 55.96, boxcar40: 46.01, tank: 41.99, hopper: 60.54, hopper_cf: 54.5, hopper_ps2_4000: 50.24 };
 const vL = v => (/^coal_hopper40_/.test(v.art || '') ? 37 : v.L) || (C.ART[v.art || v.type] || {}).L || TYPE_L[v.type] || 50;
 const isLoco = v => v.type === 'gp9';
 const roadOf = v => v.road || ({ boxcarIC: 'IC', boxcar40: 'NII' })[v.type] || 'NII';
 const isLease = v => /X$/.test(roadOf(v));
-const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper' })[v.type];
+const kindOf = v => v.coal ? 'coal' : ({ boxcar: 'box', boxcarIC: 'box', boxcar50: 'box', boxcar40: 'box40', tank: 'tank', hopper: 'hopper', hopper_ps2_4000: 'hopper' })[v.type]; // Nov 17: PS-2CD 4000 grain cars pass through on the N&W
 // ---- cuts: { id, veh: [records tail->head], aT: [A end toward the tail], path: [{t, d0, d1, dir}] (tail -> head) }
 const cutLen = c => c.veh.reduce((a, v) => a + vL(v), 0);
 function myEngineId() { try { return NII.env().myEngine || null; } catch (e) { return null; } }
@@ -298,6 +313,32 @@ if (!S.ra) { S.ra = 1; S.sw = { S1: S.sw.S1 || 'N', S2: 'N', S3: 'N', S4: S.sw.S
     if (!c.path.some(g => ['WW', 'WE', 'NJ', 'TL'].includes(g.t) || (g.t.startsWith('M') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5))) return true;
     c.veh.forEach((v, i) => mv.NWI.push([v, c.aT[i]])); return false; });
   for (const [t, L] of Object.entries(mv)) if (L.length) S.cuts.push(placeCut(L.map(x => x[0]), L.map(x => x[1]), t, t === 'NWI' ? T.NWI.len - 120 : T[t].len - 6, 1)); } // v1 stub save: the train that was parked there comes back in
+// Nov 17 migration (NWI lengthened, S2 moved 1,280 -> 600): main positions on M2 / M3 are re-cut at the new switch by their x (the main is straight),
+// and cuts on the N&W Interchange keep their distance from its far (clearance) end; packed toward the bumper so none overlaps or runs off either end.
+if (!S.nwi15) { try {
+  const oP = arc(SW_WW_OLD, -RW, RW, Math.PI / 2, 0, 24), oC = [0]; for (let i = 1; i < oP.length; i++) oC.push(oC[i - 1] + Math.hypot(oP[i][0] - oP[i - 1][0], oP[i][1] - oP[i - 1][1]));
+  const oX = d => { let i = 1; while (i < oC.length - 1 && oC[i] < d) i++; const k = (d - oC[i - 1]) / ((oC[i] - oC[i - 1]) || 1); return oP[i - 1][0] + (oP[i][0] - oP[i - 1][0]) * k; };
+  let oClr = oC[oC.length - 1]; while (oClr > 0 && Math.abs(oX(oClr) - NWX) < 13) oClr -= 0.5; oClr = Math.floor(oClr);
+  const nClr = nwiClear(), shift = nClr - oClr, OB = { M2: SW_H, M3: SW_WW_OLD }, NB = { M2: SW_H, M3: SW_WW };
+  const nw = [];
+  for (const c of S.cuts) { if (!(c.path || []).length) continue;
+    if (c.path.some(g => g.t === 'NWI')) { nw.push(c); continue; }
+    if (!c.path.some(g => g.t === 'M2' || g.t === 'M3')) continue;
+    const out = [];
+    for (const g of c.path) { if (!OB[g.t]) { out.push({ ...g }); continue; } const xa = OB[g.t] + g.d0, xb = OB[g.t] + g.d1, pcs = (xa - SW_WW) * (xb - SW_WW) < 0 ? [[xa, SW_WW], [SW_WW, xb]] : [[xa, xb]];
+      for (const [a, b] of pcs) { const t = (a + b) / 2 < SW_WW ? 'M2' : 'M3', q = { t, dir: g.dir, d0: a - NB[t], d1: b - NB[t] }, l = out[out.length - 1];
+        if (l && l.t === t && l.dir === q.dir && Math.abs(l.d1 - q.d0) < 0.01) l.d1 = q.d1; else out.push(q); } }
+    c.path = out; }
+  // N&W Interchange cuts (a cut standing across the old S2 comes onto the interchange whole), packed from the clearance end
+  const head = c => { let hi = -1; for (const g of c.path) if (g.t === 'NWI') hi = Math.max(hi, g.d0, g.d1); return hi; };
+  nw.sort((a, b) => head(b) - head(a)); let lim = nClr - 2;
+  for (const c of nw) { const L = cutLen(c), want = Math.min(lim, c.path.every(g => g.t === 'NWI') ? head(c) + shift : lim), hd = Math.max(L + 1, want);
+    const lg = c.path[c.path.length - 1], up = lg.t === 'NWI' && lg.dir > 0; // keep which car is nearest the bumper
+    const n = up ? placeCut(c.veh, c.aT, 'NWI', hd, 1) : placeCut(c.veh.slice().reverse(), c.aT.slice().reverse().map(x => !x), 'NWI', hd, 1); if (!up) reverseCut(n);
+    c.path = n.path; c.veh = n.veh; c.aT = n.aT; S.nid--; lim = hd - L - 2; }
+  if (S.crossT && /^(M2|M3|NWI)$/.test(S.crossT.t)) S.crossT = null;
+} catch (e) { console.warn('NWI migration', e); } S.nwi15 = 1; }
+if (!S.xn500) { const dx = 0 - XN; /* old XN was 0 */ for (const c of S.cuts) for (const g of c.path || []) if (g.t === 'M1') { g.d0 += dx; g.d1 += dx; } if (S.crossT && S.crossT.t === 'M1') S.crossT = null; S.xn500 = 1; } // Nov 17: map extended north; M1 now starts at x -500, cars keep their x
 if (S.ra === 1) { S.ra = 2; const OLD_S = 3150; // Nov 1 (2): run-around shortened (S5 3,150 -> RA_S); M6 now starts at RA_S
   for (const c of S.cuts) for (const g of c.path) if (g.t === 'M6') { g.d0 = Math.max(0, g.d0 + OLD_S - RA_S); g.d1 = Math.max(0, g.d1 + OLD_S - RA_S); }
   S.cuts = S.cuts.map(c => { if (!c.path.some(g => (g.t === 'RA' || g.t === 'M5') && Math.max(g.d0, g.d1) > T[g.t].len + 0.5)) return c;
@@ -333,6 +374,7 @@ function newCar(dest, via) { // an interchange car for a Neoga customer (via 'IC
     const SH = NII_SHARED, kd = kindOf(v) || 'box'; let road = null; delete v.far;
     if (v.load) { const p = wbPickStrict(kd, v.load.c, R); if (p) { v.far = { dir: 'in', road: p[0], city: p[1], state: p[2], name: p[3] }; road = p[0]; } }
     const pr = SH.pickRoute(road || SH.ownerRoad(v), 'neoga', R, ['IC', 'NW']); via = pr.via; v.inMain = pr.main; }
+  if (dest === 'NG COAL' && via === 'IC') { delete v.far; if (R() < 0.35) { const p = wbPickStrict('coal', 'Coal (stoker)', R); if (p) v.far = { dir: 'in', road: p[0], city: p[1], state: p[2], name: p[3] }; } } // Nov 17: Fies Mine (L&N-Evansville-ICG) ships some of the ICG stoker coal
   v.loaded = !!v.load; v.wt = 30 + (v.load ? v.load.t : 0); v.dest = dest; v.via = via; v.ngIn = true; return v; }
 const wbDate = t => { const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'], dt = new Date(Date.UTC(1975, 8, 29) + Math.floor(t / 86400) * 864e5); return `${m[dt.getUTCMonth()]} ${dt.getUTCDate()} 1975`; };
 const SHIP = { coal: { IC: ['Southern Illinois Coal Co.', 'Marion, IL', 'IC'], NW: ['Big Sandy Coal Co.', 'Williamson, WV', 'N&W'] }, tank: { IC: ['Bayou Refining Co.', 'Norco, LA', 'IC'], NW: ['Maumee Refining Co.', 'Toledo, OH', 'N&W'] } };
@@ -436,13 +478,14 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
 }
 // set a cut out on the interchange track, coupled behind what's already there; false if there's no room
 // Nov 3 (late): the N&W Interchange's clearance point. No car may stand past it (closer to the N&W main than 13 ft track centres)
-var NWI_CLR = null; function nwiClear() { if (NWI_CLR != null) return NWI_CLR; const L = T.NWI.len, b = ptAt('NWI', L); let d = L;
-  for (; d > 0; d -= 0.5) { const p = ptAt('NWI', d); if (Math.abs(p[0] - b[0]) >= 13) break; } return (NWI_CLR = Math.floor(d)); }
+var NWI_CLR = null; function nwiClear() { if (NWI_CLR != null) return NWI_CLR; const L = T.NWI.len; let d = L;
+  for (; d > 0; d -= 0.5) { const p = ptAt('NWI', d); if (Math.abs(p[0] - NWX) >= 13) break; } return (NWI_CLR = Math.floor(d)); } // Nov 17: measured from the N&W centre line (was the track end, which sat on it)
+var NWI_FOUL = null; function nwiFoul() { if (NWI_FOUL != null) return NWI_FOUL; let d = 0; for (; d < T.NWI.len; d += 0.5) if (Math.abs(ptAt('NWI', d)[1]) >= 13) break; return (NWI_FOUL = Math.max(120, Math.ceil(d))); } // Nov 17: cars set out by the N&W stay clear of our main (13 ft centres)
 function clampNWI() { const K = nwiClear(); let n = 0; for (const c of S.cuts) { const hi = c.path.filter(g => g.t === 'NWI').reduce((m, g) => Math.max(m, g.d0, g.d1), -1); if (hi <= K) continue;
     const h = c.path[c.path.length - 1], t = c.path[0], ex = hi - K + 0.5; if (h.t === 'NWI' && h.dir > 0 && Math.max(h.d0, h.d1) === hi) moveCut(c, -ex); else if (t.t === 'NWI' && t.dir < 0) moveCut(c, ex); else moveCut(c, -ex); n++; } return n; }
 function setOutNWI(cars) { let hd = nwiClear() - 2; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)).map(x => x - 2));
   const L = cars.reduce((a, v) => a + vL(v), 0), c = placeCut(cars, cars.map(() => true), 'NWI', hd, 1);
-  if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < 120) return false; S.cuts.push(c); return true; }
+  if (S.cuts.some(o => segsOverlap(o, c, 2)) || hd - L < nwiFoul()) return false; S.cuts.push(c); return true; }
 // Nov 17 (Stephen): no ICG way freight at Neoga any more. ICG cars for Neoga still waiting from an older save go by the ICG to Mattoon (ICG interchange) instead.
 function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendIC.length;
   M.efIc = (M.efIc || []).concat(S.pendIC); S.pendIC = []; note(`${n} ICG car${n > 1 ? 's' : ''} for Neoga ${n > 1 ? 'are' : 'is'} coming by the ICG to Mattoon (ICG interchange); bring ${n > 1 ? 'them' : 'it'} down from there.`); }
@@ -531,7 +574,7 @@ function moveStep(c, sgn, s) {
     crossSignal(c, sgn, before, after); if (after.t !== before.t && !(sgn > 0 ? c.path.slice(0, -1) : c.path.slice(1)).some(g => g.t === after.t) && window.NII_CALLSHEET && NII_CALLSHEET.guard && NII_CALLSHEET.guard('neoga', after.t, true)) { moveCut(c, -sgn * ds); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; S.crossT = null; NII_CALLSHEET.guard('neoga', after.t); break; } // Nov 13: a crew's claimed track stops you, as in Mattoon and Effingham
     if (c.veh.some(isLoco) && ylCheckN(c, sgn, tb, ta)) break; if (bfMoveN(c, sgn)) break;
     const hit = S.cuts.find(o => o !== c && segsOverlap(c, o, 0)); if (hit) { moveCut(c, -sgn * Math.min(ds, 1)); const mph = ctl.v / FTS; couple(c, hit, sgn); ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.ap = null; ctl.dir = 0; toast(mph > 6 ? `Hard coupling at ${mph.toFixed(0)} mph! Keep it under 4.` : 'Coupled.', mph > 6 ? 'bad' : 'good'); break; }
-    if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') { if (effOK()) askSouth(); else toast('Effingham is the end of the line, coming later. Back up.'); } else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'clear') toast('Clearance point: cars past here would foul the N&W main.', 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
+    if (r.stop) { ctl.v = 0; ctl.sv = 0; ctl.notch = 0; ctl.dir = 0; ctl.ap = null; if (r.stop === 'north') askNorth(); else if (r.stop === 'south') { if (effOK()) askSouth(); else toast('Effingham is the end of the line, coming later. Back up.'); } else if (r.stop === 'locked') toast(LOCK_MSG, 'bad'); else if (r.stop === 'clear') toast('End of track: the N&W Interchange ends at the bumper.', 'bad'); else if (r.stop === 'lined') toast(`Switch ${SWITCHES[r.sw].name} is lined against you.`, 'bad');  else toast('End of track.'); break; } }
 }
 // ---- Nov 4 (Stephen): BLUE FLAGS at the house track and Miller & Sons, Prairie Grain's rules (shared.js blueFlags). Flag 110 ft in from the switch,
 // raised once the crew has spotted cars and left the area: off the customer's tracks and more than BLUE_FLAG.near ft from its switch.
@@ -723,9 +766,9 @@ function rectW(x0, y0, x1, y1, col) { g.fillStyle = col; g.fillRect(sx(x0), sy(y
 // Row 300 sits across the street from main street (we see its rear); row 420 faces the back lane at 448 (we see its front). Garages, trees and picket fences as Mattoon does.
 const HOUSE_N = ['neoga-house-a', 'neoga-house-b', 'neoga-house-c', 'neoga-house-d', 'neoga-house-e'], HOUSE_M = ['house-bungalow-a', 'house-bungalow-b', 'house-cape-a', 'house-foursquare-a', 'house-foursquare-b', 'house-hipbungalow-a', 'house-lcottage-a', 'house-ranch-a'];
 const CHURCH = { x: 1040, y: 436 }, GAS = { x: 450, y: 296 }, FEED = { x: 1230, y: 238 };
-const HOUSES = (() => { const r = seeded(4242), out = []; for (const row of [300, 420]) for (let x = -200; x < 3500; x += 70 + r() * 40) { if (Math.abs(x - NWX) < 90 || Math.abs(x - 380) < 60) continue; if (row === 300 && (x > FX0 - 60 && x < FX0 + 330 || Math.abs(x - GAS.x) < 75)) continue; if (row === 420 && Math.abs(x - CHURCH.x) < 70) continue;
+const HOUSES = (() => { const out = []; for (const [sd, X0, X1] of [[4242, -200, 3500], [4243, -720, -280]]) { const r = seeded(sd); /* Nov 17: second pass fills the new north end; the first is the original layout */ for (const row of [300, 420]) for (let x = X0; x < X1; x += 70 + r() * 40) { if (Math.abs(x - NWX) < 90 || Math.abs(x - 380) < 60) continue; if (row === 300 && (x > FX0 - 60 && x < FX0 + 330 || Math.abs(x - GAS.x) < 75)) continue; if (row === 420 && Math.abs(x - CHURCH.x) < 70) continue;
   const neo = r() < 0.5, nm = neo ? HOUSE_N[Math.floor(r() * 5)] : HOUSE_M[Math.floor(r() * 8)], side = row === 300 ? '-rear' : '-front';
-  out.push({ x, y: row + r() * 14, art: (neo ? nm + side + '@2x' : nm + side), w: 28 + r() * 14, d: 26 + r() * 8, h: 11 + r() * 8, col: ['#e9e2d0', '#c9d3d8', '#d9c09a', '#f1efe8', '#b9c7a8', '#d6b3a3'][Math.floor(r() * 6)], roof: ['#5b4b45', '#3e4652', '#6a3b2c', '#565656'][Math.floor(r() * 4)], tree: r() < 0.6 ? ['house-tree-maple', 'house-tree-elm', 'house-tree-fruit'][Math.floor(r() * 3)] : null, garage: r() < 0.35 ? (r() < 0.5 ? 'house-garage-a' : 'house-garage-b') : null, fence: row === 420 && r() < 0.4 }); } return out; })();
+  out.push({ x, y: row + r() * 14, art: (neo ? nm + side + '@2x' : nm + side), w: 28 + r() * 14, d: 26 + r() * 8, h: 11 + r() * 8, col: ['#e9e2d0', '#c9d3d8', '#d9c09a', '#f1efe8', '#b9c7a8', '#d6b3a3'][Math.floor(r() * 6)], roof: ['#5b4b45', '#3e4652', '#6a3b2c', '#565656'][Math.floor(r() * 4)], tree: r() < 0.6 ? ['house-tree-maple', 'house-tree-elm', 'house-tree-fruit'][Math.floor(r() * 3)] : null, garage: r() < 0.35 ? (r() < 0.5 ? 'house-garage-a' : 'house-garage-b') : null, fence: row === 420 && r() < 0.4 }); } } return out; })();
 function drawHouse(h) { const cx = h.x + 18; if (h.garage) drawArt(h.garage, cx + 27, h.y - 8); if (!drawArt(h.art, cx, h.y)) box3(h.x, h.y, h.w, h.d, h.h, h.col, h.roof, 7); if (h.tree) drawArt(h.tree, cx - 26, h.y - 4) || tree(cx - 26, h.y - 4, 1); if (h.fence) drawArt('house-fence-picket', cx, h.y + 6); }
 const BLDG = [{ x: 330 - 150, y: 230, w: 90, d: 40, h: 22, col: '#b5714f', roof: '#4b4b4b', sign: 'NEOGA HARDWARE' }, { x: 470, y: 232, w: 70, d: 40, h: 26, col: '#a35a40', roof: '#4b4b4b', sign: 'BANK' }, { x: 2050, y: 236, w: 80, d: 40, h: 18, col: '#d8cfb8', roof: '#555', sign: 'CAFE' }];
 const BLDG_ART = ['neoga-hardware@2x', 'neoga-bank@2x', 'neoga-cafe@2x'];
@@ -790,6 +833,7 @@ let SCN_ = null; const SCN = () => SCN_ || (SCN_ = (() => {
     const pts = []; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 10) pts.push(ptAt(t, d));
     const clear = (x, y) => !boxes.some(([a, b, c, d]) => x >= a && x <= c && y >= b && y <= d) && !pts.some(p => Math.abs(p[0] - x) < 30 && Math.abs(p[1] - y) < 30) && Math.abs(y) > 40;
     for (let y = -200; y <= 700; y += 40) for (let x = -300; x <= 3600; x += 40) { const jx = x + (R() - 0.5) * 24, jy = y + (R() - 0.5) * 16; if (clear(jx, jy) && R() < 0.08) trees.push({ x: Math.round(jx), y: Math.round(jy), art: ['house-tree-maple', 'house-tree-elm', 'house-tree-fruit'][Math.floor(R() * 3)] }); }
+    { const R2 = seeded(1107); for (let y = -200; y <= 700; y += 40) for (let x = -900; x < -300; x += 40) { const jx = x + (R2() - 0.5) * 24, jy = y + (R2() - 0.5) * 16; if (jx < -330 && clear(jx, jy) && R2() < 0.08) trees.push({ x: Math.round(jx), y: Math.round(jy), art: ['house-tree-maple', 'house-tree-elm', 'house-tree-fruit'][Math.floor(R2() * 3)] }); } } // Nov 17: the new north end
     fences = [{ name: 'lot fence W', pts: [[lot.x0, lot.y0 + 8], [lot.x0, lot.y1], [access.x0, lot.y1]], art: 'house-fence-chain' }, { name: 'lot fence E', pts: [[access.x1, lot.y1], [lot.x1, lot.y1], [lot.x1, lot.y0 + 8]], art: 'house-fence-chain' }];
     return { trees, fences }; };
   return { lot, truckApron, access, ramp, fh, lotCars, houses, drives, cars, open, skipTrackside };
@@ -878,7 +922,6 @@ function turns() { if (TURNS) return TURNS; TURNS = [];
     const pa = N(qF), pb = R(qF), side = ((pb[0] - pa[0]) * -Math.sin(pa[2]) + (pb[1] - pa[1]) * Math.cos(pa[2])) >= 0 ? 1 : -1; // which side of N the R leg goes
     const pr2 = R(qF), side2 = ((pa[0] - pr2[0]) * -Math.sin(pr2[2]) + (pa[1] - pr2[1]) * Math.cos(pr2[2])) >= 0 ? 1 : -1; TURNS.push({ k, N, R, qT, qF, inN: side, inR: side2, lined }); };
   for (const [k, s] of Object.entries(SWITCHES)) add(k, legOf(s.N[0], s.N[1]), legOf(s.R[0], s.R[1]), () => S.sw[k]);
-  const e = T.NWI.len; add('NWL', q => [NWX, -320 - q, -Math.PI / 2], legOf('NWI', 'b'), () => 'N'); // locked N&W switch, lined for the N&W
   return TURNS; }
 const railStroke = (pts, w = 1) => { g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.strokeStyle = '#3b3a3a'; g.lineWidth = Math.max(1.1 * w, 0.42 * cam.z * w); g.stroke(); g.strokeStyle = '#b8b6b0'; g.lineWidth = Math.max(0.6 * w, 0.16 * cam.z * w); g.stroke(); };
 const polyS = (pts, col) => { g.fillStyle = col; g.beginPath(); pts.forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.fill(); };
@@ -1097,7 +1140,6 @@ function swmPadDraw(stage) { const [vL, vR] = visX();
 function swmEntries() { // US&S A-5 air machines at the N&W tower switches (NWL now; add more keys or SWITCHES[k].machine = 'a5' later).
   const e = [];
   for (const [k, s] of Object.entries(SWITCHES)) if (s.machine) e.push({ k, kind: s.machine, lock: !!s.locked });
-  e.push({ k: 'NWL', kind: 'a5', lock: true, N: q => [NWL.at[0], NWL.at[1] - q, -Math.PI / 2], R: legOf('NWI', 'b') });
   return e;
 }
 // ---- switch stands (Danny's shared art: high stands with lamp on the main, low Bethlehem elsewhere)
@@ -1182,7 +1224,7 @@ function draw0() { if (!resize()) { if (g.reset) g.reset(); else { g.setTransfor
     cam.z = Math.max(cam.z, H / ((NG_YB - NG_YT) * K)); const hh = H / 2 / (cam.z * K), lo = NG_YT + hh, hi = NG_YB - hh; cam.y = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, cam.y)); } // Nov 1: never more than ~100 ft past either travel edge; max zoom-out limited to fit
   drawGround(); drawFuelGround(); drawRails(); if (spotsOn) drawSpotMarks(); drawBlueFlags();
   // bumper / wheel stop
-  for (const [t, d] of [['HT', T.HT.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }
+  for (const [t, d] of [['HT', T.HT.len], ['NWI', T.NWI.len], ['FL', T.FL.len - (FD.railEnd - FD.wheelStop)]]) { const [x, y] = ptAt(t, d); g.fillStyle = '#7a4a2a'; g.fillRect(sx(x) - 1.5 * cam.z, sy(y - 4), 3 * cam.z, 8 * cam.z * K + hz(2)); }
   const items = []; // depth-sorted scenery + cars
   items.push({ y: ELEV.y, f: drawElevator }); items.push({ y: POLE_Y, f: drawPoles }); for (const [n, x, y] of TOWN_ART) { if (SCENERY_ON && SCN().skipTrackside(x)) continue; items.push({ y, f: () => drawArt(n, x, y) || tree(x, y, 1) }); }
   items.push({ y: -26, f: drawTower }); if (!SCENERY_ON) items.push({ y: HOUSE_OFF - 13.5, f: drawFreightHouse }); items.push({ y: FUEL_OFF - 14, f: drawFuel }); items.push({ y: STREET_Y - 3, f: drawFuelSign });
@@ -1234,14 +1276,13 @@ const r1 = v => Math.round(v * 10) / 10, flat = pts => pts.flatMap(p => [r1(p[0]
 function mapSnap() { const tracks = Object.values(T).map(t => flat(t.p)), lined = [];
   for (const [k, sw] of Object.entries(SWITCHES)) { const [t, e] = sw[S.sw[k]] || [], tr = T[t]; if (!tr) continue; const L = Math.min(40, tr.len * 0.45), pts = []; for (let i = 0; i <= 6; i++) { const d = e === 'a' ? L * i / 6 : tr.len - L * i / 6; pts.push(ptAt(t, d)); } lined.push(flat(pts)); }
   const cars = []; for (const c of S.cuts) for (const q of vehPos(c)) cars.push({ p: flat([ptAt(q.p0.t, q.p0.d), ptAt(q.pm.t, q.pm.d), ptAt(q.p1.t, q.p1.d)]), c: NCOL[q.v.type] || '#555' });
-  const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]).concat([NWL.at]);
+  const names = Object.values(T).map(t => t.name), sws = Object.values(SWITCHES).map(w => [w.at[0], w.at[1]]);
   return { t: Date.now(), fy: 0, ky: 1, names, sws, box: [XN - 20, -420, XS + 20, FUEL_OFF + 60], tracks, other: [[NWX, -400, NWX, 400], [XN - 20, 0, XN, 0], [XS, 0, XS + 20, 0]], lined, cars,
-    bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
-    labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W Interchange', 1330, -170, 1], ['Run-around', 2500, -30, 1], ['N&W (Clover Leaf)', NWX + 12, -380, 0, 'left'], ['locked switch', NWX + 12, -320, 0, 'left'], ['Neoga tower', NWX - 120, -40, 0]] }; }
+    bump: [ptAt('HT', T.HT.len), ptAt('FL', T.FL.len), ptAt('NWI', T.NWI.len)].map(p => [r1(p[0]), r1(p[1])]), blds: [[FH.doorX - 20, HOUSE_OFF + 8, FH.doorX + 20, HOUSE_OFF + 28], [FX0 + 60, FUEL_OFF + 8, FX0 + 160, FUEL_OFF + 34]],
+    labels: [['◀ N to Mattoon', XN + 10, -24, 0, 'left'], ['S to Effingham ▶', XS - 10, -24, 0, 'right'], ['House track', HX0 + 200, HOUSE_OFF - 16, 1], ['Miller & Sons Fuel', FX0 + 110, FUEL_OFF + 48, 1], ['N&W Interchange', 1000, -44, 1], ['Run-around', 2500, -30, 1], ['N&W (Clover Leaf)', NWX + 12, -380, 0, 'left'], ['Neoga tower', NWX + 12, -30, 0, 'left']] }; }
 function mapLiveTap(m, X, Y) { if (VISIT) { for (const sw of Object.values(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(NII.visitNote(), 'bad'); return; } }
     let bt = null; for (const t of Object.keys(T)) for (let d = 0; d <= T[t].len; d += 3) { const p = ptAt(t, d), [a, b] = m.w2s(p[0], p[1]), e = Math.hypot(a - X, b - Y); if (e < 26 && (!bt || e < bt.e)) bt = { t, d, e, p }; }
     if (bt) NII.crossFromVisit({ to: 'neoga', x: bt.p[0], y: bt.p[1], label: T[bt.t].name, name: 'Neoga' }); return; } // own tab: tap a switch to throw it, tap a track to run the engine there
-  { const [a, b] = m.w2s(NWL.at[0], NWL.at[1]); if (Math.hypot(a - X, b - Y) < 22) { toast(LOCK_MSG, 'bad'); SH.sfx('tick'); return; } }
   let bs = null; for (const [k, sw] of Object.entries(SWITCHES)) { const [a, b] = m.w2s(sw.at[0], sw.at[1]), e = Math.hypot(a - X, b - Y); if (e < 22 && (!bs || e < bs.e)) bs = { k, e }; }
   if (bs) { const k = bs.k, s = SWITCHES[k], ends = [s.stem, s.N, s.R], at = (t, e) => e === 'a' ? 0 : T[t].len;
     throwSw(k, X, Y); NII.mapTabs.repaint(); return; }
@@ -1371,7 +1412,7 @@ function frame(now) { const dt = Math.min(0.1, (now - last) / 1000); last = now;
   for (let i = 0; i < k; i++) step(dt); advance(dt * k); if ((bfT += dt * k) >= 5) { bfT = 0; if (ngOpen()) BFNX.tick(); } towerTick(); crossTick(); draw(); if (NII.mapTabs.sel === 'neoga' && (mapT += dt) > 0.4) { mapT = 0; NII.mapTabs.repaint(); } saveT += dt; if (saveT > 5) { saveT = 0; save(); } requestAnimationFrame(frame); }
 const NG_YARD_TS = ['RA']; // Nov 16 fix: declared before load runs; the crew catch-up used it too early ('Cannot access NG_YARD_TS before initialization') and skipped the crew's work
 try { NII_SHARED.setPlacePicker((v, c, r) => { const k = kindOf(v) || 'box'; return wbPickStrict(k, c, r) || wbPickStrict(({ ps2: 'hopper', cf: 'hopper', cf2: 'hopper' })[k] || 'none', c, r); }); } catch (e) { } // Nov 17: consignees for released loads (routing follows the far end)
-build(); nwiClear(); if (!VISIT && S.pendIC && S.pendIC.length) { try { dropIC(); save(); } catch (e) { } } // Nov 17: older saves' ICG cars waiting for the way freight go by Mattoon
+nwiClear(); if (!VISIT && S.pendIC && S.pendIC.length) { try { dropIC(); save(); } catch (e) { } } // Nov 17: older saves' ICG cars waiting for the way freight go by Mattoon (Nov 17 eve: no second build() here; it wired every button twice, so 'Go to Mattoon' ran twice and the second run sent an empty train)
 build(); nwiClear(); if (!VISIT) { try { let n = 0; for (const c of S.cuts) { const ix = (c.path || []).length && onWyeInterchange(c); for (const v of c.veh || []) if (!isLoco(v) && v.type !== 'caboose' && SH.repairRoute(v, 'neoga', ix)) n++; } if (n) console.log('route repair (neoga): ' + n + ' car(s)'); } catch (e) { console.warn('route repair', e); } /* Nov 17: old saves' released cars get today's routing */ try { ngCatchUp(); } catch (e) { console.warn('catch-up', e); } if (S.day < 0) { S.day = dayNo() - 1; newDay(); } arrive(); newDay(); if (S.fixBack) { delete S.fixBack; try { dropIC(); } catch (e) { } } /* Nov 16: cars Mattoon sent back (a crew had pulled them off the N&W Interchange by mistake) go straight back on the interchange track */ releaseDue(); crossArrive(); { S.fix1103 = 1; const c = liveCut(); const n = c ? stripStrays(c) : 0; if (clampNWI() || n) save(); } /* Nov 3 (late): every load, not once */ NII.setOnLeave(save); setTimeout(() => { const x = NII.takeCross(); if (x && x.to !== 'neoga') crossStart(x); }, 300); }
 else { if (S.day >= 0) { VQ = 1; try { newDay(); } catch (e) { } VQ = 0; } // Nov 5 (Stephen): look-around shows the day's new interchange cars (same day rules; this copy is never saved, the real set-out happens on arrival)
   cam.follow = false; const c0 = S.cuts[0]; cam.x = 1600; cam.y = 20; cam.z = 0.6; if (!S.cuts.length) toast('Neoga has no cars yet: they come in on your first trip here.'); }
@@ -1567,5 +1608,5 @@ if (!VISIT) { try { bindCrewBoardN(); } catch (e) { } try { ngApplyPendingCrew()
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); hideModal(); bindCrewBoardN(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); } });
   setInterval(() => { try { if (window.NII_CALLSHEET && NII_CALLSHEET.tick) NII_CALLSHEET.tick(); } catch (e) { } }, 500); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get foul() { return nwiFoul(); }, setOutNWI, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
