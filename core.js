@@ -3307,7 +3307,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const o = {};
     Object.keys(nv).forEach(function (k) { if (k !== 'f' && k !== 'r' && k !== 'cid' && k !== 'aFront') o[k] = nv[k]; });
     o.id = id;
-    if (o.L == null && G.TYPES[o.type]) o.L = G.TYPES[o.type].L;
+    if (o.L == null) { const A = (typeof NII_CORE !== 'undefined' && NII_CORE.ART) || {}, a = A[o.art || o.type]; if (a && a.L) o.L = a.L; else if (G.TYPES[o.type]) o.L = G.TYPES[o.type].L; } // Nov 18: picture length first (Neoga cars carry none)
     s.veh[id] = o;
     return id;
   }
@@ -3343,7 +3343,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     Object.keys(nv).forEach(function (k) { if (k !== 'f' && k !== 'r' && k !== 'cid' && k !== 'aFront') o[k] = nv[k]; });
     return o;
   }
-  function carLenOf(v) { return (v && (v.L || (G.TYPES && G.TYPES[v.type] && G.TYPES[v.type].L))) || 50; }
+  function carLenOf(v) { const A = (typeof NII_CORE !== 'undefined' && NII_CORE.ART) || {}, a = v && A[v.art || v.type]; return (v && (v.L || (a && a.L) || (G.TYPES && G.TYPES[v.type] && G.TYPES[v.type].L))) || 50; } // Nov 18: a car with no stored length is as long as its picture
   function nwiLen() {
     try { if (typeof window !== 'undefined' && window.__neoga && window.__neoga.T && window.__neoga.T.NWI) return window.__neoga.T.NWI.len; } catch (e) { }
     const ng = envTown('neoga');
@@ -3357,39 +3357,31 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return best > 80 ? Math.max(best + 40, 502.6548245743669) : 502.6548245743669;
   }
   const NWI_LEN_NEW = 1075; // a little under T.NWI.len (bumper end, already 18 ft clear of the N&W); the Neoga pack's own T.NWI.len wins when it is loaded
-  function placeOnNwi(vehs) {
-    const placed = [], left = [];
-    const ng = envTown('neoga');
-    if (!ng || !vehs || !vehs.length) return { placed: placed, left: vehs || [] };
-    ng.cuts = ng.cuts || [];
-    if (ng.nid == null) ng.nid = 1;
-    const N = typeof window !== 'undefined' ? window.__neoga : null;
-    const S = (N && N.S) || ng;
-    if (S.cuts && ng !== S) { /* live pack shares cuts */ }
-    const cuts = S.cuts || (S.cuts = ng.cuts);
-    const len = nwiLen();
-    const pack = !!(N && N.placeCut && N.T && N.T.NWI);
+  // Nov 18 (Stephen: fix the Neoga gaps too): crew set-outs on Neoga's N&W Interchange and runaround are one tight coupled cut, in order (the first car deepest),
+  // not one cut every 10 ft. With Neoga on screen Neoga's own placement does it (ngPlaceCars); otherwise the cars are set tight here and Neoga couples them on its next load (ngPack).
+  function dataPlaceNg(ng, t, len, clear, vehs) {
+    const placed = [], left = [], cuts = ng.cuts = ng.cuts || []; ng.ngPack = ng.ngPack || []; if (ng.nid == null) ng.nid = 1;
     (vehs || []).forEach(function (v) {
-      const L = carLenOf(v), aT = [true];
+      const L = carLenOf(v), held = !!v.efHold, maxHead = len - 6, minHead = L + clear;
+      const join = function (c) { return (c.path || []).length && c.path.every(function (g) { return g.t === t; }) && !(c.veh || []).some(function (x) { return x.type === 'gp9'; }) && (c.veh || []).every(function (x) { return !!x.efHold === held; }); };
+      const occ = []; cuts.forEach(function (c) { const p = join(c) ? 0 : 2; (c.path || []).forEach(function (g) { if (g.t === t) occ.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1), p: p }); }); });
+      const cands = [maxHead].concat(occ.map(function (o) { return o.lo - o.p; })).sort(function (a, b) { return b - a; });
       let ok = false;
-      for (let d = len - 6; d >= L + (len > 600 ? 172 : 6) && !ok; d -= 10) { // Nov 17: on the long NWI keep clear of our main (fouling point ~170 ft from S2)
-        let cut;
-        if (pack) cut = N.placeCut([v], aT, 'NWI', d, 1);
-        else {
-          S.nid = S.nid || ng.nid || 1;
-          const id = 'c' + (S.nid++);
-          ng.nid = S.nid;
-          cut = { id: id, veh: [v], aT: aT, path: [{ t: 'NWI', dir: 1, d0: Math.max(0, d - L), d1: d }] };
-        }
-        if ((cuts || []).some(function (o) { return cutsOverlap(o, cut, 2); })) continue;
-        cuts.push(cut);
-        ng.cuts = S.cuts || cuts;
-        placed.push(v);
-        ok = true;
-      }
+      for (let k = 0; k < cands.length && !ok; k++) { const d = cands[k]; if (d > maxHead + 1e-9 || d < minHead - 1e-9) continue;
+        if (occ.some(function (o) { return !(d + o.p <= o.lo + 1e-6 || o.hi + o.p <= d - L + 1e-6); })) continue;
+        cuts.push({ id: 'c' + (ng.nid++), veh: [v], aT: [true], path: [{ t: t, dir: 1, d0: Math.max(0, d - L), d1: d }] }); placed.push(v); if (v.id) ng.ngPack.push(v.id); ok = true; }
       if (!ok) left.push(v);
     });
+    if (!ng.ngPack.length) delete ng.ngPack;
     return { placed: placed, left: left };
+  }
+  function placeOnNwi(vehs) {
+    const ng = envTown('neoga');
+    if (!ng || !vehs || !vehs.length) return { placed: [], left: vehs || [] };
+    ng.cuts = ng.cuts || []; if (ng.nid == null) ng.nid = 1;
+    const N = typeof window !== 'undefined' ? window.__neoga : null, len = nwiLen(), clear = len > 600 ? 172 : 6; // Nov 17: on the long NWI keep clear of our main (fouling point ~170 ft from S2)
+    if (N && N.ngPlaceCars && N.S && N.T && N.T.NWI) { const r = N.ngPlaceCars('NWI', vehs.filter(Boolean), { clear: clear }); if (ng !== N.S) ng.cuts = N.S.cuts; return r; }
+    return dataPlaceNg(ng, 'NWI', len, clear, vehs.filter(Boolean));
   }
   // Nov 16 fix (Stephen: the local sent to spot Miller & Sons put the car on Yard 1, then Mattoon froze): the crew lifts only the cars that belong in its home town.
   // Cars for Neoga's own customers stay on the N&W Interchange for the crew / player to spot; Effingham cars only go to Effingham, Mattoon cars only to Mattoon.
@@ -3449,10 +3441,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (ef && ef !== S) ef.cuts = S.cuts;
     return out;
   }
-  function placeOnEfYard(vehs) {
+  function placeOnEfYard(vehs, whole) {
     const placed = [], left = [];
     const EF = typeof window !== 'undefined' ? window.__effingham : null;
     const ef = envTown('effingham');
+    // Nov 18 (Stephen: crew cars coupled but drawn apart in Effingham): with Effingham on screen the cars are set packed and coupled by Effingham's own crew placement
+    // (as the hired crews there do since mw59ef112), not 12 ft apart as separate cuts. whole: all or none (a held cut stays whole on the runaround).
+    if (EF && EF.efPlaceYardCars && EF.S && EF.T) { const r = EF.efPlaceYardCars((vehs || []).filter(Boolean), !!whole); try { if (EF.save) EF.save(); } catch (e) { } return r; }
     if (EF && EF.placeCut && EF.S && EF.T) {
       const tracks = ['Y1', 'Y2', 'Y3', 'Y4'].filter(function (t) { return EF.T[t]; });
       // Nov 17 (Stephen: crews split cars over tracks when they'd fit on one): the whole block as one cut on the first yard track that takes it
@@ -3506,31 +3501,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function markHeld(v) { if (v) { v.efHold = 1; v.ngPicked = true; } return v; }
   function isEfCar(v) { return !!(v && /^EF /.test(v.dest || '')); }
   function placeOnNgRA(vehs) {
-    const placed = [], left = [];
     const ng = envTown('neoga');
-    if (!ng || !vehs || !vehs.length) return { placed: placed, left: vehs || [] };
+    if (!ng || !vehs || !vehs.length) return { placed: [], left: vehs || [] };
     ng.cuts = ng.cuts || []; if (ng.nid == null) ng.nid = 1;
     const N = typeof window !== 'undefined' ? window.__neoga : null;
-    const S = (N && N.S) || ng, cuts = S.cuts || (S.cuts = ng.cuts);
-    const live = !!(N && N.placeCut && N.T && N.T.RA), len = live ? N.T.RA.len : RA_LEN;
-    (vehs || []).forEach(function (v) {
-      const L = carLenOf(v), maxHead = len - 6, minHead = L + 6;
-      const occ = []; (cuts || []).forEach(function (c) { (c.path || []).forEach(function (g) { if (g.t === 'RA') occ.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1) }); }); });
-      const cands = [maxHead].concat(occ.map(function (o) { return o.lo - 2; })).sort(function (a, b) { return b - a; });
-      let ok = false;
-      for (let k = 0; k < cands.length && !ok; k++) {
-        const d = cands[k]; if (d > maxHead + 1e-9 || d < minHead - 1e-9) continue;
-        if (occ.some(function (o) { return !(d + 2 <= o.lo || o.hi + 2 <= d - L); })) continue;
-        let cut;
-        if (live) cut = N.placeCut([v], [true], 'RA', d, 1);
-        else { S.nid = S.nid || ng.nid || 1; cut = { id: 'c' + (S.nid++), veh: [v], aT: [true], path: [{ t: 'RA', dir: 1, d0: Math.max(0, d - L), d1: d }] }; ng.nid = S.nid; }
-        if ((cuts || []).some(function (o) { return cutsOverlap(o, cut, 1.5); })) continue;
-        cuts.push(cut); ng.cuts = S.cuts || cuts; placed.push(v); ok = true;
-      }
-      if (!ok) left.push(v);
-    });
-    try { if (live && N.save) N.save(); } catch (e) { }
-    return { placed: placed, left: left };
+    if (N && N.ngPlaceCars && N.S && N.T && N.T.RA) { const r = N.ngPlaceCars('RA', vehs.filter(Boolean), { clear: 6 }); if (ng !== N.S) ng.cuts = N.S.cuts; try { if (N.save) N.save(); } catch (e) { } return r; } // Nov 18: packed and coupled (see dataPlaceNg)
+    return dataPlaceNg(ng, 'RA', RA_LEN, 6, vehs.filter(Boolean));
   }
   // overflow for Effingham cars the Effingham yard cannot take; returns notes. Nothing is ever dropped.
   function efOverflow(vehs) {
@@ -3595,7 +3571,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     let n = 0;
     held.forEach(function (c) {
       const vs = c.veh.map(function (v) { const o = cloneVeh(v); delete o.efHold; return o; });
-      const r = placeOnEfYard(vs);
+      const r = placeOnEfYard(vs, true);
       if (r.placed.length === vs.length) { const i = ng.cuts.indexOf(c); if (i >= 0) ng.cuts.splice(i, 1); n += vs.length; }
       else if (r.placed.length) { // part of a coupled cut did not fit: put the placed ones back, keep the cut whole on the runaround
         r.placed.forEach(function (o) { (EF.S.cuts || []).forEach(function (k, j) { if (k.veh.indexOf(o) >= 0 && k.veh.length === 1) EF.S.cuts.splice(j, 1); }); });
@@ -6092,12 +6068,24 @@ function sendStraysHome() {
   reindex(); save(); setTimeout(() => toast(`${back.length} car${back.length > 1 ? 's' : ''} for another town ${back.length > 1 ? 'were' : 'was'} in the Mattoon yard by mistake and went back: ${back.join(', ')}.`, 'good'), 900);
   return back.length;
 }
+// Nov 18 (Stephen: 3 cars on top of each other after Neoga -> Mattoon): Neoga's own cars (boxcars, tanks) have no stored length (Neoga draws them at their art length),
+// so the arriving train was laid out with an undefined length and the cars piled up. Every car gets a real length (its picture's, else the type's) before it is placed.
+function fixLenM(v) { if (!v) return false; const L = +v.L; if (L > 0 && Number.isFinite(L)) return false; const a = ART && ART[artOf(v)]; v.L = (a && a.L) || (TYPES[v.type] && TYPES[v.type].L) || 50; return true; }
+// Nov 18 load repair: a consist whose stored car positions are broken (no length, a non-number position, or a car shorter/longer than itself, i.e. stacked) is laid out again
+// end to end from its first car (or, if that is broken too, where an arriving train stops). Consists that are fine are never moved.
+function repairStackedM() { let n = 0; const ok = p => !!(p && SEG[p.s] && Number.isFinite(p.d) && (p.dir === 1 || p.dir === -1));
+  for (const v of Object.values(state.veh)) fixLenM(v);
+  for (const c of Object.values(state.cons || {})) { const vs = (c.veh || []).map(id => state.veh[id]).filter(Boolean); if (!vs.length || vs.length !== c.veh.length) continue;
+    const bad = vs.some(v => { if (!ok(v.f) || !ok(v.r)) return true; const rr = retreat(v.f, v.L); return rr.s !== v.r.s || Math.abs(rr.d - v.r.d) > 1; }); if (!bad) continue;
+    const len = vs.reduce((a, v) => a + v.L, 0); let p = ok(vs[0].f) ? { ...vs[0].f } : { s: SI.MS2, d: Math.max(5, SEG[SI.MS2].len - 15 - len), dir: -1 };
+    for (const v of vs) { v.f = { ...p }; v.r = retreat(p, v.L); v.cid = c.id; p = { ...v.r }; } n++; }
+  if (n) console.log('stacked-car repair (Mattoon): ' + n + ' consist(s) laid out again'); return n; }
 function trainHome() { // back from another town: the train comes in on the south end of the main, heading north
   const env = NII.env(); if (env.town !== 'mattoon' || !env.travel) return; // Nov 13: only a real train arrival (a Towns jump brings no train)
   if (!state.awayTrain && !(env.trainIn && env.trainIn.length)) return;
   if (env.modeIn === 'tap' || env.modeIn === 'drive') state.mode = env.modeIn; delete env.modeIn; // Nov 16 (Stephen): same Drive / Tap as the town you left
   const back = env.trainIn || []; const away = Math.max(0, (env.time || state.time) - (state.awayTrain ? state.awayTrain.left : state.time)); // Nov 16: catchUpClock() moves the clock (car hire, customers, crews, End days) after load
-  const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { delete v.aFrontN; if (v.mattoonN && !v.via) v.via = 'NW'; state.veh[v.id] = v; }
+  const ids = back.map(v => v.id); const backA = back.map(v => v.aFrontN !== false); for (const v of back) { fixLenM(v); delete v.aFrontN; if (v.mattoonN && !v.via) v.via = 'NW'; state.veh[v.id] = v; }
   if (ids.length) { const len = ids.reduce((a, id) => a + V(id).L, 0), s = SI.MS2;
     place(ids, { s, d: Math.max(5, SEG[s].len - 15 - len), dir: -1 }, backA); ids.forEach((id, i) => { V(id).aFront = backA[i]; }); }
   delete state.awayTrain; if (away) book('crew', ECON.CREW_HR * away / 3600); NII.trainDelivered();
@@ -6147,7 +6135,7 @@ function migrateICC() { // saves from before switch ICC: MS was iM->nE (800 ft);
 }
 function load() {
   try { localStorage.removeItem('nii-mattoon-test-v4'); localStorage.removeItem('nii-mattoon-test-v5'); localStorage.removeItem('nii-mattoon-test-v6'); localStorage.removeItem('nii-mattoon-test-v7'); } catch (e) { } // old saves can hold unapproved cars (Day 1 flour car)
-  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateICC(); migrateTasks(); trainHome(); try { stripStraysM(); } catch (e) { } return true; } } catch (e) { }
+  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; migrateICC(); migrateTasks(); try { repairStackedM(); } catch (e) { } trainHome(); try { stripStraysM(); } catch (e) { } return true; } } catch (e) { }
   return false;
 }
 
