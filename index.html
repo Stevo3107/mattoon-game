@@ -284,7 +284,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef129";</script>
+<script>window.NII_BUILD = "mw59ef130";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -348,7 +348,24 @@ function engineRepair() { const e = env(), id = e.myEngine; if (!id) return fals
     for (const [k, t] of Object.entries(e.towns || {})) { if (!t || !TOWNS[k]) continue; const vh = t.veh; if (vh && (Array.isArray(vh) ? vh.some(v => v && v.id === id) : vh[id])) hit.add(k);
       if (Array.isArray(t.cuts) && t.cuts.some(c => c && (c.veh || []).some(v => v && v.id === id))) hit.add(k); } } catch (er) { return false; }
   if (hit.size !== 1) return false; const w = [...hit][0]; if (e.myEngineTown === w) return false; e.myEngineTown = w; return true; }
-function write() { if (VISIT) return; try { if (ENV && ENG_SEEN !== undefined && ENV.myEngine !== ENG_SEEN) { ENV.myEngineTown = ENV.myEngine ? ENV.town : null; } if (ENV) ENG_SEEN = ENV.myEngine || null; localStorage.setItem(KEY, JSON.stringify(ENV)); } catch (e) { } }
+// Nov 18 fix (Stephen, phone: the go-to-town button kept putting him back in Effingham): the phone's game storage was full, so the save that says
+// 'you are now in Neoga' failed without a word and the reload went back to the last save that worked. Now a failed save clears the other TEST games
+// (keys nii-towns-v10-test*, never the real game nii-towns-v10 and never the game being played), biggest first, and tries again. If it still
+// can't save, write() returns false, the town change is called off and a message says so instead of quietly sending you back.
+function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+function freeTestSaves(k, v) { let gone = 0; try { const ks = Object.keys(localStorage).filter(x => /^nii-towns-v10-test/.test(x) && x !== KEY && x !== 'nii-towns-v10')
+    .sort((a, b) => (localStorage.getItem(b) || '').length - (localStorage.getItem(a) || '').length);
+  for (const x of ks) { localStorage.removeItem(x); gone++; if (lsSet(k, v)) return gone; } } catch (e) { } return -1; }
+let SAVE_FAIL_SHOWN = 0;
+try { if (sessionStorage.getItem('nii-savefail')) { sessionStorage.removeItem('nii-savefail'); window.addEventListener('load', () => setTimeout(saveFailNote, 1500)); } } catch (e) { }
+function saveFailNote() { if (Date.now() - SAVE_FAIL_SHOWN < 20000) return; SAVE_FAIL_SHOWN = Date.now(); try { const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:50%;top:18%;transform:translateX(-50%);z-index:99999;max-width:86vw;background:#3a1d1d;color:#fff;border:2px solid #d66;border-radius:10px;padding:12px 16px;font:15px system-ui,sans-serif;text-align:center;box-shadow:0 6px 24px #0008';
+  d.textContent = "Can't save: this browser's game storage is full. Your town change was called off so nothing gets lost. Free up space (clear old site data) and try again.";
+  d.onclick = () => d.remove(); document.body.appendChild(d); setTimeout(() => d.remove(), 12000); } catch (e) { } }
+function write() { if (VISIT) return true; try { if (ENV && ENG_SEEN !== undefined && ENV.myEngine !== ENG_SEEN) { ENV.myEngineTown = ENV.myEngine ? ENV.town : null; } if (ENV) ENG_SEEN = ENV.myEngine || null;
+    const s = JSON.stringify(ENV); if (lsSet(KEY, s)) return true;
+    const n = freeTestSaves(KEY, s); if (n > 0) { console.log('Storage full: cleared ' + n + ' old test game' + (n > 1 ? 's' : '')); return true; }
+    console.log('Storage full: save failed'); saveFailNote(); return false; } catch (e) { return false; } }
 function runInfo(from, to) { const T = TOWNS[from], mi = T.south === to ? T.southMi : T.northMi, sec = Math.round(mi / RUN_MPH * 3600); return { mi, mph: RUN_MPH, sec, min: Math.round(sec / 60) }; }
 // ---- loading screen
 let prog = 0, progTo = 0, progAnim = null;
@@ -394,7 +411,7 @@ function travel(from, to, train) { if (VISIT) return; const e = env(), mt = e.to
   e.modeIn = document.body.classList.contains('tapmode') ? 'tap' : 'drive'; // Nov 16 (Stephen): Drive / Tap rides along with the train to the next town
   if (e.myEngine && (train || []).some(v => v && v.id === e.myEngine)) { e.myEngineTown = to; ENG_SEEN = e.myEngine; }
   if (from === 'mattoon') e.time = mt.time; else e.time = (e.time || mt.time) + runInfo(from, to).sec;
-  write(); fsKeep(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
+  if (!write()) { try { sessionStorage.setItem('nii-savefail', '1'); } catch (er) { } location.reload(); return; } fsKeep(); showLoading(TOWNS[to].name, `NI&I - next stop ${TOWNS[to].name}`, travelText(from, to)); prog = 0; setProg(0.6, 1600);
   setTimeout(() => location.reload(), 1700); }
 function loadScript(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src + (window.NII_BUILD ? '?v=' + NII_BUILD : ''); s.onload = ok; s.onerror = () => no(new Error(src)); document.head.appendChild(s); }); }
 // ---- Full screen (Nov 1): Menu entry in both towns and in visit mode. Canvases pick the new size up on fullscreenchange (a resize event is sent too).
@@ -528,7 +545,7 @@ const mapTabs = { show: showTabs, hide: hideTabs, select: selectTab, repaint: pa
 let onLeave = null; // the running town's save, called before a visit starts
 // Nov 13 (Stephen): the Towns button takes you to that town for a full session (call its crews, tags, pick an engine there), not a view-only look
 function goVisit(id) { sessionStorage.removeItem(VKEY); const e = env(), from = e.town; if (!TOWNS[id] || id === from) return closePick(); try { onLeave && onLeave(); } catch (er) { }
-  const e2 = env(); e2.town = id; delete e2.trainIn; delete e2.travel; delete e2.modeIn; e2.jump = { from, to: id }; write(); closePick(); try { const u = new URL(location.href); if (u.searchParams.has('town')) { u.searchParams.delete('town'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (er) { } // a test ?town= would pin the old town
+  const e2 = env(); e2.town = id; delete e2.trainIn; delete e2.travel; delete e2.modeIn; e2.jump = { from, to: id }; if (!write()) { e2.town = from; delete e2.jump; closePick(); return; } closePick(); try { const u = new URL(location.href); if (u.searchParams.has('town')) { u.searchParams.delete('town'); history.replaceState(null, '', u.pathname + u.search + u.hash); } } catch (er) { } // a test ?town= would pin the old town
   fsKeep(); showLoading(TOWNS[id].name, `Going to ${TOWNS[id].name}`, ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 350); }
 function backToTrain(cross) { sessionStorage.removeItem(VKEY); if (cross) sessionStorage.setItem(XKEY, JSON.stringify(cross)); const h = TOWNS[env().town];
   fsKeep(); showLoading(h.name, 'Back to your train', ''); prog = 0; setProg(0.6, 500); setTimeout(() => location.reload(), 250); }
