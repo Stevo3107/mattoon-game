@@ -740,7 +740,7 @@ function askNorth() { showModal(`<h2>Head north to Mattoon?</h2><p>11.5 miles at
 function go(to) { to = to || 'mattoon'; if (window.NII_CALLSHEET && NII_CALLSHEET.leaveGuard && NII_CALLSHEET.leaveGuard(() => goNow(to))) return; goNow(to); } // Nov 13: the leave warning, as in Mattoon and Effingham
 function goNow(to) { to = to || 'mattoon'; const c = liveCut(); let train = [];
   if (c) { const q = vehPos(c).map(q => { const xa = ptAt((q.aT ? q.p0 : q.p1).t, (q.aT ? q.p0 : q.p1).d)[0], xb = ptAt((q.aT ? q.p1 : q.p0).t, (q.aT ? q.p1 : q.p0).d)[0]; return { v: q.v, x: (xa + xb) / 2, aN: xa < xb }; }).sort((a, b) => a.x - b.x);
-    train = q.map(o => { const v = JSON.parse(JSON.stringify(o.v)); delete v.wb; if (DEST[v.dest] || v.dest === 'NW-INT') { v.ngDest = v.dest; v.dest = 'YARD 1'; } v.aFrontN = o.aN; return v; }); S.cuts.splice(S.cuts.indexOf(c), 1); }
+    train = q.map(o => { const v = JSON.parse(JSON.stringify(o.v)); delete v.wb; v.L = vL(o.v); /* Nov 18: Mattoon places the train by v.L; Neoga's own cars had none (piled up there) */ if (DEST[v.dest] || v.dest === 'NW-INT') { v.ngDest = v.dest; v.dest = 'YARD 1'; } v.aFrontN = o.aN; return v; }); S.cuts.splice(S.cuts.indexOf(c), 1); }
   ctl.dir = 0; ctl.v = 0; { const pc = PEND_CROSS; PEND_CROSS = null; if (pc) { E.cross = pc.cross; if (pc.v > 0) E.crossV = pc.v; else delete E.crossV; } } save(); NII.travel('neoga', to, train); }
 function arriveSouth(tr) { const se = edgeEnd('south'), rv = tr.slice().reverse(); // Nov 13: in from Effingham: on the south end of the main, heading north
   const veh = rv.map(v => { const w = { ...v }; if (w.ngDest) { w.dest = w.ngDest; delete w.ngDest; } delete w.aFrontN; return w; }), aT = rv.map(v => v.aFrontN === false);
@@ -1478,7 +1478,7 @@ function ngCoupleStanding(t, dHead, L) {
   const mates = ngStandingMates(t, dHead, L); if (mates.length < 2) return;
   const items = []; let head = 0;
   for (const c of mates) { const ds = c.path.flatMap(g => [g.d0, g.d1]); head = Math.max(head, ...ds); for (const q of vehPos(c)) items.push({ v: q.v, aT: q.aT, d: q.pm.d }); }
-  items.sort((a, b) => b.d - a.d);
+  items.sort((a, b) => a.d - b.d); // Nov 18: low end first keeps the cars in their order (placeCut lays veh[0] at the low end)
   const saved = mates.slice();
   for (const c of mates) { const i = S.cuts.indexOf(c); if (i >= 0) S.cuts.splice(i, 1); }
   const nc = placeCut(items.map(i => i.v), items.map(i => i.aT), t, head, 1);
@@ -1486,6 +1486,34 @@ function ngCoupleStanding(t, dHead, L) {
   if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return; }
   S.cuts.push(nc); }
 function ngCrewPackTrack(t) { return !!(t && (t === 'RA' || t === 'NWI' || (typeof NG_YARD_TS !== 'undefined' && NG_YARD_TS.includes(t)))); }
+// Nov 18 (Stephen: fix the Neoga gaps too): crews from the call sheet set cars on the N&W Interchange / runaround as one tight coupled cut, in order (first car deepest).
+// Effingham cars held on the runaround couple only with each other (efHold), never with Neoga's own cars.
+function ngJoinable(c, t, held) { return !!(c && c.path && c.path.length && c.path.every(g => g.t === t) && !c.veh.some(isLoco) && c.veh.every(v => !!v.efHold === held)); }
+function ngRange(c) { const ds = c.path.flatMap(g => [g.d0, g.d1]); return [Math.min(...ds), Math.max(...ds)]; }
+function ngPackCuts(t, group) { if (!group || group.length < 2) return false; const items = []; let head = 0;
+  for (const c of group) { head = Math.max(head, ngRange(c)[1]); for (const q of vehPos(c)) items.push({ v: q.v, aT: q.aT, d: q.pm.d }); }
+  items.sort((a, b) => a.d - b.d); const saved = group.slice(); for (const c of group) { const i = S.cuts.indexOf(c); if (i >= 0) S.cuts.splice(i, 1); }
+  const nc = placeCut(items.map(i => i.v), items.map(i => i.aT), t, head, 1), ds = (nc.path || []).flatMap(g => [g.d0, g.d1]);
+  if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return false; }
+  S.cuts.push(nc); return true; }
+function ngPlaceCars(t, vs, o) { o = o || {}; vs = (vs || []).filter(Boolean); const placed = [], left = []; if (!T[t]) return { placed, left: vs.slice() }; const snap = S.cuts.slice(), maxHead = T[t].len - 6;
+  for (const v of vs) { const L = vL(v), held = !!v.efHold, minHead = L + (o.clear || 6), occ = ngOccOnTrack(t), pad = x => ngJoinable(x.c, t, held) ? 0 : 2;
+    const cands = [maxHead].concat(occ.map(x => x.lo - pad(x))).sort((a, b) => b - a); let d = null;
+    for (const h of cands) { if (h > maxHead + 1e-9 || h < minHead - 1e-9) continue; if (occ.some(x => { const p = pad(x); return !(h + p <= x.lo + 1e-6 || x.hi + p <= h - L + 1e-6); })) continue; d = h; break; }
+    if (d == null) { left.push(v); continue; }
+    const nc = placeCut([v], [true], t, d, 1); S.cuts.push(nc); placed.push(v);
+    const up = S.cuts.find(c => c !== nc && ngJoinable(c, t, held) && Math.abs(ngRange(c)[0] - d) < 0.6); if (up) ngPackCuts(t, [up, nc]); }
+  if (o.whole && left.length) { S.cuts.length = 0; S.cuts.push(...snap); return { placed: [], left: vs.slice() }; }
+  return { placed, left }; }
+// couple neighbouring cuts on t: first = the one-time repair (0.5-14.5 ft gaps; touching cuts you uncoupled stay apart); must = cars set while Neoga was not loaded (touching too)
+function ngCoupleClusters(t, first, must) { let n = 0; for (const held of [false, true]) {
+  const cs = S.cuts.filter(c => ngJoinable(c, t, held)).map(c => ({ c, r: ngRange(c) })).sort((a, b) => a.r[0] - b.r[0]);
+  const others = S.cuts.filter(c => !cs.some(x => x.c === c)).flatMap(c => c.path.filter(g => g.t === t).map(g => [Math.min(g.d0, g.d1), Math.max(g.d0, g.d1)]));
+  let grp = []; const flush = () => { if (grp.length > 1 && ngPackCuts(t, grp.map(x => x.c))) n += grp.length; grp = []; };
+  for (const x of cs) { const p = grp[grp.length - 1]; if (p) { const g = x.r[0] - p.r[1], mine = x.c.veh.some(v => must.has(v.id)) || p.c.veh.some(v => must.has(v.id));
+      if (!(((first && g > 0.5) || (mine && g >= -0.5)) && g <= 14.5 && !others.some(o => o[1] > p.r[1] && o[0] < x.r[0]))) flush(); } grp.push(x); }
+  flush(); } return n; }
+if (!VISIT && S && S.cuts) { try { const must = new Set(S.ngPack || []), first = !S.gapFix131; if (first || must.size) { let n = 0; for (const t of ['NWI', 'RA']) if (T[t]) n += ngCoupleClusters(t, first, must); S.gapFix131 = 1; delete S.ngPack; if (n) console.log('crew gap repair (Neoga): ' + n + ' cuts coupled'); } } catch (e) { console.warn('neoga gap repair', e); } }
 function moveStandingCar(q, t, dHead) {
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();
@@ -1608,5 +1636,5 @@ if (!VISIT) { try { bindCrewBoardN(); } catch (e) { } try { ngApplyPendingCrew()
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); hideModal(); bindCrewBoardN(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); } });
   setInterval(() => { try { if (window.NII_CALLSHEET && NII_CALLSHEET.tick) NII_CALLSHEET.tick(); } catch (e) { } }, 500); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get foul() { return nwiFoul(); }, setOutNWI, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { ngPlaceCars, swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get foul() { return nwiFoul(); }, setOutNWI, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
