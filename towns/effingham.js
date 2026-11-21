@@ -4475,7 +4475,7 @@ function efPackStandingOn(t) { // all standing cars wholly on t become one coupl
 function efCoupleStanding(t, dHead, L) { efPackStandingOn(t); }
 // Nov 18 (Stephen: cars a computer crew left in the Effingham yard were coupled but drawn apart): the call sheet's crews (an Effingham local at the N&W, held runaround cars)
 // used to set each car 12 ft apart as its own cut. They now use the same packed, coupled placement as the crews here: one block on one track when it fits.
-function efPlaceYardCars(vs, whole) { vs = (vs || []).filter(Boolean); const placed = [], left = [], snap = S.cuts.slice(), order = efBlockTracks(YARD_TS.filter(t => T[t]), vs);
+function efPlaceYardCars(vs, whole, tracks) { vs = (vs || []).filter(Boolean); const placed = [], left = [], snap = S.cuts.slice(), order = efBlockTracks((tracks || YARD_TS).filter(t => T[t] && YARD_TS.includes(t)), vs); // Nov 20: tracks = only these, in this order (sort tracks)
   for (const v of vs.slice().reverse()) { const L = vL(v), slot = efFreeSlot(order, L); if (!slot) { left.unshift(v); continue; } S.cuts.push(placeCut([v], [true], slot.t, slot.d, 1)); efCoupleStanding(slot.t, slot.d, L); placed.unshift(v); } // last car first, from the high end: the block keeps its order
   if (whole && left.length) { S.cuts.length = 0; S.cuts.push(...snap); return { placed: [], left: vs.slice() }; }
   return { placed, left }; }
@@ -4703,7 +4703,14 @@ function efTestSeed2() {
     note('Test cars (efix2): ' + (cars.length - lost.length) + ' on the interchange tracks' + (lost.length ? ' (' + lost.length + ' did not fit)' : '') + '.');
   } finally { R = R0; }
 }
-function efCrewPC() { // PC Interchange: outbound PC cars go on it, every other car on it (Effingham, Mattoon, IC routed) comes off to the yard
+// Nov 20 (Stephen, mw59ef133): sort pulled interchange cars by railroad (call sheet). sort = { IC: 'Y3', NW: .., PC: .. }; a car's railroad is the interchange it is routed
+// out by (IC-INT / NW-INT / PC-INT), else the one it came off (src). A full sort track sends the rest to the normal yard tracks (sort tracks last) and says so.
+const EF_RR = { IC: 'ICG', NW: 'N&W', PC: 'PC' };
+function efRrOf(v, src) { const d = (v && v.dest) || ''; return d === 'IC-INT' ? 'IC' : d === 'NW-INT' ? 'NW' : d === 'PC-INT' ? 'PC' : (src || null); }
+function efSortTo(sort, v, src) { const rr = efRrOf(v, src), t = rr && sort && sort[rr]; return t && YARD_TS.includes(t) && T[t] ? t : null; }
+function efPC_sortNotes(sorted, over, notes) { for (const t of Object.keys(sorted)) { const o = sorted[t], n = o.n, nm = [...o.rr].map(r => EF_RR[r] || r).join(' and '); notes.push(`sorted ${n} ${nm} car${n > 1 ? 's' : ''} onto ${efTrackName(t)}`); }
+  for (const t of Object.keys(over)) { const o = over[t], n = o.n, nm = [...o.rr].map(r => EF_RR[r] || r).join(' and '); notes.push(`${efTrackName(t)} is full: ${n} ${nm} car${n > 1 ? 's' : ''} went on the normal yard track instead`); } }
+function efCrewPC(sort) { // PC Interchange: outbound PC cars go on it, every other car on it (Effingham, Mattoon, IC routed) comes off to the yard
   if (!ngOpen() && (M.rep || 0) < 200) return ['PC Interchange at Effingham stays closed until 200 reputation'];
   const notes = []; let nOut = 0, nIn = 0; const ixTs = ['IX1', 'IX2'].filter(t => T[t]);
   const fresh = v => standingCars().find(q => q.v === v && !q.live); // re-read each time: an earlier move may have split the cut
@@ -4717,10 +4724,14 @@ function efCrewPC() { // PC Interchange: outbound PC cars go on it, every other 
   // Nov 15 (Stephen): every car standing anywhere on the PC Interchange (IX1, IX2, the lead and the switches) comes off to the yard,
   // except outbound PC cars waiting for the PC. That includes IC- and Mattoon-routed cars and anything else (they head on from the yard).
   const inbound = o => !o.live && onPcIx(o.c) && o.v.dest !== 'PC-INT' && !isLoco(o.v) && o.v.type !== 'caboose';
-  const inVs = standingCars().filter(inbound).map(o => o.v).filter((v, i, a) => a.indexOf(v) === i), yOrder = efBlockTracks(YARD_TS, inVs); // Nov 17: one block when it fits
+  const sortTs = sort ? [...new Set(Object.values(sort).filter(t => YARD_TS.includes(t) && T[t]))] : [], normTs = YARD_TS.filter(t => !sortTs.includes(t)).concat(sortTs);
+  const inVs = standingCars().filter(inbound).map(o => o.v).filter((v, i, a) => a.indexOf(v) === i), yOrder = efBlockTracks(normTs, inVs.filter(v => !efSortTo(sort, v, 'PC'))); // Nov 17: one block when it fits
+  const sorted = {}, over = {}, bump = (m, t, v) => { const o = m[t] || (m[t] = { n: 0, rr: new Set() }); o.n++; o.rr.add(efRrOf(v, 'PC')); };
   for (const v of inVs) { const o = fresh(v); if (!o || !inbound(o)) continue;
-    const slot = efFreeSlot(yOrder, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
-    if (moveStandingCar(o, slot.t, slot.d)) nIn++; }
+    const st = efSortTo(sort, o.v, 'PC'); let slot = st ? efFreeSlot([st], vL(o.v)) : null; if (st && !slot) bump(over, st, o.v);
+    if (!slot) slot = efFreeSlot(yOrder, vL(o.v)); if (!slot) { notes.push('no room in the yard for the rest of the inbound cars'); break; }
+    if (moveStandingCar(o, slot.t, slot.d)) { nIn++; if (st && slot.t === st) bump(sorted, st, o.v); } }
+  efPC_sortNotes(sorted, over, notes);
   { const held = standingCars().filter(o => o.live && !isLoco(o.v) && o.v.type !== 'caboose' && o.v.dest !== 'PC-INT' && o.c.path.every(g => EF_IX_TS.includes(g.t))).length;
     if (held) notes.push(`${held} car${held > 1 ? 's' : ''} coupled to an engine on the PC Interchange stay put`); }
   if (nOut) notes.unshift(`set ${nOut} car${nOut > 1 ? 's' : ''} out on the PC Interchange`);
@@ -4771,7 +4782,7 @@ function efCrewBuild(w) {
 function efCrewWork(w) {
   if (!w) return []; let r = [];
   if (w.kind === 'industry') r = efCrewCustomer(w.customer);
-  else if (w.kind === 'localInterchange') r = efCrewPC();
+  else if (w.kind === 'localInterchange') r = efCrewPC(w.sortHome !== 'mattoon' ? w.sort : null);
   else if (w.kind === 'classify') r = efCrewClassify(w);
   else if (w.kind === 'buildLocal') r = efCrewBuild(w);
   else r = ['switched the Effingham yard'];
@@ -4782,14 +4793,16 @@ function efApplyPendingCrew(upTo, quiet) { // work finished while you were away 
   const take = k => { const a = S[k] || [], now = a.filter(due), later = a.filter(o => !due(o)); if (later.length) S[k] = later; else delete S[k]; return now; };
   const ix = take('pendingIx'), cw = take('pendingCrewWork').map(o => typeof o === 'string' ? o : o.k), yw = take('pendingYardWork'), nwIn = take('pendingNwIn');
   delete S.pendingYard;
-  if (ix.length) out.push(...efCrewPC());
+  if (ix.length) out.push(...efCrewPC((ix.find(o => o && o.sort) || {}).sort || null));
   for (const k of cw.filter((k, i, a) => a.indexOf(k) === i)) out.push(...efCrewCustomer(k));
   for (const w of yw) out.push(...efCrewWork(w));
   if (nwIn.length) {
-    let n = 0; const nwOrder = efBlockTracks(YARD_TS, nwIn); // Nov 17: one block when it fits
+    let n = 0; const nwSorted = {}, nwOver = {}, nwBump = (m, t, v) => { const o = m[t] || (m[t] = { n: 0, rr: new Set() }); o.n++; o.rr.add(efRrOf(v, 'NW')); }; const nwOrder = efBlockTracks(YARD_TS, nwIn.filter(v => !v.sortTo)); // Nov 17: one block when it fits
     for (const v of nwIn) {
       const L = vL(v);
-      const slot = efFreeSlot(nwOrder, L);
+      const st = v.sortTo && YARD_TS.includes(v.sortTo) && T[v.sortTo] ? v.sortTo : null; delete v.sortTo; // Nov 20 (mw59ef133): a sort track picked on the call sheet
+      let slot = st ? efFreeSlot([st], L) : null; if (st && !slot) nwBump(nwOver, st, v); else if (st) nwBump(nwSorted, st, v);
+      if (!slot) slot = efFreeSlot(nwOrder, L);
       if (!slot) { const rest = nwIn.slice(nwIn.indexOf(v)); // Nov 16 (Stephen: the closer to the yard, the better): runaround at Neoga, then the Mattoon yard, then Neoga's N&W Interchange
         let o = null; try { if (window.NII_CALLSHEET && NII_CALLSHEET.efOverflow) o = NII_CALLSHEET.efOverflow(rest); } catch (e) { o = null; }
         if (o) out.push('the Effingham yard is full: ' + (o.join('; ') || 'nothing moved')); else { out.push('no room in the yard for the rest of the N&W inbound cars; they wait for room'); S.pendingNwIn = rest.concat(S.pendingNwIn || []); }
@@ -4799,6 +4812,7 @@ function efApplyPendingCrew(upTo, quiet) { // work finished while you were away 
       n++;
     }
     if (n) out.push('set ' + n + ' inbound car' + (n > 1 ? 's' : '') + ' from the N&W Interchange in the Effingham yard');
+    efPC_sortNotes(nwSorted, nwOver, out);
   }
   if (S.fetchHeld) { delete S.fetchHeld; try { if (window.NII_CALLSHEET && NII_CALLSHEET.fetchHeldToEf) out.push(...NII_CALLSHEET.fetchHeldToEf()); } catch (e) { } } // Nov 16: an Effingham local worked the N&W: runaround-held cars come on to the yard
   if (S.pendingCrewSwap && !(S.pendingCrewWork || []).some(o => (typeof o === 'string' ? o : o.k) === 'EF GLASS')) { if (!cw.includes('EF GLASS')) out.push(...crewSwapMidstate()); S.pendingCrewSwap = 0; }

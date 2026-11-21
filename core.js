@@ -1782,6 +1782,24 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   ];
   function migrateIxId(id) { return id === 'effingham-ic' ? 'effingham-pc' : id; }
   function interchangeById(id) { id = migrateIxId(id); return INTERCHANGES.filter(function (x) { return x.id === id; })[0] || null; }
+  // Nov 20 (Stephen, mw59ef133): sort pulled interchange cars by railroad. On a local or yard call with an interchange, each railroad (ICG, N&W, PC; ids IC, NW, PC)
+  // can get a yard track in the crew's home yard (Mattoon or Effingham; Neoga has no yard). A car's railroad is the interchange it is routed out by (IC-INT, NW-INT,
+  // PC-INT), else the interchange the crew pulled it off. Those cars go on that track (packed, coupled); the rest go on the normal yard track. A full sort track
+  // sends its overflow to the normal placement and the crew report says so. Each sort track is one extra set-out move of crew time (a 'setout' work item, ixSort).
+  const IX_RR = [{ id: 'IC', name: 'ICG' }, { id: 'NW', name: 'N&W' }, { id: 'PC', name: 'PC' }];
+  function rrName(id) { const r = IX_RR.filter(function (x) { return x.id === id; })[0]; return r ? r.name : id; }
+  function rrOfCar(v, src) { const d = (v && v.dest) || ''; return d === 'IC-INT' ? 'IC' : d === 'NW-INT' ? 'NW' : d === 'PC-INT' ? 'PC' : (src || null); }
+  function sortHomeOf(d) { const t = d && d.tieUp, s = d && d.start; if (t && t !== 'neoga') return t; if (s && s !== 'neoga') return s; return null; }
+  function sortTracksFor(home) { if (home === 'effingham') return ['Y1', 'Y2', 'Y3', 'Y4']; if (home !== 'mattoon') return []; const t = []; for (let n = 1; n <= ((G && G.NY) || 6); n++) t.push('YARD ' + n); return t; }
+  function draftSort(d) { // the valid picks on a draft: { IC: 'YARD 3', NW: 'YARD 4' } or null
+    if (!d || (d.type !== 'local' && d.type !== 'yard') || !selectedInterchanges(d).length) return null;
+    const ok = sortTracksFor(sortHomeOf(d)), s = d.ixSort || {}, out = {}; let any = false;
+    IX_RR.forEach(function (r) { if (s[r.id] && ok.indexOf(s[r.id]) >= 0) { out[r.id] = s[r.id]; any = true; } });
+    return any ? out : null; }
+  function pushSortWork(work, d) { // one set-out move per sort track, after all other work (in the home yard, at the end of the call)
+    const sort = draftSort(d); if (!sort || !work.some(function (w) { return w.kind === 'localInterchange'; })) return;
+    const byT = {}; IX_RR.forEach(function (r) { const t = sort[r.id]; if (!t) return; if (byT[t]) { byT[t].ixSort.push(r.id); return; } byT[t] = { kind: 'setout', ixSort: [r.id], track: t, town: sortHomeOf(d), cars: 0 }; work.push(byT[t]); }); }
+  function sortLabel(w) { return 'Sort ' + (w.ixSort || []).map(rrName).join(' + ') + ' cars to ' + trackLabel(w.track); }
   function townIsOpen(id) {
     if (id === 'mattoon') return true;
     if (id === 'neoga') return neogaOpen();
@@ -2224,6 +2242,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       const outCars = countIxOut(ix), inCars = countIxIn(ix);
       const ixWork = { kind: 'localInterchange', town: ix.town, interchange: ix.id, dest: ix.dest || undefined, tracks: (ix.tracks || []).slice(), outCars: outCars, inCars: inCars, cars: outCars + inCars };
       if (ix.id === 'neoga-nw') ixWork.home = (d.tieUp && d.tieUp !== 'neoga') ? d.tieUp : ((d.start && d.start !== 'neoga') ? d.start : d.start);
+      const sort = draftSort(d); if (sort) { ixWork.sort = sort; ixWork.sortHome = sortHomeOf(d); } // Nov 20 (mw59ef133)
       work.push(ixWork);
     });
   }
@@ -2244,11 +2263,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       });
       if ((d.buildOrder || []).length) work.push({ kind: 'buildLocal', town: d.start, track: d.buildTrack || defaultYardTrack(), order: d.buildOrder.slice(), cars: countBuild(d.buildOrder) });
       (d.industries || []).forEach(function (id) { if (!neogaCustLocked(id)) pushIndustry(work, skipped, id); });
+      pushSortWork(work, d);
     } else if (d.type === 'local') {
       pushIxWork(work, d);
       const allow = {};
       customersAllowedForJob(d).forEach(function (c) { allow[c.id] = true; });
       (d.industries || []).forEach(function (id) { if (allow[id] && !neogaCustLocked(id)) pushIndustry(work, skipped, id); });
+      pushSortWork(work, d);
     } else {
       (d.stops || []).forEach(function (s) {
         const town = (R().trackInfo(s.track) || {}).town;
@@ -2275,7 +2296,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return {
       name: name, symbol: (d.symbol || '').trim(), type: d.type, start: d.start, tieUp: d.tieUp,
       crewId: d.crewId || null, engines: (d.engines || []).slice(),
-      interchanges: (d.interchanges || []).slice(), industries: (d.industries || []).slice(),
+      interchanges: (d.interchanges || []).slice(), industries: (d.industries || []).slice(), ixSort: JSON.parse(JSON.stringify(d.ixSort || {})),
       classify: JSON.parse(JSON.stringify(d.classify || [])), buildTrack: d.buildTrack || '', buildOrder: (d.buildOrder || []).slice(),
       stops: JSON.parse(JSON.stringify(d.stops || [])), yardTab: d.yardTab || 'classify', startTod: todOf(d.startAt), savedDay: G.dayNo()
     };
@@ -2367,6 +2388,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const ixOff = d.interchanges.filter(function (id) { return ixKept.indexOf(migrateIxId(id)) < 0; });
     d.interchanges = ixKept;
     if (ixOff.length) notes.push(ixOff.map(function (id) { const ix = interchangeById(id); return ix ? ix.name : id; }).join(', ') + ' not open on this job');
+    d.ixSort = {}; if (j.ixSort && typeof j.ixSort === 'object') { const okT = sortTracksFor(sortHomeOf(d)), offS = []; // Nov 20 (mw59ef133)
+      IX_RR.forEach(function (r) { const t = j.ixSort[r.id]; if (!t) return; if (okT.indexOf(t) >= 0) d.ixSort[r.id] = t; else offS.push(r.name); });
+      if (offS.length) notes.push('Sort track for ' + offS.join(', ') + ' is not in this crew\'s home yard, so those cars are unsorted'); }
     // yard tracks and road stops
     const yt = yardTracks(d.start);
     d.classify = (Array.isArray(j.classify) ? j.classify : []).map(function (r) { return { dest: r.dest || '', carType: r.carType || '', track: yt.indexOf(r.track) >= 0 ? r.track : yt[0] }; });
@@ -2538,7 +2562,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       else if (w.kind === 'classify') t = 'Classify → ' + trackLabel(w.track);
       else if (w.kind === 'buildLocal') t = 'Build on ' + trackLabel(w.track);
       else if (w.kind === 'pickup') t = 'Pick up ' + trackLabel(w.track);
-      else if (w.kind === 'setout') t = 'Set out ' + trackLabel(w.track);
+      else if (w.kind === 'setout') t = w.ixSort ? sortLabel(w) : 'Set out ' + trackLabel(w.track);
       if (t && out.indexOf(t) < 0) out.push(t);
     });
     return out.length ? out.join(', ') : (c.type === 'road' ? 'Runs through to tie-up' : 'No work picked yet');
@@ -2772,6 +2796,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         h += '<div class="cs-split"><span>Road time</span><b>' + esc(C.formatAboutHours(est.roadHours)) + '</b></div>';
         h += '<p class="cs-note">' + esc(routeText(job)) + ' · ' + mi + ' mi at ' + C.MAIN_MPH + ' mph · existing mileage</p>';
       }
+      { const sw = (job.work || []).map(function (w, i) { return w.ixSort ? ((est.parts || [])[i] || {}).hours || 0 : null; }).filter(function (x) { return x != null; }); // Nov 20 (mw59ef133)
+        if (sw.length) { const hs = sw.reduce(function (a, x) { return a + x; }, 0) * (est.switchHours && est.parts ? est.switchHours / Math.max(1e-6, est.parts.reduce(function (a, p) { return a + (p.hours || 0); }, 0) * (est.noYardJobPenalty ? (C.SWITCH.noYardJobFactor || 1) : 1)) : 1) * (est.noYardJobPenalty ? (C.SWITCH.noYardJobFactor || 1) : 1);
+          h += '<div class="cs-split"><span>Sorting by railroad (' + sw.length + ' track' + (sw.length > 1 ? 's' : '') + ')</span><b>+' + Math.max(1, Math.round(hs * 60)) + ' min</b></div>'; } }
       h += hogBar(est.switchHours, est.roadHours, false);
       if (est.roadHours > 0.01) h += '<div class="cs-key"><span><i></i>switching</span><span><i class="rd"></i>road time added</span></div>';
       if (est.noYardJobPenalty) h += '<div class="cs-box o">No yard job called — this local will switch its own cars out.</div>';
@@ -2951,6 +2978,17 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '<label class="cs-chk' + (on[ix.id] ? '' : ' off') + '"><input type="checkbox" data-cs="tog-ix" data-id="' + esc(ix.id) + '"' + (on[ix.id] ? ' checked' : '') + '>' + esc(ix.name) + ' · ' + esc(townName(ix.town)) + '<small>' + n + ' car' + (n === 1 ? '' : 's') + '</small></label>';
     });
     h += '<p class="cs-hint">Check each railroad interchange this crew should serve. Outbound cars go to that interchange, and inbound cars come off it into the yard. Cars for an unchecked interchange stay put for another train.</p>';
+    if (selectedInterchanges(d).length) { // Nov 20 (Stephen, mw59ef133): sort pulled cars by railroad
+      const home = sortHomeOf(d);
+      h += lab('Sort pulled cars by railroad', home ? 'in the ' + townName(home) + ' yard' : 'no yard');
+      if (!home) h += '<p class="cs-hint">Neoga has no yard, so this crew can\'t sort cars by railroad.</p>';
+      else {
+        const ts = sortTracksFor(home), s = d.ixSort || {};
+        IX_RR.forEach(function (r) { h += '<div class="cs-addrow cs-sortrow"><span style="flex:0 0 52px;font-weight:700">' + esc(r.name) + '</span><select class="cs-f" data-cs-field="ixsort" data-rr="' + r.id + '"><option value="">Unsorted (normal yard track)</option>' +
+          ts.map(function (t) { return '<option value="' + esc(t) + '"' + (s[r.id] === t ? ' selected' : '') + '>' + esc(trackLabel(t)) + '</option>'; }).join('') + '</select></div>'; });
+        h += '<p class="cs-hint">When the crew brings cars home, cars from (or routed out by) that railroad\'s interchange go on the track you pick, coupled up. Everything else goes on the normal yard track. Each sort track adds one set-out move (about 8 minutes) to the job. If a sort track fills up, the rest go on the normal yard track and the crew report says so.</p>';
+      }
+    }
     return h;
   }
   function roadHtml(d) {
@@ -3213,11 +3251,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (ex) { const top = ex.length ? Math.min(tgt.d1, Math.max(ex[0].f.d, ex[0].r.d)) : tgt.d1; return top - tgt.d0 - ex.reduce(function (a, v) { return a + (v.L || 50); }, 0); }
     return roomTop(tgt, ids || []).room;
   }
-  function pickYardFor(ids) {
+  function pickYardFor(ids, avoid) {
     const need = (ids || []).reduce(function (a, id) { const v = st().veh[id]; return a + ((v && v.L) || 50) + 0.5; }, 0);
     let best = null;
-    for (let n = 1; n <= (G.NY || 6); n++) { const id = 'YARD ' + n, f = yardFree(id, ids); if (f >= need && (!best || f > best.f)) best = { id: id, f: f }; }
-    return best ? best.id : pickYard();
+    for (let n = 1; n <= (G.NY || 6); n++) { const id = 'YARD ' + n; if (avoid && avoid.indexOf(id) >= 0) continue; const f = yardFree(id, ids); if (f >= need && (!best || f > best.f)) best = { id: id, f: f }; }
+    return best ? best.id : (avoid && avoid.length ? pickYardFor(ids) : pickYard());
   }
   function grainTrack() {
     const S = G.SPOTS && G.SPOTS.GRAIN;
@@ -3359,10 +3397,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   const NWI_LEN_NEW = 1075; // a little under T.NWI.len (bumper end, already 18 ft clear of the N&W); the Neoga pack's own T.NWI.len wins when it is loaded
   // Nov 18 (Stephen: fix the Neoga gaps too): crew set-outs on Neoga's N&W Interchange and runaround are one tight coupled cut, in order (the first car deepest),
   // not one cut every 10 ft. With Neoga on screen Neoga's own placement does it (ngPlaceCars); otherwise the cars are set tight here and Neoga couples them on its next load (ngPack).
-  function dataPlaceNg(ng, t, len, clear, vehs) {
+  function dataPlaceNg(ng, t, len, clear, vehs, clearHi) { // Nov 18 (mw59ef132): clearHi = room kept at the far (d = len) end; the runaround's south end
     const placed = [], left = [], cuts = ng.cuts = ng.cuts || []; ng.ngPack = ng.ngPack || []; if (ng.nid == null) ng.nid = 1;
     (vehs || []).forEach(function (v) {
-      const L = carLenOf(v), held = !!v.efHold, maxHead = len - 6, minHead = L + clear;
+      const L = carLenOf(v), held = !!v.efHold, maxHead = len - (clearHi || 6), minHead = L + clear;
       const join = function (c) { return (c.path || []).length && c.path.every(function (g) { return g.t === t; }) && !(c.veh || []).some(function (x) { return x.type === 'gp9'; }) && (c.veh || []).every(function (x) { return !!x.efHold === held; }); };
       const occ = []; cuts.forEach(function (c) { const p = join(c) ? 0 : 2; (c.path || []).forEach(function (g) { if (g.t === t) occ.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1), p: p }); }); });
       const cands = [maxHead].concat(occ.map(function (o) { return o.lo - o.p; })).sort(function (a, b) { return b - a; });
@@ -3441,13 +3479,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (ef && ef !== S) ef.cuts = S.cuts;
     return out;
   }
-  function placeOnEfYard(vehs, whole) {
+  function placeOnEfYard(vehs, whole, tracks) {
     const placed = [], left = [];
     const EF = typeof window !== 'undefined' ? window.__effingham : null;
     const ef = envTown('effingham');
     // Nov 18 (Stephen: crew cars coupled but drawn apart in Effingham): with Effingham on screen the cars are set packed and coupled by Effingham's own crew placement
     // (as the hired crews there do since mw59ef112), not 12 ft apart as separate cuts. whole: all or none (a held cut stays whole on the runaround).
-    if (EF && EF.efPlaceYardCars && EF.S && EF.T) { const r = EF.efPlaceYardCars((vehs || []).filter(Boolean), !!whole); try { if (EF.save) EF.save(); } catch (e) { } return r; }
+    if (EF && EF.efPlaceYardCars && EF.S && EF.T) { const r = EF.efPlaceYardCars((vehs || []).filter(Boolean), !!whole, tracks); try { if (EF.save) EF.save(); } catch (e) { } return r; }
     if (EF && EF.placeCut && EF.S && EF.T) {
       const tracks = ['Y1', 'Y2', 'Y3', 'Y4'].filter(function (t) { return EF.T[t]; });
       // Nov 17 (Stephen: crews split cars over tracks when they'd fit on one): the whole block as one cut on the first yard track that takes it
@@ -3493,6 +3531,35 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   // repairs leave them be, and an Effingham local working the N&W at Neoga brings runaround cars on to Effingham when its yard has room.
   // A Mattoon local working the N&W at Neoga takes cars held in Mattoon down to the runaround. Your own train can take them any time.
   const RA_LEN = 858.2508764908947; // Neoga run-around length (ft), when Neoga is not loaded
+  // Nov 18 (Stephen: crews leave cars fouling the main at the south end of the runaround): no car stands on either S-curve closer than 13 ft track centres to the main.
+  // That point is 170 ft in from each switch (Neoga's raFoul(), +2 ft); with Neoga loaded its ngPlaceCars applies the same limits itself.
+  const RA_CLR = 172;
+  // Nov 18 (Stephen: crews don't pull runaround cars back to their home yard): a crew working the N&W at Neoga lifts the runaround cars that belong in its home town.
+  // Mattoon: ICG cars (IC-INT) and Mattoon cars; Effingham: Effingham and PC cars. Never Neoga's own (NG customers, N&W, company empties held there) nor held (efHold) cuts,
+  // which go only as whole cuts by fetchHeldToEf. Cars left behind keep their places (a cut is split around what was lifted, nothing slides).
+  function raTakes(v, home) { if (!v || v.type === 'gp9' || v.type === 'caboose' || v.efHold || v.work || v.idle) return false; const d = v.dest || ''; if (!d || d === 'RA' || d === 'NW-INT' || /^NG /.test(d)) return false;
+    const ef = /^EF /.test(d) || d === 'PC-INT'; return home === 'effingham' ? ef : !ef; }
+  function takeFromRA(home) {
+    const ng = envTown('neoga'), out = [], homeCars = [];
+    if (!ng) return { home: homeCars, out: out };
+    const N = typeof window !== 'undefined' ? window.__neoga : null, S = (N && N.S) || ng, cuts = S.cuts || ng.cuts || [];
+    if (S.nid == null) S.nid = 1;
+    cuts.slice().forEach(function (c) {
+      if (!(c.path || []).length || !c.path.every(function (g) { return g.t === 'RA'; }) || (c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
+      const take = (c.veh || []).map(function (v) { return raTakes(v, home); }); if (!take.some(Boolean)) return;
+      const i = cuts.indexOf(c); if (i < 0) return;
+      const g = c.path[0], one = c.path.length === 1, parts = []; let s = 0, run = null;
+      c.veh.forEach(function (v, k) { const L = carLenOf(v);
+        if (take[k]) { homeCars.push(v); const o = cloneVeh(v); if (o) out.push(o); run = null; }
+        else { if (!run) { run = { veh: [], aT: [], s0: s, s1: s }; parts.push(run); } run.veh.push(v); run.aT.push(c.aT ? c.aT[k] : true); run.s1 = s + L; }
+        s += L; });
+      const keep = parts.map(function (p, j) { const path = one ? [{ t: 'RA', dir: g.dir, d0: g.d0 + g.dir * p.s0, d1: g.d0 + g.dir * p.s1 }] : c.path; return { id: j ? 'c' + (S.nid++) : c.id, veh: p.veh, aT: p.aT, path: path }; });
+      cuts.splice.apply(cuts, [i, 1].concat(keep));
+    });
+    S.cuts = cuts; if (ng !== S) ng.cuts = cuts;
+    try { if (N && N.save && out.length) N.save(); } catch (e) { }
+    return { home: homeCars, out: out };
+  }
   function placeInYards(ids) { // the emptiest yard track first, then any other with room
     let r = placeOnTrack(ids, pickYardFor(ids)), placed = r.placed.slice(), left = r.left.slice(); // Nov 17: a track that takes the whole block first
     for (let n = 1; n <= (G.NY || 6) && left.length; n++) { const q = placeOnTrack(left, 'YARD ' + n); placed = placed.concat(q.placed); left = q.left.slice(); }
@@ -3506,7 +3573,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     ng.cuts = ng.cuts || []; if (ng.nid == null) ng.nid = 1;
     const N = typeof window !== 'undefined' ? window.__neoga : null;
     if (N && N.ngPlaceCars && N.S && N.T && N.T.RA) { const r = N.ngPlaceCars('RA', vehs.filter(Boolean), { clear: 6 }); if (ng !== N.S) ng.cuts = N.S.cuts; try { if (N.save) N.save(); } catch (e) { } return r; } // Nov 18: packed and coupled (see dataPlaceNg)
-    return dataPlaceNg(ng, 'RA', RA_LEN, 6, vehs.filter(Boolean));
+    return dataPlaceNg(ng, 'RA', RA_LEN, RA_CLR, vehs.filter(Boolean), RA_CLR); // Nov 18 (mw59ef132): clear of the main at both ends (was 6 ft from the switches)
   }
   // overflow for Effingham cars the Effingham yard cannot take; returns notes. Nothing is ever dropped.
   function efOverflow(vehs) {
@@ -3628,24 +3695,30 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         notes.push('no room on the N&W Interchange for ' + r.left.length + ' car' + (r.left.length > 1 ? 's' : '') + ' — left in the yard');
       }
     }
+    // Nov 18 (mw59ef132): first lift the runaround cars that belong at home (they ride home with the N&W cars; it also makes room for the held moves)
+    const fromRA = takeFromRA(home === 'effingham' ? 'effingham' : 'mattoon').out;
+    if (fromRA.length) notes.push('lifted ' + fromRA.length + ' car' + (fromRA.length > 1 ? 's' : '') + ' off the Neoga runaround for ' + (home === 'effingham' ? 'Effingham' : 'Mattoon'));
     // Nov 16: held Effingham cars move one step closer: Effingham local -> runaround cars into the Effingham yard; Mattoon local -> Mattoon-held cars down to the runaround
     if (home === 'effingham') { const EF = typeof window !== 'undefined' ? window.__effingham : null; if (EF && EF.S) notes.push.apply(notes, fetchHeldToEf()); else { const ef = envTown('effingham'); if (ef) ef.fetchHeld = 1; } }
     else notes.push.apply(notes, heldMattoonToRA());
-    const inbound = takeFromNWI(home === 'effingham' ? 'effingham' : 'mattoon');
+    const nwIn = takeFromNWI(home === 'effingham' ? 'effingham' : 'mattoon'), inbound = nwIn.concat(fromRA), srcOf = function (v) { return nwIn.indexOf(v) >= 0 ? 'NW' : null; };
+    const sort = work && work.sort && (!work.sortHome || work.sortHome === home) ? work.sort : null; // Nov 20 (mw59ef133)
     if (inbound.length) {
       if (home === 'effingham') {
-        const r = placeOnEfYard(inbound);
-        if (r.queued) notes.push('pulled ' + inbound.length + ' inbound car' + (inbound.length > 1 ? 's' : '') + ' off the N&W Interchange; they will be in the Effingham yard when you are next there');
+        const so = sortIntoEf(inbound, sort, srcOf); notes.push.apply(notes, so.notes);
+        const r = so.rest.length ? placeOnEfYard(so.rest, false, so.normal) : { placed: [], left: [] };
+        if (r.queued) notes.push('pulled ' + so.rest.length + ' inbound car' + (so.rest.length > 1 ? 's' : '') + ' off the N&W Interchange; they will be in the Effingham yard when you are next there');
         else {
           if (r.placed.length) notes.push('pulled ' + r.placed.length + ' inbound car' + (r.placed.length > 1 ? 's' : '') + ' off the N&W Interchange to the Effingham yard');
           if (r.left.length) notes.push.apply(notes, efOverflow(r.left)); // Nov 16 (Stephen): the closer to the yard, the better
         }
       } else {
-        const ids = inbound.map(function (v) { return importCar(v); }).filter(Boolean);
-        const yard = pickYardFor(ids);
-        const y = placeOnTrack(ids, yard);
-        if (y.placed.length) notes.push('pulled ' + y.placed.length + ' inbound car' + (y.placed.length > 1 ? 's' : '') + ' off the N&W Interchange to ' + yard);
-        if (y.left.length) notes.push('no room in the yard for ' + y.left.length + ' inbound car' + (y.left.length > 1 ? 's' : ''));
+        const ids = [], srcId = {}; inbound.forEach(function (v) { const id = importCar(v); if (id) { ids.push(id); srcId[id] = srcOf(v); } });
+        const so = sortIntoM(ids, sort, function (id) { return srcId[id]; }); notes.push.apply(notes, so.notes);
+        const yard = pickYardFor(so.rest, so.avoid);
+        const y = placeOnTrack(so.rest, yard);
+        if (y.placed.length) notes.push('pulled ' + y.placed.length + ' inbound car' + (y.placed.length > 1 ? 's' : '') + ' off the N&W Interchange' + (fromRA.length ? ' and the runaround' : '') + ' to ' + yard);
+        if (y.left.length) { const q = placeInYards(y.left); if (q.placed.length) notes.push(q.placed.length + ' more on other yard tracks'); if (q.left.length) notes.push('no room in the yard for ' + q.left.length + ' inbound car' + (q.left.length > 1 ? 's' : '')); } // Nov 18: never dropped
       }
     }
     if (!notes.length) notes.push('N&W Interchange at Neoga: nothing to move');
@@ -3659,16 +3732,47 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (w && w.interchange) return interchangeById(migrateIxId(w.interchange));
     return interchangeById('mattoon-ic'); // saved calls from before the checklist
   }
-  function queueTownIx(ix, day) {
+  function queueTownIx(ix, day, sort) {
     try {
       const E = G.env && G.env();
       if (!E || !E.towns || !ix) return;
       const t = E.towns[ix.town] || (E.towns[ix.town] = {});
       t.pendingIx = t.pendingIx || [];
-      t.pendingIx.push({ interchange: ix.id, day: day });
+      t.pendingIx.push(sort ? { interchange: ix.id, day: day, sort: sort } : { interchange: ix.id, day: day });
     } catch (e) { }
   }
-  function runMattoonIc(day) {
+  // Nov 20 (mw59ef133): Mattoon yard sort. ids are Mattoon car ids; src = 'IC' / 'NW' or function(id). Returns { rest, notes, avoid }
+  function sortIntoM(ids, sort, src) {
+    const out = { rest: [], notes: [], avoid: [] }; if (!sort) { out.rest = (ids || []).slice(); return out; }
+    const ok = sortTracksFor('mattoon'), groups = {}, order = [];
+    IX_RR.forEach(function (r) { const t = sort[r.id]; if (t && ok.indexOf(t) >= 0 && out.avoid.indexOf(t) < 0) out.avoid.push(t); });
+    (ids || []).forEach(function (id) { const v = st().veh[id], rr = rrOfCar(v, typeof src === 'function' ? src(id) : src), t = rr && sort[rr];
+      if (!t || ok.indexOf(t) < 0 || !trackSeg(t)) { out.rest.push(id); return; }
+      if (!groups[t]) { groups[t] = { ids: [], rr: [] }; order.push(t); } groups[t].ids.push(id); if (groups[t].rr.indexOf(rr) < 0) groups[t].rr.push(rr); });
+    order.forEach(function (t) { const g = groups[t], nm = g.rr.map(rrName).join(' and '), r = placeOnTrack(g.ids, t);
+      if (r.placed.length) out.notes.push('sorted ' + r.placed.length + ' ' + nm + ' car' + (r.placed.length > 1 ? 's' : '') + ' onto ' + trackLabel(t));
+      if (r.left.length) { out.notes.push(trackLabel(t) + ' is full: ' + r.left.length + ' ' + nm + ' car' + (r.left.length > 1 ? 's' : '') + ' went on the normal yard track instead'); out.rest = out.rest.concat(r.left); } });
+    return out; }
+  // Effingham yard sort for cars coming home from Neoga (vehicle objects). Effingham on screen: placed now (packed, coupled); else queued with the track (pendingNwIn, sortTo).
+  function sortIntoEf(vehs, sort, srcOf) {
+    const out = { rest: [], notes: [], normal: null }; if (!sort) { out.rest = (vehs || []).slice(); return out; }
+    const all = sortTracksFor('effingham'), used = [], groups = {}, order = [];
+    IX_RR.forEach(function (r) { const t = sort[r.id]; if (t && all.indexOf(t) >= 0 && used.indexOf(t) < 0) used.push(t); });
+    out.normal = all.filter(function (t) { return used.indexOf(t) < 0; }).concat(used);
+    (vehs || []).forEach(function (v) { const rr = rrOfCar(v, srcOf ? srcOf(v) : null), t = rr && sort[rr];
+      if (!t || all.indexOf(t) < 0) { out.rest.push(v); return; }
+      if (!groups[t]) { groups[t] = { vs: [], rr: [] }; order.push(t); } groups[t].vs.push(v); if (groups[t].rr.indexOf(rr) < 0) groups[t].rr.push(rr); });
+    const EF = typeof window !== 'undefined' ? window.__effingham : null, live = !!(EF && EF.efPlaceYardCars && EF.S && EF.T);
+    order.forEach(function (t) { const g = groups[t], nm = g.rr.map(rrName).join(' and ');
+      if (live) { const r = EF.efPlaceYardCars(g.vs, false, [t]);
+        if (r.placed.length) out.notes.push('sorted ' + r.placed.length + ' ' + nm + ' car' + (r.placed.length > 1 ? 's' : '') + ' onto ' + trackLabel(t) + ' in Effingham');
+        if (r.left.length) { out.notes.push(trackLabel(t) + ' in Effingham is full: ' + r.left.length + ' ' + nm + ' car' + (r.left.length > 1 ? 's' : '') + ' went on the normal yard track instead'); out.rest = out.rest.concat(r.left); }
+      } else { const ef = envTown('effingham'); if (!ef) { out.rest = out.rest.concat(g.vs); return; }
+        ef.pendingNwIn = (ef.pendingNwIn || []).concat(g.vs.map(function (v) { v.sortTo = t; return v; }));
+        out.notes.push(g.vs.length + ' ' + nm + ' car' + (g.vs.length > 1 ? 's go' : ' goes') + ' on ' + trackLabel(t) + ' when you are next in Effingham'); } });
+    if (live) { try { if (EF.save) EF.save(); } catch (e) { } }
+    return out; }
+  function runMattoonIc(day, sort) {
     const notes = [], C = R();
     const out = Object.values(st().veh).filter(function (v) {
       if (!isFreight(v) || v.dest !== 'IC-INT' || !onAnyYard(v) || onPlayer(v)) return false;
@@ -3679,8 +3783,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     // block on one track when it fits (ICG Interchange 1 first), else fill the roomier one and put the rest on the other.
     const inn = Object.values(st().veh).filter(function (v) { return isFreight(v) && icInbound(v) && !onPlayer(v); });
     if (inn.length) {
-      const yard = pickYardFor(inn.map(function (v) { return v.id; }));
-      const i = placeOnTrack(inn.map(function (v) { return v.id; }), yard);
+      const so = sortIntoM(inn.map(function (v) { return v.id; }), sort, 'IC'); notes.push.apply(notes, so.notes); // Nov 20 (mw59ef133)
+      const yard = pickYardFor(so.rest, so.avoid);
+      const i = placeOnTrack(so.rest, yard);
       if (i.placed.length) notes.push('pulled ' + i.placed.length + ' inbound car' + (i.placed.length > 1 ? 's' : '') + ' off the ICG interchange onto ' + yard);
       if (i.left.length) notes.push('no room in the yard for ' + i.left.length + ' inbound car' + (i.left.length > 1 ? 's' : ''));
     }
@@ -3700,9 +3805,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function runLocalIx(day, work, job) {
     const ix = ixOfWork(work);
-    if (!ix || ix.id === 'mattoon-ic') return runMattoonIc(day);
+    if (!ix || ix.id === 'mattoon-ic') return runMattoonIc(day, work && work.sortHome !== 'effingham' ? work.sort : null);
     if (ix.id === 'neoga-nw') return runNeogaNw(day, work, job);
-    queueTownIx(ix, day);
+    queueTownIx(ix, day, work && work.sortHome !== 'mattoon' ? work.sort : null);
     const nOut = countIxOut(ix), nIn = countIxIn(ix);
     const bits = [];
     if (nOut) bits.push(nOut + ' outbound');
@@ -3815,7 +3920,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     let lifted = [];
     const pickDone = doneSet.some(function (w) { return w.kind === 'pickup' && (w.track === 'NWI' || w.track === 'NW-INT'); });
     const setoutMattoon = doneSet.filter(function (w) {
-      return w.kind === 'setout' && w.track && (w.track.indexOf('YARD') === 0 || w.track === 'IC Inbound' || w.track === 'IC Outbound');
+      return w.kind === 'setout' && !w.ixSort && w.track && (w.track.indexOf('YARD') === 0 || w.track === 'IC Inbound' || w.track === 'IC Outbound');
     })[0];
     doneSet.forEach(function (w) {
       if (w.kind === 'localInterchange') notes.push.apply(notes, runLocalIx(day, w));
@@ -3839,6 +3944,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (pickDone && setoutMattoon) {
       const nw = liftNWI();
       lifted = lifted.concat(nw);
+      const ra = neogaNwOpen() ? takeFromRA('mattoon').out.map(function (v) { return importCar(v); }).filter(Boolean) : []; // Nov 18 (mw59ef132): Mattoon cars on the runaround come home too
+      lifted = lifted.concat(ra); if (ra.length) notes.push('lifted ' + ra.length + ' car' + (ra.length === 1 ? '' : 's') + ' off the Neoga runaround');
       if (nw.length) notes.push('lifted ' + nw.length + ' car' + (nw.length === 1 ? '' : 's') + ' off the N&W Interchange');
       else notes.push('nothing to lift at the N&W Interchange');
     } else if (pickDone && !setoutMattoon) {
@@ -3908,6 +4015,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (w.kind === 'industry') return custName(w.customer);
     if (w.kind === 'localInterchange') { const ix = ixOfWork(w); return (ix ? ix.name : 'the interchange') + ' at ' + townName(ix ? ix.town : town); }
     if (w.kind === 'classify' || w.kind === 'buildLocal') return 'the ' + townName(town) + ' yard';
+    if (w.kind === 'setout' && w.ixSort) return 'the ' + (w.ixSort || []).map(rrName).join(' + ') + ' sort to ' + trackLabel(w.track);
     if (w.kind === 'pickup' || w.kind === 'setout') return trackLabel(w.track);
     return townName(town);
   }
@@ -4016,7 +4124,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       const E = G.env && G.env(); if (!E || !E.towns) return;
       const ef = E.towns.effingham || (E.towns.effingham = {});
       if (w.kind === 'industry') { ef.pendingCrewWork = ef.pendingCrewWork || []; ef.pendingCrewWork.push(at != null ? { k: w.customer, at: at } : w.customer); if (w.customer === 'EF GLASS') ef.pendingCrewSwap = 1; }
-      else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push({ interchange: migrateIxId(w.interchange), day: day, at: at }); }
+      else if (w.kind === 'localInterchange') { ef.pendingIx = ef.pendingIx || []; ef.pendingIx.push(w.sort && w.sortHome !== 'mattoon' ? { interchange: migrateIxId(w.interchange), day: day, at: at, sort: w.sort } : { interchange: migrateIxId(w.interchange), day: day, at: at }); }
       else if (w.kind === 'classify' || w.kind === 'buildLocal') { ef.pendingYardWork = ef.pendingYardWork || []; const c = JSON.parse(JSON.stringify(w)); if (at != null) c.at = at; ef.pendingYardWork.push(c); }
       else { ef.pendingYard = (ef.pendingYard || 0) + 1; }
     } catch (e) { }
@@ -4038,6 +4146,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       // Nov 15 fix: a road run moves Mattoon cars; if you are in another town, queue it for Mattoon (applyQueued) instead of moving cars with that town's stubs
       if (here !== 'mattoon' && G.applyWork) { queueMattoon({ road: true, job: jobCopy(c), day: day, at: t }); notes = [p.place + ' done; cars move when you are next in Mattoon']; }
       else notes = applyDoneSet(c, c.work || [], day).notes;
+    } else if (w && w.ixSort) { notes = [];
     } else if (w) {
       const ctx = applyCtx(p);
       if (w.kind === 'localInterchange' && ixOfWork(w) && ixOfWork(w).id === 'neoga-nw') {
@@ -4613,6 +4722,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!draft) return;
     if (f === 'symbol') { draft.symbol = el.value; return; }
     if (f === 'startAt') { draft.startAt = +el.value; return; }
+    if (f === 'ixsort') { const k = el.getAttribute('data-rr'); draft.ixSort = draft.ixSort || {}; if (el.value) draft.ixSort[k] = el.value; else delete draft.ixSort[k]; showSheet(true); return; } // Nov 20 (mw59ef133)
     if (f === 'start' || f === 'tieUp' || f === 'buildTrack' || f === 'stopAct' || f === 'stopTrack') {
       draft[f] = el.value;
       if (f === 'start' || f === 'tieUp') {
@@ -4701,12 +4811,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     bind: bind, open: open, runHired: runHired, stageMorning: stageMorning,
     tick: tick, guard: guard, runDayOut: runDayOut, nextQueuedAt: nextQueuedAt, leaveGuard: leaveGuard, givePermission: givePermission, applyQueued: applyQueued, paintChip: paintChip, nowT: nowT,
     openSimTime: openSimTime, simAhead: simAhead, parseSimInput: parseSimInput,
-    efOverflow: efOverflow, applyEfIn: applyEfIn, fetchHeldToEf: fetchHeldToEf, heldMattoonToRA: heldMattoonToRA, repairYardFoul: repairYardFoul, // Nov 16: Effingham yard-full overflow (runaround, Mattoon yard, N&W Interchange)
+    efOverflow: efOverflow, takeFromRA: takeFromRA, applyEfIn: applyEfIn, fetchHeldToEf: fetchHeldToEf, heldMattoonToRA: heldMattoonToRA, repairYardFoul: repairYardFoul, // Nov 16: Effingham yard-full overflow (runaround, Mattoon yard, N&W Interchange)
     _sim: { stepAll: stepAll, claimOf: claimOf, claimedKeys: claimedKeys, planPieces: planPieces, simUntil: simUntil, simAhead: simAhead, parseSimInput: parseSimInput, reportLine: reportLine },
     savedJobs: function () { return savedJobs(); }, _draftToJob: function () { return draft ? draftToJob(draft) : null; },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show,
-    _test: { placeOnNwi: function (v) { return placeOnNwi(v); }, runIndustry: function (k, d) { return runIndustry(k, d); }, runMattoonIc: function (d) { return runMattoonIc(d); }, placeOnTrack: function (i, t) { return placeOnTrack(i, t); }, pickYard: function () { return pickYard(); }, roomOf: function (id) { return roomTop(trackSeg(id), []).room; }, placeInYards: function (i) { return placeInYards(i); }, heldMattoonToRA: function () { return heldMattoonToRA(); }, fetchHeldToEf: function () { return fetchHeldToEf(); }, G: function () { return G; } } // Nov 17: test hooks (puppeteer)
+    _test: { placeOnNwi: function (v) { return placeOnNwi(v); }, runIndustry: function (k, d) { return runIndustry(k, d); }, runMattoonIc: function (d, s) { return runMattoonIc(d, s); }, sortIntoM: function (i, s, r) { return sortIntoM(i, s, r); }, placeOnTrack: function (i, t) { return placeOnTrack(i, t); }, pickYard: function () { return pickYard(); }, roomOf: function (id) { return roomTop(trackSeg(id), []).room; }, placeInYards: function (i) { return placeInYards(i); }, heldMattoonToRA: function () { return heldMattoonToRA(); }, takeFromRA: function (h) { return takeFromRA(h); }, fetchHeldToEf: function () { return fetchHeldToEf(); }, G: function () { return G; } } // Nov 17: test hooks (puppeteer)
   };
   return api;
 });
