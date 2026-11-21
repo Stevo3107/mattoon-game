@@ -481,6 +481,10 @@ function newDay() { // N&W works the interchange; tomorrow's IC cars for Neoga w
 var NWI_CLR = null; function nwiClear() { if (NWI_CLR != null) return NWI_CLR; const L = T.NWI.len; let d = L;
   for (; d > 0; d -= 0.5) { const p = ptAt('NWI', d); if (Math.abs(p[0] - NWX) >= 13) break; } return (NWI_CLR = Math.floor(d)); } // Nov 17: measured from the N&W centre line (was the track end, which sat on it)
 var NWI_FOUL = null; function nwiFoul() { if (NWI_FOUL != null) return NWI_FOUL; let d = 0; for (; d < T.NWI.len; d += 0.5) if (Math.abs(ptAt('NWI', d)[1]) >= 13) break; return (NWI_FOUL = Math.max(120, Math.ceil(d))); } // Nov 17: cars set out by the N&W stay clear of our main (13 ft centres)
+// Nov 18 (Stephen: crews leave cars fouling the main at the south end of the runaround): the runaround's fouling points, as NWI_FOUL: no car on either S-curve
+// closer than 13 ft track centres to the main (170 ft in from each switch), +2 ft. [north (d = 0, S3) clear, south (d = len, S5) clear]
+var RA_FOUL = null; function raFoul() { if (RA_FOUL) return RA_FOUL; const len = T.RA.len; let a = 0, b = len; for (; a < len; a += 0.5) if (Math.abs(ptAt('RA', a)[1]) >= 13) break; for (; b > 0; b -= 0.5) if (Math.abs(ptAt('RA', b)[1]) >= 13) break; return (RA_FOUL = [Math.ceil(a) + 2, Math.ceil(len - b) + 2]); }
+function ngEndClr(t) { return t === 'RA' && T.RA ? raFoul() : [6, 6]; } // room kept at [d = 0, d = len] when crews set cars on t
 function clampNWI() { const K = nwiClear(); let n = 0; for (const c of S.cuts) { const hi = c.path.filter(g => g.t === 'NWI').reduce((m, g) => Math.max(m, g.d0, g.d1), -1); if (hi <= K) continue;
     const h = c.path[c.path.length - 1], t = c.path[0], ex = hi - K + 0.5; if (h.t === 'NWI' && h.dir > 0 && Math.max(h.d0, h.d1) === hi) moveCut(c, -ex); else if (t.t === 'NWI' && t.dir < 0) moveCut(c, ex); else moveCut(c, -ex); n++; } return n; }
 function setOutNWI(cars) { let hd = nwiClear() - 2; for (const o of S.cuts) if (o.path.every(g => g.t === 'NWI')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1)).map(x => x - 2));
@@ -490,8 +494,8 @@ function setOutNWI(cars) { let hd = nwiClear() - 2; for (const o of S.cuts) if (
 function dropIC() { if (!S.pendIC || !S.pendIC.length) return; const n = S.pendIC.length;
   M.efIc = (M.efIc || []).concat(S.pendIC); S.pendIC = []; note(`${n} ICG car${n > 1 ? 's' : ''} for Neoga ${n > 1 ? 'are' : 'is'} coming by the ICG to Mattoon (ICG interchange); bring ${n > 1 ? 'them' : 'it'} down from there.`); }
 // a cut set on the runaround's far end, coupled behind what is already there; false if no room (cars from Mattoon land here)
-function setOutRA(cars) { if (!T.RA || !cars.length) return false; let hd = T.RA.len - 6; for (const o of S.cuts) if (o.path.length && o.path.every(g => g.t === 'RA')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1) - 2));
-  const L = cars.reduce((a, v) => a + vL(v), 0); if (hd - L < 6) return false; const c = placeCut(cars, cars.map(() => true), 'RA', hd, 1);
+function setOutRA(cars) { if (!T.RA || !cars.length) return false; const ec = ngEndClr('RA'); let hd = T.RA.len - ec[1]; for (const o of S.cuts) if (o.path.length && o.path.every(g => g.t === 'RA')) hd = Math.min(hd, ...o.path.map(g => Math.min(g.d0, g.d1) - 2));
+  const L = cars.reduce((a, v) => a + vL(v), 0); if (hd - L < ec[0]) return false; const c = placeCut(cars, cars.map(() => true), 'RA', hd, 1);
   if (S.cuts.some(o => segsOverlap(o, c, 2))) return false; S.cuts.push(c); return true; }
 function jobs() { const L = [], cars = standingCars(); for (const q of cars) { const v = q.v; if (isLoco(v) || v.type === 'caboose') continue; const w = `${roadOf(v)} ${v.num}`;
     if (DEST[v.dest] && ngHeld(v, cars)) continue; // HOLD: no job until a spot opens (Mattoon's CIC rule)
@@ -1452,7 +1456,7 @@ function ngOccOnTrack(t, ignore) {
 function ngCanCoupleCut(c, t) { return !!(c && !c.veh.some(isLoco) && !c.veh.some(v => v.efHold) && c.path && c.path.length && c.path.every(g => g.t === t)); } // Nov 16 (Stephen): Effingham cars held on the runaround stay put: crews work around them, never couple, shove or haul them
 function ngPackedHead(t, L, occ) {
   if (!T[t]) return null;
-  const len = T[t].len, maxHead = len - 6, minHead = L + 6; if (maxHead < minHead) return null;
+  const len = T[t].len, ec = ngEndClr(t), maxHead = len - ec[1], minHead = L + ec[0]; if (maxHead < minHead) return null; // Nov 18: clear of the main (runaround)
   const padFor = o => (o.live || !ngCanCoupleCut(o.c, t)) ? 2 : 0;
   const cands = [maxHead]; for (const o of occ) cands.push(o.lo - padFor(o));
   cands.sort((a, b) => b - a);
@@ -1496,13 +1500,15 @@ function ngPackCuts(t, group) { if (!group || group.length < 2) return false; co
   const nc = placeCut(items.map(i => i.v), items.map(i => i.aT), t, head, 1), ds = (nc.path || []).flatMap(g => [g.d0, g.d1]);
   if (!nc.path || !nc.path.length || nc.path.some(g => g.t !== t) || Math.min(...ds) < 2 || Math.max(...ds) > T[t].len - 2 || S.cuts.some(o => segsOverlap(o, nc, 1.5))) { S.cuts.push(...saved); return false; }
   S.cuts.push(nc); return true; }
-function ngPlaceCars(t, vs, o) { o = o || {}; vs = (vs || []).filter(Boolean); const placed = [], left = []; if (!T[t]) return { placed, left: vs.slice() }; const snap = S.cuts.slice(), maxHead = T[t].len - 6;
-  for (const v of vs) { const L = vL(v), held = !!v.efHold, minHead = L + (o.clear || 6), occ = ngOccOnTrack(t), pad = x => ngJoinable(x.c, t, held) ? 0 : 2;
+function ngPlaceCars(t, vs, o) { o = o || {}; vs = (vs || []).filter(Boolean); const placed = [], left = []; if (!T[t]) return { placed, left: vs.slice() }; const snap = S.cuts.slice(), ec = ngEndClr(t), maxHead = T[t].len - ec[1];
+  for (const v of vs) { const L = vL(v), held = !!v.efHold, minHead = L + Math.max(o.clear || 6, ec[0]), occ = ngOccOnTrack(t), pad = x => ngJoinable(x.c, t, held) ? 0 : 2;
     const cands = [maxHead].concat(occ.map(x => x.lo - pad(x))).sort((a, b) => b - a); let d = null;
     for (const h of cands) { if (h > maxHead + 1e-9 || h < minHead - 1e-9) continue; if (occ.some(x => { const p = pad(x); return !(h + p <= x.lo + 1e-6 || x.hi + p <= h - L + 1e-6); })) continue; d = h; break; }
     if (d == null) { left.push(v); continue; }
     const nc = placeCut([v], [true], t, d, 1); S.cuts.push(nc); placed.push(v);
-    const up = S.cuts.find(c => c !== nc && ngJoinable(c, t, held) && Math.abs(ngRange(c)[0] - d) < 0.6); if (up) ngPackCuts(t, [up, nc]); }
+    // Nov 18 (mw59ef132): couple with every joinable cut it touches, either end (a car set against a cut below it was left uncoupled, and the pack then failed on it)
+    const grp = [nc]; for (let more = true; more;) { more = false; for (const c of S.cuts) { if (grp.includes(c) || !ngJoinable(c, t, held)) continue; const b = ngRange(c); if (grp.some(g => { const a = ngRange(g); return Math.abs(a[0] - b[1]) < 0.6 || Math.abs(b[0] - a[1]) < 0.6; })) { grp.push(c); more = true; } } }
+    if (grp.length > 1) ngPackCuts(t, grp); }
   if (o.whole && left.length) { S.cuts.length = 0; S.cuts.push(...snap); return { placed: [], left: vs.slice() }; }
   return { placed, left }; }
 // couple neighbouring cuts on t: first = the one-time repair (0.5-14.5 ft gaps; touching cuts you uncoupled stay apart); must = cars set while Neoga was not loaded (touching too)
@@ -1514,6 +1520,20 @@ function ngCoupleClusters(t, first, must) { let n = 0; for (const held of [false
       if (!(((first && g > 0.5) || (mine && g >= -0.5)) && g <= 14.5 && !others.some(o => o[1] > p.r[1] && o[0] < x.r[0]))) flush(); } grp.push(x); }
   flush(); } return n; }
 if (!VISIT && S && S.cuts) { try { const must = new Set(S.ngPack || []), first = !S.gapFix131; if (first || must.size) { let n = 0; for (const t of ['NWI', 'RA']) if (T[t]) n += ngCoupleClusters(t, first, must); S.gapFix131 = 1; delete S.ngPack; if (n) console.log('crew gap repair (Neoga): ' + n + ' cuts coupled'); } } catch (e) { console.warn('neoga gap repair', e); } }
+// Nov 18 one-time repair (mw59ef132): cars crews already left on the runaround's S-curves, fouling the main, are shoved back inside the fouling points. Each standing cut
+// keeps its cars, order and couplings and moves only as far as it must (south end first); cuts with an engine are not touched. If they cannot all fit between the
+// fouling points nothing is moved (no cut is pushed onto the north curve to clear the south) and the fouling cuts are counted in 'stuck'.
+function ngRaUnfoul() { const res = { moved: 0, cars: 0, stuck: 0 }; if (!T.RA) return res; const ec = raFoul(), len = T.RA.len, lo0 = ec[0], hi0 = len - ec[1];
+  const xs = S.cuts.filter(c => c.path.length && c.path.every(g => g.t === 'RA')).map(c => { const r = ngRange(c); return { c, r, L: r[1] - r[0], fixed: c.veh.some(isLoco) }; });
+  const foul = x => !x.fixed && (x.r[1] > hi0 + 0.5 || x.r[0] < lo0 - 0.5); if (!xs.some(foul)) return res;
+  const plan = (lo) => { let lim = hi0; for (const x of xs.slice().sort((a, b) => b.r[1] - a.r[1])) { if (x.fixed) { x.n = x.r.slice(); lim = Math.min(lim, x.r[0] - 2); continue; } const h = Math.min(x.r[1], lim); x.n = [h - x.L, h]; lim = x.n[0] - 2; }
+    lim = lo; for (const x of xs.slice().sort((a, b) => a.n[0] - b.n[0])) { if (x.fixed) { lim = Math.max(lim, x.r[1] + 2); continue; } const l = Math.max(x.n[0], lim); x.n = [l, l + x.L]; lim = x.n[1] + 2; }
+    const s = xs.slice().sort((a, b) => a.n[0] - b.n[0]); for (let i = 0; i < s.length; i++) { if (!s[i].fixed && (s[i].n[1] > hi0 + 0.5 || s[i].n[0] < lo - 0.5)) return false; if (i && s[i].n[0] < s[i - 1].n[1] + 1.5) return false; } return true; };
+  if (!plan(lo0)) { res.stuck = xs.filter(foul).length; return res; } // no room: leave them (never worse than before)
+  for (const x of xs) { if (x.fixed) continue; const sh = x.n[0] - x.r[0]; if (Math.abs(sh) < 0.01) continue; for (const g of x.c.path) { g.d0 += sh; g.d1 += sh; } res.moved++; res.cars += x.c.veh.length; }
+  return res; }
+if (!VISIT && S && S.cuts && T.RA && !S.raFoul132) { try { const r = ngRaUnfoul(); S.raFoul132 = 1; if (r.stuck) console.warn('runaround fouling repair: ' + r.stuck + ' cuts foul, no room to clear them'); if (r.moved) { console.log('runaround fouling repair (Neoga): ' + r.moved + ' cuts, ' + r.cars + ' cars moved clear');
+  try { note(r.cars + ' car' + (r.cars > 1 ? 's' : '') + ' a crew left fouling the main on the runaround ' + (r.cars > 1 ? 'were' : 'was') + ' shoved back clear.'); } catch (e) { } } } catch (e) { console.warn('runaround fouling repair', e); } }
 function moveStandingCar(q, t, dHead) {
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();
@@ -1636,5 +1656,5 @@ if (!VISIT) { try { bindCrewBoardN(); } catch (e) { } try { ngApplyPendingCrew()
   document.addEventListener('click', e => { const cs = e.target.closest('[data-act="callSheet"]'); if (cs) { e.preventDefault(); hideModal(); bindCrewBoardN(); if (window.NII_CALLSHEET) NII_CALLSHEET.open(); } });
   setInterval(() => { try { if (window.NII_CALLSHEET && NII_CALLSHEET.tick) NII_CALLSHEET.tick(); } catch (e) { } }, 500); }
 resize(); draw(); requestAnimationFrame(frame);
-window.__neoga = { ngPlaceCars, swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get foul() { return nwiFoul(); }, setOutNWI, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
+window.__neoga = { ngPlaceCars, ngRaUnfoul, get raClr() { return raFoul(); }, swmList, swmHas, SWM_KIND, SWM_FACE_AT, get SCN() { return SCN(); }, get SCENERY_ON() { return SCENERY_ON; }, set SCENERY_ON(x) { SCENERY_ON = !!x; }, notes, YARD_LIMIT, ylRoomN, moveStepN: (c, s, d) => moveStep(c, s, d), newDayN: () => newDay(), releaseDue, BFN, BFNX, bfAheadN, ngOpen, get M() { return M; }, wbCard, SPOTS, ngHeld, ngFull, jobs, get spotsOn() { return spotsOn; }, set spotsOn(x) { spotsOn = !!x; }, advanceN: dt => advance(dt), planRoute, stepN: dt => step(dt), get TAGS_DRAWN() { return TAGS_DRAWN; }, carTag, throwSw, swBusy, tap, HIT, SIG_FORCE, uncTap, pathPt, save, get clr() { return nwiClear(); }, get foul() { return nwiFoul(); }, setOutNWI, get UNC() { return UNC_ON; }, standingCars, nwTrain, newCar, placeCut, ptAt, crossStart, openMap, mapSnap, go, ngCrewWork, ngCrewCustomer, ngApplyPendingCrew, moveStandingCar, get train() { const c = liveCut(); return c ? c.veh : []; }, S, T, SWITCHES, SPOTS, cam, draw, requestRoute, apTo, endDay, jobs, liveCut, myEngineId, setMyEngine, claimEngine, releaseEngine, cutLen, moveCut, ctl, NWT, aspects, M, ngOpen, stripStrays, clearNorth, go };
 };
