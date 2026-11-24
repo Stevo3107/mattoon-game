@@ -1464,8 +1464,13 @@ function efRequestLocal(key,c,dir){
   // A grant is for this crossing and this consist/direction ONLY.
   EF_IL.grants[key]={key,dir,ids:efIds(c),entered:efRangesHit(c,EF_OPS.crossings[key].ranges,efBodyPad(c))};return true;
 }
-function efChooseRequest(c,key,dir){
-  const options=key?[key]:Object.keys(EF_OPS.crossings),signs=ctl.sv?[Math.sign(ctl.sv)]:[1,-1];let best=null;
+// Nov 24 (mw59ef137, Stephen): a home signal drops back to Stop once the head of the train is EF_SIG_DROP_FT past it (display only;
+// the grant stays until the train is beyond the crossing, so it is never stopped or fined for it).
+const EF_SIG_DROP_FT=10;
+function efPastHome(g,c){const z=EF_OPS.crossings[g.key],h=z&&z.homes.find(b=>b.dir===g.dir);if(!h||!c||!Array.isArray(c.path))return false;const p0=ptAt(h.t,h.d),ux=Math.cos(p0[2])*g.dir,uy=Math.sin(p0[2])*g.dir;
+  return c.path.some(q=>T[q.t]&&[q.d0,q.d1].some(d=>{const p=ptAt(q.t,d),dx=p[0]-p0[0],dy=p[1]-p0[1],al=dx*ux+dy*uy;return al>EF_SIG_DROP_FT&&al<600&&Math.abs(dy*ux-dx*uy)<7;}));}
+function efChooseRequest(c,key,dir){ // Nov 24 (mw59ef137): stopped with the reverser set, the way it is set picks the crossing (was: nearest either way)
+  const options=key?[key]:Object.keys(EF_OPS.crossings),signs=ctl.sv?[Math.sign(ctl.sv)]:ctl.rev?[ctl.rev*fwdSign(c)]:[1,-1];let best=null;
   for(const k of options){const z=EF_OPS.crossings[k];if(!z)continue;for(const s of signs){const a=efGraphTargets(c,s,z.diamond.filter(q=>!dir||q.dir===dir));if(a&&(!best||a.distance<best.distance))best=a;}}
   return best;
 }
@@ -1588,7 +1593,7 @@ function openTowerRequest(){
 function efFamilyCuts(g){const a=S.cuts.filter(c=>efShares(g.ids,c));for(const c of a)for(const v of c.veh)g.ids.add(v.id);return a;}
 function efBeyond(g,c){const z=EF_OPS.crossings[g.key],home=z.homes[g.dir>0?1:0],x=home.at[0],pad=efBodyPad(c);return c.path.every(p=>{if(!T[p.t])return false;const a=ptAt(p.t,p.d0),b=ptAt(p.t,p.d1);return g.dir>0?Math.min(a[0],b[0])-pad>x:Math.max(a[0],b[0])+pad<x;});}
 function efTowerTick(){
-  for(const [key,g]of Object.entries(EF_IL.grants)){if(!g)continue;const cuts=efFamilyCuts(g);if(cuts.some(c=>efRangesHit(c,EF_OPS.crossings[key].ranges,efBodyPad(c))))g.entered=true;
+  for(const [key,g]of Object.entries(EF_IL.grants)){if(!g)continue;const cuts=efFamilyCuts(g);if(cuts.some(c=>efRangesHit(c,EF_OPS.crossings[key].ranges,efBodyPad(c))))g.entered=true;if(!g.passed&&cuts.some(c=>efPastHome(g,c)))g.passed=true;
     // Retain committed authority through stops/reversals and detached original vehicles.
     if(g.entered&&cuts.length&&cuts.every(c=>efBeyond(g,c)))EF_IL.grants[key]=null;
   }
@@ -1623,7 +1628,7 @@ function efRouteTracks(c, target) { for (const sgn of [1, -1]) { let p = leading
 // (e.g. already past it): the last approaching classification is kept per grant, never upgraded to Clear afterwards.
 function efMainTrackMove(c) { const home = EF_OPS.crossings[EF_CLEAR_ALLOWED.key].homes.find(h => h.dir === EF_CLEAR_ALLOWED.dir), r = c && efRouteTracks(c, home); if (!r) return null; return c.path.every(q => EF_NII_MAIN_TRACKS.has(q.t)) && r.every(t => EF_NII_MAIN_TRACKS.has(t)); }
 const EF_GRANT_CLASS = new WeakMap();
-function efNiiAspect(key, dir, c, t) { if (!c || !efHasGrant(key, c, dir)) return EF_STOP_ASPECT();
+function efNiiAspect(key, dir, c, t) { if (!c || !efHasGrant(key, c, dir) || EF_IL.grants[key].passed) return EF_STOP_ASPECT(); // Nov 24 (mw59ef137): passed = back to Stop (the grant itself is kept)
   if (key === EF_CLEAR_ALLOWED.key && dir === EF_CLEAR_ALLOWED.dir) { const g = EF_IL.grants[key], m = efMainTrackMove(c); if (m !== null) EF_GRANT_CLASS.set(g, m); if (EF_GRANT_CLASS.get(g) === true) return EF_CLEAR_ASPECT(); }
   return EF_RESTRICTING.aspect(t); }
 var EF_ASPECT_CLOCK = null; // test hook only (deterministic flash phase in renders); null = performance.now()
@@ -4482,6 +4487,9 @@ function efPlaceYardCars(vs, whole, tracks) { vs = (vs || []).filter(Boolean); c
   return { placed, left }; }
 // Nov 18 one-time load repair: cars those crews already left a few feet apart (2-14 ft gaps, separate cuts) on Yard 1-4 are coupled into one cut. Touching cuts (a cut you uncoupled)
 // and anything with an engine between are left alone.
+// Nov 24 (mw59ef137, Stephen): leaving the map drops your route. Crossing grants were already memory-only; on arrival the old tower
+// summary is cleared too, and power switches a PC train left lined (it never finished while you were away) go back to Normal.
+if (!VISIT && S && S.cuts) { try { if (S.tower) S.tower = null; if (!NWT.run) efPCRestore(); S.sigFix137 = 1; } catch (e) { console.warn('route drop on arrival', e); } }
 if (!VISIT && S && S.cuts && !S.gapFix131) { try { let n = 0; for (const t of YARD_TS) { if (!T[t]) continue; const live = efLiveIntervals(t);
     const cs = S.cuts.filter(c => efCanCoupleCut(c, t)).map(c => { const ds = c.path.flatMap(g => [g.d0, g.d1]); return { c, lo: Math.min(...ds), hi: Math.max(...ds) }; }).sort((a, b) => a.lo - b.lo);
     let grp = []; const flush = () => { if (grp.length > 1) { const k = S.cuts.length; efPackGroup(t, grp.map(x => x.c)); if (S.cuts.length < k) n += grp.length; } grp = []; };
