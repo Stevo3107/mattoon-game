@@ -43,8 +43,15 @@ window.NII_SHARED = (() => {
     else { const sg = Math.sign(v), nv = v + (Ft - sg * Fopp) / m * dt; v = (Math.sign(nv) !== sg && Math.abs(Ft) <= Fopp) ? 0 : nv; }
     if (Math.abs(v) > o.lim) v = Math.sign(v) * o.lim; return { v, slip, slide, eq: n }; }
   // fuel and sand used this step (Mattoon's numbers). Returns { out: ran out of fuel now, sandCost, sandEmpty }
-  function consume(l, ctl, eq, dt) { const r = { out: false, sandCost: 0, sandEmpty: false };
-    if (l.fuel > 0) { l.fuel = Math.max(0, l.fuel - (1 + 2.5 * eq) / 60 * dt); r.out = l.fuel <= 0; }
+  // Nov 24 (Stephen: throttle, tonnage and speed all count; once up to speed you use less just maintaining it):
+  // GP9 ~5 gal/h idle, up to ~95 gal/h in notch 8. Throttle sets the base; a heavy train pushes it up; accelerating works the
+  // engine hardest, while holding a steady speed (or coasting down) burns less for the same notch.
+  function fuelGph(notch, tons, mph, accel) { const n = Math.max(0, Math.min(8, notch || 0)) / 8;
+    if (tons == null && mph == null && accel == null) return 5 + 90 * n;
+    const work = 0.55 + 0.3 * Math.min(1, (tons || 0) / 2000) + (accel > 0.02 ? 0.15 : (mph || 0) > 3 ? -0.1 : 0);
+    return 5 + 90 * n * Math.max(0.3, Math.min(1, work)); }
+  function consume(l, ctl, eq, dt, load) { const r = { out: false, sandCost: 0, sandEmpty: false }, ld = load || {};
+    if (l.fuel > 0) { l.fuel = Math.max(0, l.fuel - fuelGph(eq, ld.tons, ld.mph, ld.accel) / 3600 * dt); r.out = l.fuel <= 0; }
     if (ctl.sand) { if (l.sand > 0) { const u = Math.min(l.sand, 0.8 * dt); r.sandCost = u * ECON.SAND_PER_PCT; l.sand = Math.max(0, l.sand - 0.8 * dt); ctl.sandT = (ctl.sandT || 0) + dt; }
       if (l.sand <= 0 || ctl.sandT > 12) { ctl.sand = false; ctl.sandT = 0; r.sandEmpty = l.sand <= 0; } }
     return r; }
@@ -1076,7 +1083,7 @@ window.NII_SHARED = (() => {
     return list;
   }
 
-  return { tagShow, CUST, repairRoute, ROUTE_DIRECT, ROAD_ROUTE, normRoad, TOWN_IX, setPlacePicker, ownerRoad, farRoadOf, routeMain, routeAlt, pickRoute, routeRelease, nwPickup, nwMsg, NW_REP_CUT, NW_WRONG_FEE, numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, RESTART_HTML, VIEW_CARS, LPG_ART, GON_ART, PS2_ART, CF_ART, CF_GRAIN_ART, PS2K_GRAIN_ART, PS2K_GRAIN_SHARE, beamFree, LIME_ART, CF_GRAIN_SHARE, OWNER_VIA, ownerVia, biasVia, isNii, openVias, openTowns, viaToDest, destToVia, townOfCustomer, townOfIx, haulMiles, HAUL_MILES, freightPay, roadToVia, pickNiiOutbound, flipVia, emptyNiiDest, stampRelease, niiGoAway, niiKind, niiKindFits, NII_REQ_CUST, niiEligibleCustomers, niiPickOutLoad, isIdleNiiEmpty, collectIdleNii, assignNiiRequest, runNiiRequests, isPropaneDest, isIfsDest, isLpgTank, isOtherTank, carDestOk, pickViewCar, isScrapDest, isGon, isGlassDest, isGrainDest, isPs2, isCf, isCf2, cfGrainOk, GLASS_MOVES, pickGlassMove, pickGrainCar, SAND_ART, ACF_2BAY_ART, SODA_OUTSTANDING_CAP, isSodaAshCar, sodaOutstandingCount, LIME_OUTSTANDING_CAP, isLimeCar, limeOutstandingCount, BURGESS_LUMBER, BURGESS_MATERIALS, BURGESS_SHIPPER_GAP, pickBurgessMove, stencilOf, stencilTareT, stencilCapT, applyStencil, clampLoadToStencil, GLASS_SHIPPERS, SODA_GREEN_RIVER, SODA_SP, SODA_OTHER, BOTTLE_CONSIGNEES, pickGlassShipper, pickBottleConsignee, EF_WEEK, efWeekPlan, efSeason, BEAM, beamFleet, blockTogether, isBeamArt, isBeamMeta, scrapKindOf, scrapLoadOf, scrapOverlayKey, withScrapLoad, prefetchScrapLoads, armScrapGon, prepareScrapGons, efRoll, EF };
+  return { tagShow, CUST, repairRoute, ROUTE_DIRECT, ROAD_ROUTE, normRoad, TOWN_IX, setPlacePicker, ownerRoad, farRoadOf, routeMain, routeAlt, pickRoute, routeRelease, nwPickup, nwMsg, NW_REP_CUT, NW_WRONG_FEE, numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, fuelGph, RESTART_HTML, VIEW_CARS, LPG_ART, GON_ART, PS2_ART, CF_ART, CF_GRAIN_ART, PS2K_GRAIN_ART, PS2K_GRAIN_SHARE, beamFree, LIME_ART, CF_GRAIN_SHARE, OWNER_VIA, ownerVia, biasVia, isNii, openVias, openTowns, viaToDest, destToVia, townOfCustomer, townOfIx, haulMiles, HAUL_MILES, freightPay, roadToVia, pickNiiOutbound, flipVia, emptyNiiDest, stampRelease, niiGoAway, niiKind, niiKindFits, NII_REQ_CUST, niiEligibleCustomers, niiPickOutLoad, isIdleNiiEmpty, collectIdleNii, assignNiiRequest, runNiiRequests, isPropaneDest, isIfsDest, isLpgTank, isOtherTank, carDestOk, pickViewCar, isScrapDest, isGon, isGlassDest, isGrainDest, isPs2, isCf, isCf2, cfGrainOk, GLASS_MOVES, pickGlassMove, pickGrainCar, SAND_ART, ACF_2BAY_ART, SODA_OUTSTANDING_CAP, isSodaAshCar, sodaOutstandingCount, LIME_OUTSTANDING_CAP, isLimeCar, limeOutstandingCount, BURGESS_LUMBER, BURGESS_MATERIALS, BURGESS_SHIPPER_GAP, pickBurgessMove, stencilOf, stencilTareT, stencilCapT, applyStencil, clampLoadToStencil, GLASS_SHIPPERS, SODA_GREEN_RIVER, SODA_SP, SODA_OTHER, BOTTLE_CONSIGNEES, pickGlassShipper, pickBottleConsignee, EF_WEEK, efWeekPlan, efSeason, BEAM, beamFleet, blockTogether, isBeamArt, isBeamMeta, scrapKindOf, scrapLoadOf, scrapOverlayKey, withScrapLoad, prefetchScrapLoads, armScrapGon, prepareScrapGons, efRoll, EF };
 })();
 
 // Nov 10: hook Effingham without editing the town pack. The pack's newCar() still builds a boxcar for EF SCRAP;
@@ -1169,7 +1176,9 @@ window.NII_SHARED = (() => {
     interchangePerCar: 5,
     pickupBase: 8,
     pickupPerCar: 3,
-    noYardJobFactor: 1.35
+    noYardJobFactor: 1.35,
+    swapBase: 15,     // Nov 24: swapping cuts at an interchange
+    sortPerGroup: 6   // Nov 24: per destination group when sorting a cut on the spot
   };
 
   const CRAFTS = ['engineer', 'fireman', 'headBrakeman', 'conductor', 'rearBrakeman'];
@@ -1318,7 +1327,7 @@ window.NII_SHARED = (() => {
     const F = (crew && crew.familiarity) || {};
     const bits = [];
     if (work && work.kind === 'industry' && work.customer) bits.push((F.customer || {})[work.customer] || 0);
-    if (work && (work.kind === 'classify' || work.kind === 'buildLocal' || work.kind === 'localInterchange' || work.kind === 'pickup' || work.kind === 'setout')) {
+    if (work && (work.kind === 'classify' || work.kind === 'buildLocal' || work.kind === 'localInterchange' || work.kind === 'pickup' || work.kind === 'setout' || work.kind === 'swap' || work.kind === 'sortCut')) {
       bits.push((F.yard || {})[workTown(work) || work.yard || ''] || 0);
     }
     if (!bits.length) return 1;
@@ -1337,6 +1346,8 @@ window.NII_SHARED = (() => {
       return (SWITCH.interchangeBase + SWITCH.interchangePerCar * (work.outCars != null ? work.outCars : n) + SWITCH.interchangePerCar * (work.inCars || 0)) / 60;
     }
     if (work.kind === 'pickup' || work.kind === 'setout') return (SWITCH.pickupBase + SWITCH.pickupPerCar * n) / 60;
+    if (work.kind === 'swap') return (SWITCH.swapBase + SWITCH.interchangePerCar * n) / 60; // Nov 24: our cars on the interchange swapped out
+    if (work.kind === 'sortCut') return (SWITCH.classifyBase + SWITCH.classifyPerCar * n + SWITCH.sortPerGroup * (work.groups || 1)) / 60; // Nov 24: sort a pulled cut on the spot
     return 0;
   }
 
@@ -1476,6 +1487,122 @@ window.NII_SHARED = (() => {
       if (free > 0) { spot.push(car); free--; } else wait.push({ car: car, reason: 'no-room' });
     });
     return { pull: pickOldestFirst(pull), spot: spot, wait: wait, free: free };
+  }
+
+  // Nov 24: road train plan. The player ticks tracks (or single cars) to lift in any town.
+  // Each lifted car sets out where it belongs (opts.home), unless overridden. Cars pulled off an
+  // interchange must have a destination picked: { town, track } or 'sort' (crew sorts the cut on
+  // the spot and each car goes to its own town and yard: costs a lot more time).
+  // If our own cars sit on an interchange we lift from, the crew swaps cuts (extra time).
+  // Returns stops in run order, the train as it will look leaving each stop, work items for
+  // estimateJob, and `missing` (interchange tracks still needing a destination: don't call yet).
+  function roadTrainPlan(cars, opts) {
+    opts = opts || {};
+    const byId = {};
+    (cars || []).forEach(function (c) { byId[c.id] = c; });
+    // Nov 24: engine tie-up point. opts.engineTieUp = { town, track }; its town is where the crew ties up.
+    const eng = opts.engineTieUp || null;
+    const start = opts.start, tieUp = (eng && eng.town) || opts.tieUp || opts.start;
+    const engineTieUp = eng && eng.track ? { town: tieUp, track: eng.track } : (opts.engineTrackFor ? { town: tieUp, track: opts.engineTrackFor(tieUp) || null } : { town: tieUp, track: null });
+    const home = opts.home || function (c) { return c.home || null; };
+    const override = opts.override || {};
+    const ixDest = opts.interchangeDest || {};
+    const ourAt = opts.ourCarsAt || function () { return 0; };
+    const missing = [], refused = [];
+    const lifts = []; // { town, track, ids, ix, dest }
+    (opts.lift || []).forEach(function (L) {
+      const town = L.town || (TRACKS[L.track] && TRACKS[L.track].town);
+      if (!roadTrainMayUse(L.track, L.kind)) { refused.push(L.track); return; }
+      const ix = trackKind(L.track, L.kind) === 'interchange';
+      const ids = (L.carIds && L.carIds.length ? L.carIds : (cars || []).filter(function (c) { return c.track === L.track && (!c.town || c.town === town); }).map(function (c) { return c.id; }))
+        .filter(function (id) { return byId[id] && !byId[id].work; });
+      const dest = ix ? ixDest[L.track] : null;
+      if (ix && ids.length && !dest) missing.push(L.track);
+      lifts.push({ town: town, track: L.track, ids: pickOldestFirst(ids.map(function (id) { return byId[id]; })).map(function (c) { return c.id; }), ix: ix, dest: dest });
+    });
+    // where each car goes
+    const goes = {};
+    lifts.forEach(function (L) {
+      L.ids.forEach(function (id) {
+        let d = override[id] || (L.ix && L.dest && L.dest !== 'sort' ? L.dest : null) || home(byId[id]) || null;
+        goes[id] = d && d.town ? d : { town: tieUp, track: null, leftover: true };
+      });
+    });
+    // route: sweep low end, then high end of the line, then tie-up
+    const need = [start];
+    lifts.forEach(function (L) { if (L.ids.length) { need.push(L.town); L.ids.forEach(function (id) { need.push(goes[id].town); }); } });
+    need.push(tieUp);
+    const idx = need.map(function (t) { return TOWN_LINE.indexOf(t); }).filter(function (i) { return i >= 0; });
+    const s = TOWN_LINE.indexOf(start), lo = Math.min.apply(null, idx), hi = Math.max.apply(null, idx);
+    const path = [];
+    function walk(a, b) { const step = a <= b ? 1 : -1; for (let i = a; i !== b + step; i += step) if (path[path.length - 1] !== TOWN_LINE[i]) path.push(TOWN_LINE[i]); }
+    const firstLo = (s - lo) <= (hi - s);
+    if (firstLo) { walk(s, lo); walk(lo, hi); } else { walk(s, hi); walk(hi, lo); }
+    walk(TOWN_LINE.indexOf(path[path.length - 1]), TOWN_LINE.indexOf(tieUp));
+    // simulate
+    const train = [], stops = [], work = [], done = {};
+    path.forEach(function (town, pi) {
+      const stop = { town: town, setouts: [], lifts: [], extra: [], trainAfter: null };
+      const isLast = pi === path.length - 1;
+      const drop = train.filter(function (id) { return goes[id].town === town && (!goes[id].leftover || isLast); });
+      if (drop.length) {
+        const byTrack = {};
+        drop.forEach(function (id) { const t = goes[id].track || 'yard'; (byTrack[t] = byTrack[t] || []).push(id); });
+        Object.keys(byTrack).forEach(function (t) { stop.setouts.push({ track: t === 'yard' ? null : t, carIds: byTrack[t] }); });
+        drop.forEach(function (id) { train.splice(train.indexOf(id), 1); });
+        work.push({ kind: 'setout', town: town, cars: drop.length });
+      }
+      lifts.forEach(function (L, li) {
+        if (done[li] || L.town !== town || !L.ids.length) return;
+        done[li] = true;
+        stop.lifts.push({ track: L.track, carIds: L.ids.slice() });
+        work.push({ kind: 'pickup', town: town, track: L.track, cars: L.ids.length });
+        const ours = L.ix ? (ourAt(L.track) || 0) : 0;
+        if (ours > 0) { stop.extra.push({ kind: 'swap', track: L.track, cars: ours }); work.push({ kind: 'swap', town: town, track: L.track, cars: ours }); }
+        if (L.ix && L.dest === 'sort') {
+          const groups = {};
+          L.ids.forEach(function (id) { groups[goes[id].town + '|' + (goes[id].track || '')] = 1; });
+          const g = Object.keys(groups).length;
+          stop.extra.push({ kind: 'sortCut', track: L.track, cars: L.ids.length, groups: g });
+          work.push({ kind: 'sortCut', town: town, track: L.track, cars: L.ids.length, groups: g });
+        }
+        L.ids.forEach(function (id) { if (goes[id].town === town && !goes[id].leftover) return; train.push(id); });
+        // cars whose destination is this same town: set out right here
+        const here = L.ids.filter(function (id) { return goes[id].town === town && !goes[id].leftover; });
+        if (here.length) { stop.setouts.push({ track: null, carIds: here, sameTown: true }); work.push({ kind: 'setout', town: town, cars: here.length }); }
+      });
+      stop.trainAfter = train.slice();
+      if (stop.setouts.length || stop.lifts.length || stop.extra.length || pi === 0 || isLast) stops.push(stop);
+    });
+    if (!engineTieUp.track) missing.push('engine tie-up');
+    return { ok: !missing.length && !refused.length, missing: missing, refused: refused, engineTieUp: engineTieUp, tieUp: tieUp, path: path, stops: stops, goes: goes, work: work, leftover: train.slice() };
+  }
+
+  // Nov 24: hired-crew fuel and sand, and servicing. Rates match shared.js fuelGph (GP9: 5 gal/h idle, up to ~95 in notch 8),
+  // worked out per engine from road hours, switching hours, idle hours and the tons each engine pulls (see ENERGY below).
+  const SERVICE = { MIN_PER_LOCO: 15, FUEL_CAP: 1600, SAND_FULL: 100 };
+  // Nov 24 (Stephen: too heavy, base it on several factors): GP9 burns ~5 gal/h idle, ~95 gal/h in notch 8.
+  // Per engine: road 30 gal/h + 0.02 gal/h per ton it pulls (max 95), switching 15 + 0.005 per ton (max 40), idle/waiting 5.
+  // Sand: per start or shove move, more when heavy; road running uses a little on starts and grades.
+  const ENERGY = { IDLE_GPH: 5, ROAD_BASE: 30, ROAD_PER_TON: 0.02, ROAD_MAX: 95, SW_BASE: 15, SW_PER_TON: 0.005, SW_MAX: 40,
+    SAND_PER_MOVE: 0.15, SAND_HEAVY_TONS: 1500, SAND_ROAD_PCT_H: 0.5 };
+  function crewUse(estimate, locos, opts) {
+    const e = estimate || {}, o = opts || {}, road = e.roadHours || 0, sw = e.switchHours || 0, idle = o.idleHours || 0;
+    const n = Math.max(1, (locos || []).length), tons = o.tons || 0, perTons = tons / n, moves = o.moves != null ? o.moves : Math.round(sw * 6);
+    const roadGph = Math.min(ENERGY.ROAD_MAX, ENERGY.ROAD_BASE + ENERGY.ROAD_PER_TON * perTons), swGph = Math.min(ENERGY.SW_MAX, ENERGY.SW_BASE + ENERGY.SW_PER_TON * perTons);
+    const galPerLoco = Math.round(roadGph * road + swGph * sw + ENERGY.IDLE_GPH * idle);
+    const sandPerLoco = round2((moves * ENERGY.SAND_PER_MOVE * (tons > ENERGY.SAND_HEAVY_TONS ? 2 : 1) + ENERGY.SAND_ROAD_PCT_H * road) / n);
+    const per = (locos || []).map(function (l) {
+      const fuel = l.fuel != null ? l.fuel : SERVICE.FUEL_CAP, sand = l.sand != null ? l.sand : SERVICE.SAND_FULL;
+      return { id: l.id, num: l.num, fuelUse: galPerLoco, sandUse: sandPerLoco, fuelLeft: Math.max(0, Math.round(fuel - galPerLoco)), sandLeft: Math.max(0, round2(sand - sandPerLoco)), runsDry: fuel < galPerLoco, sandOut: sand < sandPerLoco };
+    });
+    return { perLoco: per, warn: per.some(function (x) { return x.runsDry; }) ? 'An engine would run out of fuel on this job. Fuel it first.' : per.some(function (x) { return x.sandOut; }) ? 'An engine would run out of sand on this job.' : null };
+  }
+  // Fuel and sand box on the call sheet: engines are out of service 15 min each before the crew can use them.
+  // Mechanical work, not crew time: it delays the start, not the hog-law clock.
+  function serviceLocos(locos, now) {
+    const sec = SERVICE.MIN_PER_LOCO * 60 * (locos || []).length;
+    return { seconds: sec, readyAt: (now || 0) + sec, countsAsCrewTime: false, refill: (locos || []).map(function (l) { return { id: l.id, fuel: SERVICE.FUEL_CAP, sand: SERVICE.SAND_FULL }; }) };
   }
 
   function releasedDay(car) {
@@ -1634,6 +1761,11 @@ window.NII_SHARED = (() => {
     expPayFactor: expPayFactor,
     estimateJob: estimateJob,
     industryVisit: industryVisit,
+    roadTrainPlan: roadTrainPlan,
+    SERVICE: SERVICE,
+    ENERGY: ENERGY,
+    crewUse: crewUse,
+    serviceLocos: serviceLocos,
     formatAboutHours: formatAboutHours,
     restRequiredHours: restRequiredHours,
     hoursOff: hoursOff,
@@ -2098,17 +2230,23 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return (t && t[0]) || 'YARD 1';
   }
 
+  // Car tonnage for crewUse: the tonnage box's weight (v.wt); a car with no weight on record counts 30 t empty, 100 t loaded.
+  let TK = null;
+  function tk(v) { if (TK && v) TK.push(v); return 1; }
+  function carTonsOf(v) { return v.wt != null && isFinite(v.wt) && v.wt > 0 ? +v.wt : (v.loaded || (v.load && v.load.t > 0) ? 100 : 30); }
+  function sumCarTons(list) { const seen = {}; let t = 0; (list || []).forEach(function (v) { const k = v.id || v.num; if (k != null && seen[k]) return; if (k != null) seen[k] = 1; t += carTonsOf(v); }); return Math.round(t); }
   function countIndustry(id) {
     const town = customerTown(id);
     if (town === 'mattoon') {
       const vis = visitFor(id, freightForTown('mattoon'));
+      vis.pull.concat(vis.spot).forEach(tk);
       return vis.pull.length + vis.spot.length;
     }
     let n = 0;
     freightForTown(town).forEach(function (v) {
       if (v.work) return;
-      if (v.dest === id) n++;
-      else if (v.relK === id || v.from === id) n++;
+      if (v.dest === id) n += tk(v);
+      else if (v.relK === id || v.from === id) n += tk(v);
     });
     return n;
   }
@@ -2123,12 +2261,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (home === 'effingham') {
       eachFreight(function (v, extra) {
         if (extra.town !== 'effingham' || !isFreight(v) || onPlayer(v) || v.dest !== 'NW-INT' || v.work) return;
-        n++;
+        n += tk(v);
       });
     } else {
       try {
         Object.values(st().veh || {}).forEach(function (v) {
-          if (isFreight(v) && v.dest === 'NW-INT' && !onPlayer(v) && !v.work) n++;
+          if (isFreight(v) && v.dest === 'NW-INT' && !onPlayer(v) && !v.work) n += tk(v);
         });
       } catch (e) { }
     }
@@ -2143,7 +2281,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     eachFreight(function (v, extra) {
       if (onPlayer(v) || v.dest !== ix.dest) return;
       if (extra.cut && cutOnIx(extra.cut, ix)) return;
-      n++;
+      n += tk(v);
     });
     return n;
   }
@@ -2155,13 +2293,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     eachFreight(function (v, extra) {
       if (onPlayer(v) || !extra.cut || !cutOnIx(extra.cut, ix)) return;
       if (ix.dest && v.dest === ix.dest) return;
-      n++;
+      n += tk(v);
     });
     return n;
   }
   function countOnTrack(trackId) {
     if (trackId === 'NWI' || trackId === 'NW-INT') return countNWI();
-    return Object.values(st().veh).filter(function (v) { return isFreight(v) && !onPlayer(v) && atTrack(v, trackId); }).length;
+    return Object.values(st().veh).filter(function (v) { return isFreight(v) && !onPlayer(v) && atTrack(v, trackId); }).map(tk).length;
   }
   function countNWI() {
     const ng = G.env().towns && G.env().towns.neoga;
@@ -2170,18 +2308,18 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     (ng.cuts || []).forEach(function (c) {
       if (!(c.path || []).length || !(c.path || []).every(function (g) { return g.t === 'NWI'; })) return;
       if ((c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
-      n += (c.veh || []).filter(function (v) { return v.dest !== 'NW-INT'; }).length;
+      n += (c.veh || []).filter(function (v) { return v.dest !== 'NW-INT'; }).map(tk).length;
     });
-    n += (ng.nwPend || []).filter(function (v) { return v.dest !== 'NW-INT'; }).length;
+    n += (ng.nwPend || []).filter(function (v) { return v.dest !== 'NW-INT'; }).map(tk).length;
     return n;
   }
   function countOutYard() {
-    return Object.values(st().veh).filter(function (v) { return isFreight(v) && v.dest === 'IC-INT' && onAnyYard(v) && !onPlayer(v); }).length;
+    return Object.values(st().veh).filter(function (v) { return isFreight(v) && v.dest === 'IC-INT' && onAnyYard(v) && !onPlayer(v); }).map(tk).length;
   }
   // Nov 17 (Stephen): a car the ICG left for us = on either ICG interchange track and not going back to the ICG
   function icInbound(v) { return !!(v.f && v.r && G.carWhere(v).icx && v.dest !== 'IC-INT' && !v.rent); }
   function countInICI() {
-    return Object.values(st().veh).filter(function (v) { return isFreight(v) && icInbound(v) && !onPlayer(v); }).length;
+    return Object.values(st().veh).filter(function (v) { return isFreight(v) && icInbound(v) && !onPlayer(v); }).map(tk).length;
   }
   function onEfYardCut(extra) {
     const c = extra && extra.cut;
@@ -2195,7 +2333,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         if (extra.town !== 'effingham' || !isFreight(v) || onPlayer(v) || !onEfYardCut(extra)) return;
         if (rule.dest && v.dest !== rule.dest) return;
         if (rule.carType && !matchType(v, rule.carType)) return;
-        n++;
+        n += tk(v);
       });
       return n;
     }
@@ -2204,7 +2342,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (rule.dest && v.dest !== rule.dest) return false;
       if (rule.carType && !matchType(v, rule.carType)) return false;
       return true;
-    }).length;
+    }).map(tk).length;
   }
   function countBuild(order) {
     let n = 0;
@@ -2228,6 +2366,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       engines: locos0[0] ? [locos0[0].id] : [],
       interchanges: [], industries: [], classify: [], buildTrack: defaultYardTrack(), buildOrder: [],
       stops: [], stopAct: 'setout', stopTrack: '', yardTab: 'classify', crewOpen: false,
+      rtLift: [], rtCars: {}, rtOver: {}, rtIxDest: {}, rtEng: '', rtFuel: false, rtFuelWhen: 'tie', // Nov 24 (mw59ef134): road train picks
       startAt: dutySlots()[0]
     };
   }
@@ -2254,7 +2393,11 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     work.push({ kind: 'industry', town: customerTown(id), customer: id, cars: n });
   }
   function draftToJob(d) {
+    const prevTK = TK; TK = []; try { return draftToJobT(d); } finally { TK = prevTK; }
+  }
+  function draftToJobT(d) {
     const work = [], skipped = [];
+    let rtb = null;
     if (d.type === 'yard') {
       pushIxWork(work, d);
       (d.classify || []).forEach(function (rule) {
@@ -2270,11 +2413,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       customersAllowedForJob(d).forEach(function (c) { allow[c.id] = true; });
       (d.industries || []).forEach(function (id) { if (allow[id] && !neogaCustLocked(id)) pushIndustry(work, skipped, id); });
       pushSortWork(work, d);
-    } else {
-      (d.stops || []).forEach(function (s) {
-        const town = (R().trackInfo(s.track) || {}).town;
-        work.push({ kind: s.act === 'pickup' ? 'pickup' : 'setout', track: s.track, town: town, cars: s.act === 'pickup' ? countOnTrack(s.track) : 0 });
-      });
+    } else { // Nov 24 (Stephen, mw59ef134): road train from Cassie's roadTrainPlan (tracks to lift in any town, engine tie-up)
+      if (!d.rtEng) d.rtEng = d.start + '|' + rtEngDefault(d.start);
+      rtb = rtBuild(d);
+      if (rtb.plan) rtb.plan.work.forEach(function (w) { work.push(w); });
     }
     const job = {
       type: d.type, symbol: (d.symbol || '').trim() || defaultSymbol(d),
@@ -2282,6 +2424,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       startAt: d.startAt != null ? +d.startAt : dutySlots()[0]
     };
     if (skipped.length) job.skipped = skipped;
+    if (d.type !== 'road') { job.carTons = sumCarTons(TK); job.carTonsN = TK.length; } // Nov 24 (mw59ef134): real tonnage for crewUse
+    if (rtb && rtb.plan) { job.tieUp = rtb.plan.tieUp || job.tieUp; job.rt = rtJobOf(d, rtb); job.rtMissing = (rtb.plan.missing || []).concat(rtb.plan.refused || []); }
+    else if (d.type === 'road') job.rtMissing = ['road train rules'];
     return job;
   }
 
@@ -2298,7 +2443,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       crewId: d.crewId || null, engines: (d.engines || []).slice(),
       interchanges: (d.interchanges || []).slice(), industries: (d.industries || []).slice(), ixSort: JSON.parse(JSON.stringify(d.ixSort || {})),
       classify: JSON.parse(JSON.stringify(d.classify || [])), buildTrack: d.buildTrack || '', buildOrder: (d.buildOrder || []).slice(),
-      stops: JSON.parse(JSON.stringify(d.stops || [])), yardTab: d.yardTab || 'classify', startTod: todOf(d.startAt), savedDay: G.dayNo()
+      stops: JSON.parse(JSON.stringify(d.stops || [])), yardTab: d.yardTab || 'classify', startTod: todOf(d.startAt), savedDay: G.dayNo(),
+      rtLift: (d.rtLift || []).slice(), rtCars: JSON.parse(JSON.stringify(d.rtCars || {})), rtOver: JSON.parse(JSON.stringify(d.rtOver || {})), rtIxDest: JSON.parse(JSON.stringify(d.rtIxDest || {})), rtEng: d.rtEng || '', rtFuel: !!d.rtFuel, rtFuelWhen: d.rtFuelWhen === 'before' ? 'before' : 'tie' // Nov 24 (mw59ef134)
     };
   }
   function saveDraftAs(name) {
@@ -2398,6 +2544,19 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const rt = roadTracks();
     d.stops = (Array.isArray(j.stops) ? j.stops : []).filter(function (x) { return x && rt.indexOf(x.track) >= 0; }).map(function (x) { return { act: x.act === 'pickup' ? 'pickup' : 'setout', track: x.track }; });
     if (d.stops.length < (j.stops || []).length) notes.push('Some road stops are not open yet');
+    { // Nov 24 (mw59ef134): road train picks. Towns not open are left off. Older saved road jobs: their pick-up stops become tracks to lift.
+      const openT = rtTowns(), okKey = function (k) { const p = rtParse(k); return !!(p && p !== 'sort' && openT.indexOf(p.town) >= 0 && rtKind(p.town, p.track)); };
+      let lifts = Array.isArray(j.rtLift) ? j.rtLift.slice() : (j.stops || []).filter(function (x) { return x && x.act === 'pickup'; }).map(function (x) { return ((R().trackInfo(x.track) || {}).town || 'mattoon') + '|' + x.track; });
+      const n0 = lifts.length; lifts = lifts.filter(function (k, i) { return lifts.indexOf(k) === i && okKey(k); });
+      if (lifts.length < n0) notes.push('Some tracks to pick up are not open yet');
+      d.rtLift = lifts; d.rtCars = {}; d.rtOver = {}; d.rtIxDest = {};
+      Object.keys(j.rtCars || {}).forEach(function (k) { if (lifts.indexOf(k) >= 0 && Array.isArray(j.rtCars[k])) d.rtCars[k] = j.rtCars[k].slice(); });
+      Object.keys(j.rtIxDest || {}).forEach(function (k) { const x = rtParse(j.rtIxDest[k]); if (lifts.indexOf(k) >= 0 && x && (x === 'sort' || openT.indexOf(x.town) >= 0)) d.rtIxDest[k] = j.rtIxDest[k]; });
+      Object.keys(j.rtOver || {}).forEach(function (k) { const x = rtParse(j.rtOver[k]); if (x && x !== 'sort' && openT.indexOf(x.town) >= 0) d.rtOver[k] = j.rtOver[k]; });
+      const e = rtParse(j.rtEng); if (e && e !== 'sort' && openT.indexOf(e.town) >= 0 && (RT_ENG_TRACKS[e.town] || []).indexOf(e.track) >= 0) { d.rtEng = j.rtEng; if (d.type === 'road') d.tieUp = e.town; }
+      else if (j.rtEng) notes.push('The saved engine tie-up is not open yet');
+      d.rtFuel = !!j.rtFuel; d.rtFuelWhen = j.rtFuelWhen === 'before' ? 'before' : 'tie';
+    }
     d.yardTab = j.yardTab || d.yardTab;
     // on-duty time: same time of day if it is still ahead today
     const slots = dutySlots();
@@ -2457,7 +2616,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return lab('Save this job', 'keeps this setup for next time') +
       '<div class="cs-addrow"><input type="text" class="cs-f cs-sjn" data-cs-field="sj-name" value="' + esc(val) + '" placeholder="Name it, e.g. Mattoon house run" maxlength="40" autocomplete="off">' +
       '<button class="cs-add" data-cs="sj-save">Save job</button></div>' +
-      '<p class="cs-hint">Saves the work type, towns, customers, interchanges, stops, crew, engines and on-duty time. Using a name already on the list updates that saved job.</p>';
+      '<p class="cs-hint">Saves the work type, towns, customers, interchanges, road-train tracks, set-out picks and engine tie-up, crew, engines and on-duty time. Using a name already on the list updates that saved job.</p>';
   }
 
   function ensure() {
@@ -2723,6 +2882,18 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .cs-sjb.alt{background:var(--alt);color:var(--ink)}#modal .csheet .cs-sjb.red{background:var(--red)}' +
     '#modal .csheet .cs-lnk{border:0;background:none;color:var(--muted);font-size:12px;text-decoration:underline;padding:0 2px;flex:none}' +
     '#modal .csheet .cs-addrow input.cs-sjn{height:40px;font:14px Arial,sans-serif;color:var(--ink);flex:1;min-width:0}' +
+    '#modal .csheet .rt-town{margin:12px 0 6px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--navy);border-bottom:1px solid var(--line);padding-bottom:3px}' +
+    '#modal .csheet .rt-tr{margin:0 0 10px 14px}#modal .csheet .rt-car{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 5px}' +
+    '#modal .csheet .rt-cl{display:flex;align-items:center;gap:6px;font-size:13px;flex:1 1 180px;min-width:0}#modal .csheet .rt-cl input{width:18px;height:18px;margin:0;accent-color:#1c2b50}#modal .csheet .rt-cl small{color:var(--muted);font-size:11px}' +
+    '#modal .csheet select.rt-sel{flex:1 1 200px;height:34px;font-size:12px}' +
+    '#modal .csheet .rt-stop{border:1px solid var(--line);border-radius:8px;padding:6px 8px;margin:0 0 6px;background:var(--cream);font-size:13px}#modal .csheet .rt-stop.rt-end{background:#eef1f7}' +
+    '#modal .csheet .rt-sh{display:flex;align-items:center;gap:8px}#modal .csheet .rt-sh small{color:var(--muted);font-size:12px}#modal .csheet .rt-lv{font-size:11px;color:var(--muted);margin:5px 0 3px}' +
+    '#modal .csheet .rt-train{display:flex;flex-wrap:wrap;gap:3px}#modal .csheet .rt-chip{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:5px;padding:2px 5px;background:#fff;font-size:11px;line-height:1.2;max-width:150px}' +
+    '#modal .csheet .rt-chip small{font-size:10px;color:var(--muted)}#modal .csheet .rt-chip.eng{background:var(--navy);color:#fff;border-color:var(--navy)}#modal .csheet .rt-chip.eng small{color:#cdd6ea}#modal .csheet .rt-chip.cab{background:#b5432a;color:#fff;border-color:#b5432a}#modal .csheet .rt-chip.cab small{color:#f6d2c8}#modal .csheet .rt-chip.lo{border-style:dashed}' +
+    '#modal .csheet .rt-tot{margin:6px 0}#modal .csheet .rt-tl span{font-size:12px}#modal .csheet .rt-tl.tot{border-top:1px solid var(--line);margin-top:3px;padding-top:3px;font-weight:700}' +
+    '#modal .csheet .rt-list{margin:8px 0 10px;border:1px solid var(--line);border-radius:8px;background:#fff;overflow:hidden}' +
+    '#modal .csheet .rt-li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:6px 8px;border-top:1px solid var(--line);font-size:13px}' +
+    '#modal .csheet .rt-li:first-child{border-top:0}#modal .csheet .rt-li small{color:var(--muted);font-size:12px}#modal .csheet .rt-li span{font-size:12px}' +
     '#modal .csheet .cs-empty{border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:14px;margin:0 0 8px}';
 
   function CSS() { return '<style id="csheet-css">' + CSS_TEXT + '</style>'; }
@@ -2826,6 +2997,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return h + '</div>';
   }
   function postBlocked(job, crew) {
+    if (job && (job.engines || []).some(function (id) { return engineBusy(id, job.startAt); })) return true; // Nov 24 (mw59ef134): engine out of service for fuel and sand
+    if (job && job.type === 'road' && (job.rtMissing || []).length) return true; // Nov 24 (mw59ef134): interchange destination / engine tie-up still to pick
     if (R().cabooseWarning(job, freeCabooses())) return true;
     return !!(crew && crewBlock(crew, job, null));
   }
@@ -2991,29 +3164,479 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     return h;
   }
+  // ================================================================ ROAD TRAIN (Nov 24, Stephen, mw59ef134)
+  // Road train call screen: the player ticks tracks to lift in ANY town (Mattoon, Neoga, Effingham), or single cars on them, and picks where the
+  // engines tie up. Cassie's NII_CREWS.roadTrainPlan (crews.js) decides where each car goes, the run order, the train after each stop, the work
+  // items for estimateJob and what is still missing (an interchange destination, the engine tie-up). This block lists the cars, draws the screen
+  // and the preview, and carries out the moves with the packed placement helpers (placeOnTrack / placeInYards, placeOnNgRA with the mw132
+  // runaround clearance, placeOnNwi, placeOnEfYard): no gaps, no fouling, nothing dropped.
+  // RULE LOGIC KEPT HERE FOR CASSIE TO REVIEW / MOVE INTO crews.js: rtHome (where a car belongs), rtLiftable + rtIsOurs (which cars a whole-track
+  // lift takes; our outbound cars on an interchange are the swap count), RT_ENG_TRACKS + rtEngDefault (engine tie-up tracks per town),
+  // rtExecute (order at each stop: set-outs, lifts, same-town set-outs; overflow rides on to the tie-up yard) and rtTieUpEngines.
+  function rtTowns() { const o = ['mattoon']; if (neogaOpen()) o.push('neoga'); if (effinghamOpen()) o.push('effingham'); return o; }
+  function rtTrackList(town) { // road-train tracks per town: [{ track, kind }]
+    if (town === 'mattoon') { const t = []; for (let n = 1; n <= ((G && G.NY) || 6); n++) t.push({ track: 'YARD ' + n, kind: 'yard' }); t.push({ track: 'IC Inbound', kind: 'interchange' }, { track: 'IC Outbound', kind: 'interchange' }); return t; }
+    if (town === 'neoga') { const t = [{ track: 'RA', kind: 'runaround' }]; if (neogaNwOpen()) t.unshift({ track: 'NWI', kind: 'interchange' }); return t; }
+    if (town === 'effingham') return [{ track: 'Y1', kind: 'yard' }, { track: 'Y2', kind: 'yard' }, { track: 'Y3', kind: 'yard' }, { track: 'Y4', kind: 'yard' }, { track: 'IX1', kind: 'interchange' }, { track: 'IX2', kind: 'interchange' }];
+    return [];
+  }
+  function rtKind(town, track) { const x = rtTrackList(town).filter(function (t) { return t.track === track; })[0]; return x ? x.kind : null; }
+  function rtIxCode(track) { return /^IC /.test(track || '') ? 'IC-INT' : track === 'NWI' ? 'NW-INT' : /^IX/.test(track || '') ? 'PC-INT' : null; }
+  const RT_ENG_NAMES = { ENGINE: 'Engine track', FESTALL1: 'Engine facility stall 1', FESTALL2: 'Engine facility stall 2', CB: 'Caboose track' };
+  function rtTrackName(town, track) { if (RT_ENG_NAMES[track]) return RT_ENG_NAMES[track]; if (town === 'effingham' && /^IX[12]$/.test(track || '')) return 'PC Interchange ' + track.slice(2); return trackLabel(track); }
+  function rtPlaceName(town, track) { return townName(town) + ' ' + (track ? rtTrackName(town, track) : 'yard'); }
+  function rtParse(s) { if (!s) return null; if (s === 'sort') return 'sort'; const i = s.indexOf('|'); if (i < 0) return null; return { town: s.slice(0, i), track: s.slice(i + 1) || null }; }
+  function rtLivePack(town) { if (typeof window === 'undefined') return null; const p = town === 'neoga' ? window.__neoga : town === 'effingham' ? window.__effingham : null; return p && p.S ? p : null; }
+  function rtCutsOf(town) { const p = rtLivePack(town), S = (p && p.S) || envTown(town); return (S && S.cuts) || []; }
+  function rtOnTrack(g, track) { return !!g && (g.t === track || (/^IX[12]$/.test(track) && String(g.t || '').indexOf(track) === 0)); }
+  function rtCarsOn(town, track) { // freight standing on a track in any town (not the player's train, not cars a crew is working)
+    const out = [];
+    if (town === 'mattoon') {
+      try { Object.values(st().veh || {}).forEach(function (v) { if (isFreight(v) && !onPlayer(v) && !v.work && !v.rent && atTrack(v, track)) out.push(v); }); } catch (e) { }
+      return out;
+    }
+    rtCutsOf(town).forEach(function (c) {
+      if (!(c.path || []).length || !c.path.every(function (g) { return rtOnTrack(g, track); })) return;
+      if ((c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
+      (c.veh || []).forEach(function (v) { if (isFreight(v) && !v.work && !v.rent) out.push(v); });
+    });
+    return out;
+  }
+  // RULE: where a car belongs. Neoga customer cars -> Neoga runaround; N&W-routed -> Neoga N&W Interchange; Effingham / PC cars (and Effingham cars
+  // held elsewhere) -> Effingham yard; ICG-routed and Mattoon customer cars -> Mattoon yard. No destination (or a town not open yet) -> null (rides to tie-up).
+  function rtHome(v) {
+    const d = (v && v.dest) || ''; let h = null;
+    if (/^NG /.test(d)) h = { town: 'neoga', track: 'RA' };
+    else if (d === 'NW-INT') h = { town: 'neoga', track: 'NWI' };
+    else if (/^EF /.test(d) || d === 'PC-INT' || (v && v.efHold)) h = { town: 'effingham', track: null };
+    else if (d && d !== 'RA') h = { town: 'mattoon', track: null };
+    if (h && h.town === 'neoga' && h.track === 'NWI' && !neogaNwOpen()) h = null;
+    return h && townIsOpen(h.town) ? h : null;
+  }
+  // RULE: our own outbound cars standing on an interchange (routed out by that railroad): the road train leaves them; they are the swap count.
+  function rtIsOurs(v, track) { const c = rtIxCode(track); return !!(c && v && v.dest === c); }
+  // RULE: a whole-track lift. Interchange: every car the other railroad left us. Yard / runaround: only cars that belong in another town.
+  function rtLiftable(v, town, track, kind) {
+    if (kind === 'interchange') return !rtIsOurs(v, track);
+    const h = rtHome(v); return !!(h && h.town !== town);
+  }
+  function rtId(town, v) { return town + ':' + v.id; }
+  function rtDestName(d) { if (!d) return 'no waybill'; if (d === 'IC-INT') return 'ICG'; if (d === 'NW-INT') return 'N&W'; if (d === 'PC-INT') return 'PC'; return custName(d); }
+  function rtCarName(v) { try { return nameOf(v); } catch (e) { return (v.road || 'NII') + ' ' + v.num; } }
+  // Engine tie-up tracks. Mattoon: engine track or a yard track. Effingham: engine facility stalls, caboose track or a yard track. Neoga has no
+  // engine track: the runaround (kept clear of the main at both ends, mw132 rule).
+  const RT_ENG_TRACKS = { mattoon: ['ENGINE', 'YARD 1', 'YARD 2', 'YARD 3', 'YARD 4', 'YARD 5', 'YARD 6'], effingham: ['FESTALL1', 'FESTALL2', 'CB', 'Y1', 'Y2', 'Y3', 'Y4'], neoga: ['RA'] };
+  function rtEngDefault(town) { return (RT_ENG_TRACKS[town] || [])[0] || null; }
+  function rtEngPick(d) { const p = rtParse(d.rtEng); if (p && p !== 'sort' && rtTowns().indexOf(p.town) >= 0 && (RT_ENG_TRACKS[p.town] || []).indexOf(p.track) >= 0) return p; return null; }
+  function rtDestOpts() { // set-out choices for overrides and interchange destinations: [value, label]
+    const o = [];
+    rtTowns().forEach(function (town) {
+      if (town === 'mattoon') { o.push(['mattoon|', 'Mattoon yard (roomiest track)']); rtTrackList('mattoon').forEach(function (t) { o.push(['mattoon|' + t.track, 'Mattoon ' + rtTrackName('mattoon', t.track)]); }); }
+      if (town === 'neoga') { o.push(['neoga|RA', 'Neoga Runaround']); if (neogaNwOpen()) o.push(['neoga|NWI', 'Neoga N&W Interchange']); }
+      if (town === 'effingham') { o.push(['effingham|', 'Effingham yard (roomiest track)']); ['Y1', 'Y2', 'Y3', 'Y4'].forEach(function (t) { o.push(['effingham|' + t, 'Effingham ' + trackLabel(t)]); }); }
+    });
+    return o;
+  }
+  // Everything the screen and the plan need, from the draft. b.plan is Cassie's roadTrainPlan result.
+  function rtBuild(d) {
+    const C = R(), cars = [], byId = {}, lift = [], info = {}, ourAt = {}, ixDest = {}, over = {};
+    const picked = d.rtLift || [];
+    rtTowns().forEach(function (town) {
+      rtTrackList(town).forEach(function (t) {
+        const key = town + '|' + t.track, all = rtCarsOn(town, t.track), ids = [], on = picked.indexOf(key) >= 0;
+        let ours = 0;
+        all.forEach(function (v) {
+          if (t.kind === 'interchange' && rtIsOurs(v, t.track)) { ours++; return; }
+          if (!rtLiftable(v, town, t.track, t.kind)) return;
+          const id = rtId(town, v);
+          byId[id] = { id: id, vid: v.id, v: v, town: town, track: t.track, dest: v.dest, relT: v.relT, day: v.relDay != null ? v.relDay : v.inDay, home: rtHome(v) };
+          ids.push(id);
+        });
+        const pick = d.rtCars && d.rtCars[key];
+        const use = Array.isArray(pick) ? ids.filter(function (id) { return pick.indexOf(id) >= 0; }) : ids.slice();
+        info[key] = { town: town, track: t.track, kind: t.kind, total: all.length, ids: ids, use: use, ours: ours, on: on };
+        if (!on) return;
+        ourAt[t.track] = ours;
+        use.forEach(function (id) { cars.push(byId[id]); });
+        if (use.length) lift.push({ town: town, track: t.track, kind: t.kind, carIds: use.slice() });
+        if (t.kind === 'interchange') { const x = rtParse((d.rtIxDest || {})[key]); if (x) ixDest[t.track] = x === 'sort' ? 'sort' : { town: x.town, track: x.track }; }
+      });
+    });
+    Object.keys(d.rtOver || {}).forEach(function (id) { const x = rtParse(d.rtOver[id]); if (x && x !== 'sort' && byId[id]) over[id] = { town: x.town, track: x.track }; });
+    const eng = rtEngPick(d);
+    let plan = null;
+    if (C && C.roadTrainPlan) plan = C.roadTrainPlan(cars, {
+      start: d.start, tieUp: (eng && eng.town) || d.tieUp, lift: lift, engineTieUp: eng ? { town: eng.town, track: eng.track } : null,
+      engineTrackFor: function (town) { return rtEngDefault(town); },
+      home: function (c) { return c.home; }, override: over, interchangeDest: ixDest, ourCarsAt: function (t) { return ourAt[t] || 0; }
+    });
+    return { plan: plan, cars: byId, info: info, eng: eng };
+  }
+  function rtJobOf(d, b) { // what a posted call keeps (JSON-safe): plan stops, where each car goes, car ids per town
+    const p = b.plan, cars = {};
+    Object.keys(p.goes || {}).forEach(function (id) { const c = b.cars[id]; if (c) cars[id] = { vid: c.vid, town: c.town, track: c.track, num: c.v.num, road: c.v.road || null, L: carLenOf(c.v) }; });
+    const maxTons = (p.stops || []).reduce(function (m, s2) { return Math.max(m, (s2.trainAfter || []).reduce(function (a, id) { const c = b.cars[id]; return a + (c ? rtUnitTons(c.v) : 0); }, 0)); }, 0);
+    return { v: 1, maxTons: Math.round(maxTons), fuel: d.rtFuel ? (d.rtFuelWhen === 'before' ? 'before' : 'tie') : null, path: (p.path || []).slice(), goes: JSON.parse(JSON.stringify(p.goes || {})), stops: JSON.parse(JSON.stringify(p.stops || [])), cars: cars, engineTieUp: p.engineTieUp ? { town: p.engineTieUp.town, track: p.engineTieUp.track } : null };
+  }
+
+  // ---- carrying out the run (Mattoon context: a road run finished elsewhere waits for Mattoon, like every road run since Nov 15)
+  function rtTake(town, track, vids) { // lifts these cars off a track; returns { vid: detached vehicle }
+    const want = {}, out = {}; (vids || []).forEach(function (id) { want[id] = 1; });
+    if (town === 'mattoon') {
+      vids.forEach(function (id) { const v = st().veh[id]; if (!v || !isFreight(v) || onPlayer(v) || v.work || !atTrack(v, track)) return; const o = cloneVeh(v); takeIds([id]); delete st().veh[id]; if (o) out[id] = o; });
+      return out;
+    }
+    const pack = rtLivePack(town), S = (pack && pack.S) || envTown(town); if (!S) return out;
+    const cuts = S.cuts || []; if (S.nid == null) S.nid = 1;
+    cuts.slice().forEach(function (c) { // a cut is split around the lifted cars; the cars left keep their places (same as takeFromRA)
+      if (!(c.path || []).length || !c.path.every(function (g) { return rtOnTrack(g, track); }) || (c.veh || []).some(function (v) { return v.type === 'gp9'; })) return;
+      const take = (c.veh || []).map(function (v) { return !!(v && want[v.id] && isFreight(v) && !v.work); }); if (!take.some(Boolean)) return;
+      const i = cuts.indexOf(c); if (i < 0) return;
+      const g = c.path[0], one = c.path.length === 1, parts = []; let s = 0, run = null;
+      c.veh.forEach(function (v, k) { const L = carLenOf(v);
+        if (take[k]) { const o = cloneVeh(v); if (o) out[v.id] = o; run = null; }
+        else { if (!run) { run = { veh: [], aT: [], s0: s, s1: s }; parts.push(run); } run.veh.push(v); run.aT.push(c.aT ? c.aT[k] : true); run.s1 = s + L; }
+        s += L; });
+      const keep = parts.map(function (p, j) { const path = one ? [{ t: g.t, dir: g.dir, d0: g.d0 + g.dir * p.s0, d1: g.d0 + g.dir * p.s1 }] : c.path; return { id: j ? 'c' + (S.nid++) : c.id, veh: p.veh, aT: p.aT, path: path }; });
+      cuts.splice.apply(cuts, [i, 1].concat(keep));
+    });
+    S.cuts = cuts; const env = envTown(town); if (env && env !== S) env.cuts = cuts;
+    try { if (pack && pack.save) pack.save(); } catch (e) { }
+    return out;
+  }
+  function rtSetOut(town, track, vehs) { // packed, coupled set-out; returns { n, left: vehicles that did not fit, queued, notes }
+    vehs = (vehs || []).filter(Boolean); const res = { n: 0, left: [], queued: false, notes: [] };
+    if (!vehs.length) return res;
+    if (town === 'mattoon') {
+      if (hereTown() !== 'mattoon' || visiting()) { res.left = vehs; return res; }
+      const ids = vehs.map(function (v) { return importCar(v); }).filter(Boolean);
+      const r = track ? placeOnTrack(ids, track) : placeInYards(ids);
+      let placed = r.placed.length, left = r.left.slice();
+      if (left.length && (!track || /^YARD \d+$/.test(track))) { const q = placeInYards(left); placed += q.placed.length; left = q.left.slice(); }
+      res.n = placed;
+      res.left = left.map(function (id) { const o = cloneVeh(st().veh[id]); takeIds([id]); delete st().veh[id]; return o; }).filter(Boolean);
+      return res;
+    }
+    if (town === 'neoga') {
+      vehs.forEach(function (v) { if (/^NG /.test(v.dest || '')) { delete v.ngHold; delete v.efHold; v.ngPicked = true; } });
+      const r = track === 'NWI' ? placeOnNwi(vehs) : placeOnNgRA(vehs); // runaround: clear of the main at both ends (mw132)
+      res.n = r.placed.length; res.left = r.left.slice(); return res;
+    }
+    if (town === 'effingham') {
+      vehs.forEach(function (v) { delete v.efHold; delete v.ngHold; });
+      const EF = rtLivePack('effingham'), live = !!(EF && EF.efPlaceYardCars && EF.T);
+      if (!live && track) vehs.forEach(function (v) { v.sortTo = track; }); // Effingham places them (packed) on its next load, on this track
+      const r = placeOnEfYard(vehs, false, live && track ? [track] : undefined);
+      if (r.queued) { res.n = vehs.length; res.queued = true; return res; }
+      let left = r.left.slice(); res.n = r.placed.length;
+      if (left.length && track) { const q = placeOnEfYard(left, false); res.n += q.placed.length; left = q.left.slice(); }
+      if (left.length) { res.notes = efOverflow(left); res.n += left.length; } // Effingham yard full: runaround, Mattoon yard, N&W (never dropped)
+      return res;
+    }
+    res.left = vehs; return res;
+  }
+  function rtPl(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+  function rtExecute(job, day) {
+    const rt = job.rt || {}, goes = rt.goes || {}, cars = rt.cars || {}, notes = [], stops = rt.stops || [];
+    let train = []; // [{ id, v }]
+    function drop(stop, ids) {
+      const groups = {}, order = [];
+      ids.forEach(function (id) { const e = train.filter(function (x) { return x.id === id; })[0]; if (!e) return; const g = goes[id] || {}; const town = g.leftover ? job.tieUp : g.town; if (town !== stop.town) return;
+        const k = g.leftover ? '' : (g.track || ''); if (!groups[k]) { groups[k] = []; order.push(k); } groups[k].push(e); });
+      order.forEach(function (k) {
+        const es = groups[k], r = rtSetOut(stop.town, k || null, es.map(function (e) { return e.v; }));
+        train = train.filter(function (x) { return es.indexOf(x) < 0; });
+        r.left.forEach(function (v, j) { train.push({ id: 'over:' + stop.town + ':' + (v.id || j), v: v, over: true }); });
+        if (r.n) notes.push('set out ' + rtPl(r.n, 'car') + ' on the ' + rtPlaceName(stop.town, k || null) + (r.queued ? ' (they are there when you are next in ' + townName(stop.town) + ')' : ''));
+        if (r.left.length) notes.push('no room on the ' + rtPlaceName(stop.town, k || null) + ' for ' + rtPl(r.left.length, 'car') + '; they ride on to the tie-up');
+        notes.push.apply(notes, r.notes || []);
+      });
+    }
+    stops.forEach(function (stop) {
+      drop(stop, [].concat.apply([], (stop.setouts || []).filter(function (s) { return !s.sameTown; }).map(function (s) { return s.carIds || []; })));
+      (stop.lifts || []).forEach(function (L) {
+        const vids = (L.carIds || []).map(function (id) { return cars[id] && cars[id].vid; }).filter(Boolean);
+        const got = rtTake(stop.town, L.track, vids); let n = 0;
+        (L.carIds || []).forEach(function (id) { const c = cars[id], v = c && got[c.vid]; if (v) { train.push({ id: id, v: v }); n++; } });
+        notes.push('picked up ' + rtPl(n, 'car') + ' from the ' + rtPlaceName(stop.town, L.track) + (n < (L.carIds || []).length ? ' (' + ((L.carIds || []).length - n) + ' had already gone)' : ''));
+      });
+      (stop.extra || []).forEach(function (x) {
+        if (x.kind === 'swap') notes.push('swapped cuts on the ' + rtPlaceName(stop.town, x.track) + ': your ' + rtPl(x.cars, 'outbound car') + ' stay' + (x.cars === 1 ? 's' : '') + ' for the other railroad');
+        if (x.kind === 'sortCut') notes.push('sorted the ' + rtPl(x.cars, 'car') + ' cut on the ' + rtPlaceName(stop.town, x.track) + ' into ' + rtPl(x.groups, 'block'));
+      });
+      drop(stop, [].concat.apply([], (stop.setouts || []).filter(function (s) { return s.sameTown; }).map(function (s) { return s.carIds || []; })));
+    });
+    if (train.length) { // overflow (or cars with no home) still on the train: the tie-up town's yard, never dropped
+      const r = rtSetOut(job.tieUp, null, train.map(function (e) { return e.v; }));
+      if (r.n) notes.push('set out ' + rtPl(r.n, 'car') + ' still on the train in the ' + rtPlaceName(job.tieUp, null));
+      notes.push.apply(notes, r.notes || []);
+      if (r.left.length) { if (job.tieUp === 'mattoon') r.left.forEach(function (v) { importCar(v); }); else { const q = placeOnNgRA(r.left); if (q.left.length) placeOnNwi(q.left); } notes.push(rtPl(r.left.length, 'car') + ' had no room anywhere at ' + townName(job.tieUp) + '; held for the player'); }
+    }
+    notes.push.apply(notes, rtTieUpEngines(job));
+    try { if (G.reindex) G.reindex(); } catch (e) { }
+    try { const N = rtLivePack('neoga'); if (N && N.save) N.save(); } catch (e) { }
+    try { if (G.save) G.save(); } catch (e) { }
+    return notes;
+  }
+  // ---- engine tie-up: the call's engines (and its caboose) end the run coupled together on the picked track, inside its clearance points
+  const RT_TIE_CLR = { FESTALL1: [20, 4, 400.65], FESTALL2: [20, 4, 110], CB: [6, 4, 130], Y1: [30, 30, 2666.34], Y2: [30, 30, 2378.34], Y3: [30, 30, 2090.34], Y4: [30, 30, 1802.34] }; // Effingham [low clear, high clear, length if not loaded]
+  function rtFindUnit(id) { // where a unit is now: { town, v, cut? }
+    try { const v = st().veh[id]; if (v) return { town: 'mattoon', v: v }; } catch (e) { }
+    let hit = null;
+    ['neoga', 'effingham'].forEach(function (town) { if (hit) return; rtCutsOf(town).forEach(function (c) { (c.veh || []).forEach(function (v) { if (!hit && v && v.id === id) hit = { town: town, v: v, cut: c }; }); }); });
+    return hit;
+  }
+  function rtUnitTrack(u) { if (!u) return null; if (u.town === 'mattoon') { try { const w = G.carWhere(u.v); if (u.v.f && u.v.f.s === G.SI.ENG) return 'ENGINE'; for (let n = 1; n <= (G.NY || 6); n++) if (w.yard(n)) return 'YARD ' + n; } catch (e) { } return null; } const g = u.cut && u.cut.path && u.cut.path[0]; return g && u.cut.path.every(function (x) { return x.t === g.t; }) ? g.t : null; }
+  function rtLift(u) { // takes a unit off its town; returns a detached copy
+    const o = cloneVeh(u.v);
+    if (u.town === 'mattoon') { takeIds([u.v.id]); delete st().veh[u.v.id]; return o; }
+    const pack = rtLivePack(u.town), S = (pack && pack.S) || envTown(u.town), c = u.cut;
+    const k = c.veh.indexOf(u.v);
+    if (c.veh.length === 1) S.cuts.splice(S.cuts.indexOf(c), 1);
+    else { c.veh.splice(k, 1); if (c.aT) c.aT.splice(k, 1); const g = c.path[0]; if (c.path.length === 1) { const L = carLenOf(u.v); if (g.dir === 1) g.d1 -= L; else g.d0 += L; } } // rare: a unit coupled to other cars
+    const env = envTown(u.town); if (env && env !== S) env.cuts = S.cuts;
+    return o;
+  }
+  function rtDataPlace(town, t, vehs, lo, hi, len) { // one coupled cut, as high on the track as it fits, 2 ft clear of anything there
+    const pack = rtLivePack(town), S = (pack && pack.S) || envTown(town); if (!S) return false;
+    S.cuts = S.cuts || []; if (S.nid == null) S.nid = 1;
+    const L = vehs.reduce(function (a, v) { return a + carLenOf(v); }, 0), occ = [];
+    S.cuts.forEach(function (c) { (c.path || []).forEach(function (g) { if (g.t === t) occ.push({ lo: Math.min(g.d0, g.d1), hi: Math.max(g.d0, g.d1) }); }); });
+    const maxHead = len - hi, cands = [maxHead].concat(occ.map(function (o) { return o.lo - 2; })).sort(function (a, b) { return b - a; });
+    for (let k = 0; k < cands.length; k++) { const d = cands[k]; if (d > maxHead + 1e-9 || d - L < lo - 1e-9) continue;
+      if (occ.some(function (o) { return !(d + 2 <= o.lo + 1e-6 || o.hi + 2 <= d - L + 1e-6); })) continue;
+      S.cuts.push({ id: 'c' + (S.nid++), veh: vehs, aT: vehs.map(function () { return true; }), path: [{ t: t, d0: d - L, d1: d, dir: 1 }] });
+      const env = envTown(town); if (env && env !== S) env.cuts = S.cuts;
+      try { if (pack && pack.save) pack.save(); } catch (e) { }
+      return true; }
+    return false;
+  }
+  function rtPlaceUnits(town, track, vehs) { // engines / caboose: not coupled to standing cars
+    if (!vehs.length) return true;
+    if (town === 'mattoon') {
+      if (hereTown() !== 'mattoon' || visiting()) return false;
+      const tgt = trackSeg(track); if (!tgt) return false;
+      const need = vehs.reduce(function (a, v) { return a + carLenOf(v) + 0.5; }, 0), ids = vehs.map(function (v) { return importCar(v); }).filter(Boolean);
+      const info = roomTop(tgt, ids);
+      if (info.room < need) { ids.forEach(function (id) { delete st().veh[id]; }); return false; }
+      G.place(ids, { s: tgt.s, d: info.top, dir: 1 }, ids.map(function () { return true; }));
+      return true;
+    }
+    if (town === 'neoga') { const N = rtLivePack('neoga'), len = (N && N.T && N.T.RA && N.T.RA.len) || RA_LEN; return rtDataPlace('neoga', 'RA', vehs, RA_CLR, RA_CLR, len); }
+    if (town === 'effingham') { const E = rtLivePack('effingham'), c = RT_TIE_CLR[track]; if (!c) return false; const len = (E && E.T && E.T[track] && E.T[track].len) || c[2]; return rtDataPlace('effingham', track, vehs, c[0], c[1], len); }
+    return false;
+  }
+  function rtTieUpEngines(job) {
+    const et = job.rt && job.rt.engineTieUp, notes = []; if (!et || !et.track) return notes;
+    const mine = playerEngineId();
+    const engs = (job.engines || []).filter(function (id) { return id && id !== mine; }).map(rtFindUnit).filter(function (u) { return u && !(u.town === 'mattoon' && onPlayer(u.v)); });
+    const cab = job.caboose ? rtFindUnit(job.caboose) : null;
+    const cabOk = cab && !(cab.town === 'mattoon' && onPlayer(cab.v));
+    const here = function (u, t) { return u.town === et.town && rtUnitTrack(u) === t; };
+    const moveE = engs.filter(function (u) { return !here(u, et.track); });
+    // caboose: with the engines, except Mattoon's engine track (no caboose track there: the roomiest yard track) and Effingham's stalls (the caboose track)
+    const cabTracks = et.town === 'effingham' && /^FESTALL/.test(et.track) ? ['CB', 'Y1', 'Y2', 'Y3', 'Y4'] : et.town === 'mattoon' && et.track === 'ENGINE' ? ['YARD 1', 'YARD 2', 'YARD 3', 'YARD 4', 'YARD 5', 'YARD 6'] : [et.track];
+    const moveC = cabOk && !cabTracks.some(function (t) { return here(cab, t); }) ? cab : null;
+    const fall = (RT_ENG_TRACKS[et.town] || []).filter(function (t) { return t !== et.track; });
+    if (moveE.length) {
+      const vs = moveE.map(rtLift); let at = null;
+      [et.track].concat(fall).some(function (t) { if (rtPlaceUnits(et.town, t, vs)) { at = t; return true; } return false; });
+      if (at) notes.push('tied up ' + vs.map(function (v) { return 'NI&I ' + v.num; }).join(' and ') + ' on the ' + rtPlaceName(et.town, at) + (at !== et.track ? ' (no room on the ' + rtTrackName(et.town, et.track) + ')' : ''));
+      else { moveE.forEach(function (u, i) { rtPutBack(u, vs[i]); }); notes.push('no room to tie up the engines at ' + townName(et.town) + '; they stay where they were'); }
+    }
+    if (moveC) {
+      const v = rtLift(moveC); let at = null;
+      (et.town === 'mattoon' && et.track === 'ENGINE' ? cabTracks.slice().sort(function (a, b) { return yardFree(b) - yardFree(a); }) : cabTracks.concat(fall)).some(function (t) { if (rtPlaceUnits(et.town, t, [v])) { at = t; return true; } return false; });
+      if (at) notes.push('left caboose NI&I ' + v.num + ' on the ' + rtPlaceName(et.town, at));
+      else { rtPutBack(moveC, v); notes.push('no room for the caboose at ' + townName(et.town) + '; it stays where it was'); }
+    }
+    return notes;
+  }
+  function rtPutBack(u, v) { // a unit that found no room goes back where it was
+    if (u.town === 'mattoon') { const id = importCar(v); const t = rtUnitTrack(u) || 'YARD 1'; if (id && !rtPlaceUnits('mattoon', /^YARD/.test(t) ? t : 'ENGINE', [st().veh[id]])) { try { placeInYards([id]); } catch (e) { } } return; }
+    const pack = rtLivePack(u.town), S = (pack && pack.S) || envTown(u.town); if (S && u.cut && S.cuts.indexOf(u.cut) < 0) S.cuts.push({ id: u.cut.id, veh: [v], aT: [true], path: JSON.parse(JSON.stringify(u.cut.path)) });
+  }
+
+  // ---- the screen
+  function rtFree(town, track) { // free length (ft) a set-out can use, or null if it can't be told from here
+    try {
+      if (town === 'mattoon') { if (hereTown() !== 'mattoon') return null; if (track) return yardFree(track); let s = 0; for (let n = 1; n <= (G.NY || 6); n++) s += Math.max(0, yardFree('YARD ' + n)); return s; }
+      const used = function (t) { let L = 0; rtCutsOf(town).forEach(function (c) { (c.path || []).forEach(function (g) { if (rtOnTrack(g, t)) L += Math.abs(g.d1 - g.d0); }); }); return L; };
+      if (town === 'neoga') { if (track === 'NWI') { const len = nwiLen(); return len - (len > 600 ? 172 : 6) - 6 - used('NWI'); } const N = rtLivePack('neoga'), len = (N && N.T && N.T.RA && N.T.RA.len) || RA_LEN; return len - 2 * RA_CLR - used('RA'); }
+      if (town === 'effingham') { const E = rtLivePack('effingham'); let s = 0; (track ? [track] : ['Y1', 'Y2', 'Y3', 'Y4']).forEach(function (t) { const c = RT_TIE_CLR[t], len = (E && E.T && E.T[t] && E.T[t].len) || (c && c[2]) || 0; s += Math.max(0, len - 24 - used(t)); }); return s; }
+    } catch (e) { }
+    return null;
+  }
+  function rtTimeLines(job, crew) { // [label, hours] lines that add up to the estimate (each part x the crew's experience factor, + road time)
+    const C = R(), est = C.estimateJob(job, crew || null, { yardJobRan: true }), exp = C.expTimeFactor(crew && crew.hoursWorked), S = C.SWITCH || {};
+    let mv = 0, nMv = 0; const lines = [];
+    (job.work || []).forEach(function (w, i) { const h = (((est.parts || [])[i] || {}).hours || 0) * exp;
+      if (w.kind === 'swap') lines.push(['Swap cuts on the ' + rtPlaceName(w.town, w.track) + ' (your ' + rtPl(w.cars, 'outbound car') + ' stay' + (w.cars === 1 ? 's' : '') + ' put)', h]);
+      else if (w.kind === 'sortCut') lines.push(['Sort to proper yards at the ' + rtPlaceName(w.town, w.track) + ': ' + w.cars + ' cars × ' + S.classifyPerCar + ' min + ' + w.groups + ' block' + (w.groups === 1 ? '' : 's') + ' × ' + S.sortPerGroup + ' min + ' + S.classifyBase + ' min', h]);
+      else { mv += h; nMv++; } });
+    lines.unshift(['Pick-ups and set-outs (' + rtPl(nMv, 'move') + ')', mv]);
+    lines.push(['Road time (' + routeText(job) + ', ' + Math.round(C.roadHours(job) * C.MAIN_MPH * 10) / 10 + ' mi; covers the run to each town)', est.roadHours]);
+    return { lines: lines, est: est };
+  }
+  function rtChip(cls, top, sub) { return '<span class="rt-chip' + (cls ? ' ' + cls : '') + '"><b>' + esc(top) + '</b>' + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</span>'; }
+  function rtUsualTrack(town) { return town === 'neoga' ? 'RA' : town === 'effingham' ? 'Y1' : 'YARD 1'; } // Nov 24 (mw59ef135): the usual yard track in each town
+  function rtTypeName(v) { try { const T = (G && G.TYPES && G.TYPES[v && v.type]) || {}; if (T.name) return T.name; } catch (e) { } const t = String((v && v.type) || 'car'); if (/^boxcar/.test(t)) return t.indexOf('40') >= 0 ? '40 ft boxcar' : '50 ft boxcar'; if (t === 'tank_lpg') return 'LPG tank'; if (t === 'tank') return 'tank car'; if (/^hopper/.test(t)) return 'covered hopper'; if (t === 'gondola') return 'gondola'; return t.replace(/_/g, ' '); }
+  function rtIxUsual(d, cars) { // one destination for a pulled interchange cut: the shared home town's usual track, else the starting town's
+    const hs = (cars || []).map(function (v) { return rtHome(v); }).filter(function (h) { return h && h.town; });
+    const t0 = hs.length && hs.every(function (h) { return h.town === hs[0].town; }) ? hs[0].town : (d.start || 'mattoon');
+    const sameT = hs.length && hs.every(function (h) { return h.town === t0 && h.track && h.track === hs[0].track; });
+    return t0 + '|' + (sameT ? hs[0].track : rtUsualTrack(t0));
+  }
+  function rtPrefill(d) { // Nov 24 (Stephen, mw59ef135): a new road job starts with the usual picks already filled in; a saved job is left as saved
+    if (!d || (d.rtLift && d.rtLift.length) || d.rtEng) return;
+    d.rtEng = d.start + '|' + rtEngDefault(d.start); d.tieUp = d.start; d.rtFuel = true; d.rtFuelWhen = d.rtFuelWhen || 'tie';
+    d.rtLift = []; d.rtIxDest = d.rtIxDest || {};
+    rtTowns().forEach(function (town) {
+      rtTrackList(town).forEach(function (t) {
+        const cars = rtCarsOn(town, t.track).filter(function (v) { return rtLiftable(v, town, t.track, t.kind); });
+        if (!cars.length) return;
+        const key = town + '|' + t.track; d.rtLift.push(key);
+        if (t.kind === 'interchange' && !d.rtIxDest[key]) d.rtIxDest[key] = rtIxUsual(d, cars);
+      });
+    });
+  }
+  function rtPreviewHtml(d, b, job) {
+    const p = b.plan, C = R(); let h = lab('Train preview', 'before you call');
+    if (!p) return h;
+    const goes = p.goes || {}, ids = Object.keys(goes);
+    h += '<p class="cs-hint">Route: ' + esc((p.path || []).map(townName).join(' → ')) + '</p>';
+    let maxCars = 0, maxLen = 0;
+    (p.stops || []).forEach(function (s, i) {
+      const bits = [];
+      (s.setouts || []).forEach(function (o) { const by = {}; (o.carIds || []).forEach(function (id) { const g = goes[id] || {}; const k = g.leftover ? rtPlaceName(p.tieUp, null) : rtPlaceName(g.town || s.town, g.track || o.track); by[k] = (by[k] || 0) + 1; }); Object.keys(by).forEach(function (k) { bits.push('Set out ' + rtPl(by[k], 'car') + ' on the ' + k); }); });
+      (s.lifts || []).forEach(function (L) { bits.push('Pick up ' + rtPl((L.carIds || []).length, 'car') + ' from the ' + rtPlaceName(s.town, L.track)); });
+      (s.extra || []).forEach(function (x) { if (x.kind === 'swap') bits.push('Swap cuts: your ' + rtPl(x.cars, 'outbound car') + ' stay' + (x.cars === 1 ? 's' : '') + ' on the ' + rtPlaceName(s.town, x.track)); if (x.kind === 'sortCut') bits.push('Sort the ' + x.cars + '-car cut on the spot into ' + rtPl(x.groups, 'block')); });
+      if (!bits.length) bits.push(i === 0 ? 'On duty' : 'Runs through');
+      const tr = s.trainAfter || [], len = tr.reduce(function (a, id) { const c = b.cars[id]; return a + (c ? carLenOf(c.v) : 0); }, 0);
+      maxCars = Math.max(maxCars, tr.length); maxLen = Math.max(maxLen, len);
+      h += '<div class="rt-stop"><div class="rt-sh"><span class="cs-num">' + (i + 1) + '</span><b>' + esc(townName(s.town)) + '</b><small>' + esc(bits.join(' · ')) + '</small></div></div>';
+    });
+    const order = ids.slice().sort(function (idA, idB) {
+      const ca = b.cars[idA], cb2 = b.cars[idB], ia = rtTowns().indexOf(ca && ca.town), ib = rtTowns().indexOf(cb2 && cb2.town);
+      if (ia !== ib) return ia - ib;
+      const ta = (ca && ca.track) || '', tb = (cb2 && cb2.track) || ''; if (ta !== tb) return ta < tb ? -1 : 1;
+      return rtCarName(ca && ca.v).localeCompare(rtCarName(cb2 && cb2.v));
+    });
+    h += '<div class="rt-list">';
+    if (!order.length) h += '<p class="cs-hint">No cars on this train yet. Tick the tracks to pick up if the usual list is empty.</p>';
+    else order.forEach(function (id) {
+      const c = b.cars[id], g = goes[id] || {}; if (!c) return;
+      const to = g.leftover ? rtPlaceName(p.tieUp, null) + ' (no home)' : rtPlaceName(g.town, g.track);
+      h += '<div class="rt-li"><b>' + esc(rtCarName(c.v)) + '</b><small>' + esc(rtTypeName(c.v)) + '</small><span>Pick up ' + esc(rtPlaceName(c.town, c.track)) + '</span><span>Set out ' + esc(to) + '</span></div>';
+    });
+    h += '</div>';
+    // room warnings
+    const need = {};
+    ids.forEach(function (id) { const g = goes[id], c = b.cars[id]; if (!c) return; const town = g.leftover ? p.tieUp : g.town, t = g.leftover ? null : g.track, k = town + '|' + (t || ''); need[k] = (need[k] || 0) + carLenOf(c.v) + 1; });
+    Object.keys(need).forEach(function (k) { const x = rtParse(k), free = rtFree(x.town, x.track); if (free != null && need[k] > free + 1) h += '<div class="cs-box o"><b>' + esc(rtPlaceName(x.town, x.track)) + ' may not have room</b>Needs about ' + Math.round(need[k]) + ' ft, about ' + Math.max(0, Math.round(free)) + ' ft free. ' + (x.town === 'effingham' ? 'Extra cars go to the next closest room (runaround, Mattoon yard, N&amp;W).' : 'Extra cars ride on and are set out in the ' + esc(rtPlaceName(p.tieUp, null)) + '.') + '</div>'; });
+    // totals and time lines
+    const crew = crewById(d.crewId), tl = rtTimeLines(job, crew);
+    h += '<div class="rt-tot"><div class="cs-split"><span>Cars moved</span><b>' + ids.length + '</b></div><div class="cs-split"><span>Longest train</span><b>' + rtPl(maxCars, 'car') + ' · ' + Math.round(maxLen) + ' ft</b></div>';
+    let sum = 0;
+    tl.lines.forEach(function (l) { const m = Math.round(l[1] * 60); sum += m; h += '<div class="cs-split rt-tl"><span>' + esc(l[0]) + '</span><b>' + m + ' min</b></div>'; });
+    h += '<div class="cs-split rt-tl tot"><span>Estimated crew time' + (crew ? ' (' + esc(crew.name) + ')' : ' (no crew picked: rookie estimate)') + '</span><b>' + sum + ' min · ' + esc(tl.est.label) + '</b></div></div>';
+    h += rtFuelHtml(d, job, crew);
+    const et = p.engineTieUp;
+    h += '<div class="rt-stop rt-end"><div class="rt-sh"><span class="cs-num">⚑</span><b>Engines tie up</b><small>' + (et && et.track ? esc(rtPlaceName(et.town, et.track)) + (C.needsCaboose(job) ? ' · caboose ' + (et.town === 'effingham' && /^FESTALL/.test(et.track) ? 'on the caboose track' : et.town === 'mattoon' && et.track === 'ENGINE' ? 'in the yard' : 'with them') : '') : 'not picked yet') + '</small></div></div>';
+    return h;
+  }
+  function rtCarRow(d, key, c, inf, on) {
+    const v = c.v, g = c.home, ov = (d.rtOver || {})[c.id] || '';
+    const ixD = inf.kind === 'interchange' ? rtParse((d.rtIxDest || {})[key]) : null;
+    const def = ixD && ixD !== 'sort' ? rtPlaceName(ixD.town, ixD.track) : g ? rtPlaceName(g.town, g.track) : 'rides to the tie-up yard';
+    let h = '<div class="rt-car"><label class="rt-cl"><input type="checkbox" data-cs="tog-rtc" data-key="' + esc(key) + '" data-id="' + esc(c.id) + '"' + (on ? ' checked' : '') + '><b>' + esc(rtCarName(v)) + '</b><small>' + esc(rtDestName(v.dest)) + ' · ' + Math.round(carLenOf(v)) + ' ft</small></label>';
+    if (on) h += '<select class="cs-f rt-sel" data-cs-field="rt-over" data-id="' + esc(c.id) + '"><option value="">' + esc((ixD === 'sort' ? 'Sorted: ' : '') + def) + '</option>' + rtDestOpts().map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === ov ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+    return h + '</div>';
+  }
   function roadHtml(d) {
-    let h = lab('Road work / stops');
-    if (!(d.stops || []).length) h += '<div class="cs-card cs-note" style="font-style:italic">No intermediate setouts — the train runs through to tie-up.</div>';
-    (d.stops || []).forEach(function (s, i) {
-      const pick = s.act === 'pickup';
-      h += '<div class="cs-ord"><span class="cs-num">' + (i + 1) + '</span><span class="t"><b>' + esc(trackTown(s.track) + (s.track === 'RA' ? ' runaround' : s.track === 'NWI' ? '' : ' Yard')) + '</b>' +
-        '<small><b>' + (pick ? 'Pick up' : 'Set out') + '</b>' + (pick ? (s.track === 'NWI' ? 'Unsorted N&amp;W cars from ' : 'from ') : 'cars on the train on ') + '<span class="cs-mono">' + esc(trackLabel(s.track)) + '</span></small></span>' +
-        (i ? '<button class="cs-mini" data-cs="up-stop" data-i="' + i + '" aria-label="Move up">↑</button>' : '') +
-        '<button class="cs-mini" data-cs="del-stop" data-i="' + i + '" aria-label="Remove">×</button></div>';
+    const b = rtBuild(d), p = b.plan;
+    let h = lab('Road train · tracks to pick up', 'any town');
+    if (!p) return h + '<div class="cs-box r">This build is missing the road train rules (crews.js roadTrainPlan).</div>';
+    h += '<p class="cs-hint">Tick the tracks this train picks up, in any town. A new job starts with the usual pick-ups, set-outs, engine tie-up and fuel and sand already filled in; change only what is off. On yard tracks and the runaround it takes the cars that belong in another town; on an interchange it takes the cars the other railroad left us. Each car is set out where it belongs unless you pick another track for it. Road trains don\'t work customer spots.</p>';
+    rtTowns().forEach(function (town) {
+      h += '<div class="rt-town">' + esc(townName(town)) + '</div>';
+      if (town === 'mattoon' && hereTown() !== 'mattoon') h += '<p class="cs-hint">Mattoon cars are listed when you are in Mattoon.</p>';
+      rtTrackList(town).forEach(function (t) {
+        const key = town + '|' + t.track, inf = b.info[key] || { ids: [], use: [], ours: 0, total: 0 }, on = (d.rtLift || []).indexOf(key) >= 0;
+        const n = inf.ids.length, sub = t.kind === 'interchange' ? n + ' to pick up' + (inf.ours ? ' · ' + inf.ours + ' yours outbound' : '') : n + ' of ' + inf.total + ' belong elsewhere';
+        h += '<label class="cs-chk' + (on ? '' : ' off') + (n || on ? '' : ' cs-nada') + '"><input type="checkbox" data-cs="tog-rtl" data-key="' + esc(key) + '"' + (on ? ' checked' : '') + '>' + esc(rtTrackName(town, t.track)) + '<small>' + esc(sub) + '</small></label>';
+        if (!on) return;
+        h += '<div class="rt-tr">';
+        if (!n) h += '<p class="cs-hint">Nothing here to pick up right now.</p>';
+        inf.ids.forEach(function (id) { h += rtCarRow(d, key, b.cars[id], inf, inf.use.indexOf(id) >= 0); });
+        if (t.kind === 'interchange' && n) {
+          const cur = (d.rtIxDest || {})[key] || '';
+          h += '<div class="cs-addrow"><span style="flex:0 0 auto;font-weight:700;font-size:13px">Pulled cars go to</span><select class="cs-f" data-cs-field="rt-ixdest" data-key="' + esc(key) + '"><option value="">Pick a town and track…</option>' +
+            rtDestOpts().map(function (o) { return '<option value="' + esc(o[0]) + '"' + (o[0] === cur ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') +
+            '<option value="sort"' + (cur === 'sort' ? ' selected' : '') + '>Sort to proper yards (each car to its own town: much more switching)</option></select></div>';
+          if (!cur) h += '<div class="cs-box r"><b>Pick where these cars go</b>The crew can\'t be called until the cars pulled off the ' + esc(rtPlaceName(town, t.track)) + ' have a destination.</div>';
+          else if (cur === 'sort') h += '<p class="cs-hint">The crew switches the cut out on the spot, one block per destination, before running. Every car and every block adds time (see the preview).</p>';
+          if (inf.ours) h += '<p class="cs-hint">' + rtPl(inf.ours, 'of your outbound car') + ' already sit on this track for the other railroad, so the crew swaps cuts: extra switching time.</p>';
+        }
+        h += '</div>';
+      });
     });
-    const list = d.stopAct === 'pickup' ? pickupTracks() : setoutTracks();
-    if (list.indexOf(d.stopTrack) < 0) d.stopTrack = list[0] || '';
-    h += '<div class="cs-addrow"><select class="cs-f" data-cs-field="stopAct" style="flex:0 0 108px"><option value="setout"' + (d.stopAct === 'setout' ? ' selected' : '') + '>Set out</option><option value="pickup"' + (d.stopAct === 'pickup' ? ' selected' : '') + '>Pick up</option></select>' +
-      '<select class="cs-f" data-cs-field="stopTrack">' + list.map(function (t) { return '<option value="' + esc(t) + '"' + (t === d.stopTrack ? ' selected' : '') + '>' + esc(trackLabel(t) + (t === 'NWI' ? ' (Neoga)' : '')) + '</option>'; }).join('') + '</select>' +
-      '<button class="cs-add" data-cs="add-stop">+ Add stop</button></div>';
-    h += '<p class="cs-hint">Road trains can only pull or place cars on yard tracks, runarounds, and interchange tracks — not industry spots.</p>';
-    if ((d.stops || []).some(function (s) { return s.track === 'NWI'; })) h += '<div class="cs-box o">Some cars come in at Neoga\'s N&amp;W interchange unsorted. That can be road-train work — a pickup here, then a setout on a yard track — rather than a local sorting them automatically. Locals can still be given any customer.</div>';
-    h += lab('Where cars land');
-    (d.stops || []).filter(function (s) { return s.act !== 'pickup'; }).forEach(function (s) {
-      h += '<div class="cs-land"><b>' + esc(trackTown(s.track)) + '</b><span class="cs-mono">' + esc(trackLabel(s.track)) + '</span><i>set out, stay here</i><span class="w">Cars the train picked up</span></div>';
-    });
-    h += '<div class="cs-land tie"><b>' + esc(placeName(d.tieUp)) + '</b><span class="cs-mono">tie-up</span><i>lands here</i><span class="w">Everything still on the train</span></div>';
-    h += '<div class="cs-box o">Farther-interchange cars do not automatically appear in the matching yard. A road train has to be assigned to haul them to a yard track or runaround. Leftover cars land where the crew ties up — they are not auto-spotted to the ICG or N&amp;W interchange.</div>';
+    // engine tie-up
+    const eng = b.eng, curE = eng ? eng.town + '|' + eng.track : '';
+    h += lab('Tie up engines at', 'end of the run');
+    h += '<select class="cs-f" data-cs-field="rt-eng"><option value=""' + (curE ? '' : ' selected') + '>Pick a town and track…</option>' + rtTowns().map(function (town) { return (RT_ENG_TRACKS[town] || []).map(function (t) { const k = town + '|' + t; return '<option value="' + esc(k) + '"' + (k === curE ? ' selected' : '') + '>' + esc(rtPlaceName(town, t)) + '</option>'; }).join(''); }).join('') + '</select>';
+    h += '<p class="cs-hint">The crew leaves the engines (and the caboose) here and ties up in that town. Neoga has no engine track, so engines there tie up on the runaround, clear of the main.</p>';
+    h += '<label class="cs-chk' + (d.rtFuel ? '' : ' off') + '"><input type="checkbox" data-cs="tog-rtfuel"' + (d.rtFuel ? ' checked' : '') + '>Fuel &amp; sand engines<small>15 min per engine · not crew time</small></label>';
+    if (d.rtFuel) h += seg('rtfuelwhen', d.rtFuelWhen || 'tie', [['tie', 'At tie-up (after the run)'], ['before', 'Before the run (delays the start)']]);
+    if ((p.missing || []).length) h += '<div class="cs-box r"><b>Can\'t call yet</b>Still needed: ' + esc(p.missing.map(function (m) { return m === 'engine tie-up' ? 'where the engines tie up' : 'a destination for the cars off the ' + rtTrackName(null, m); }).join('; ')) + '.</div>';
+    h += rtPreviewHtml(d, b, draftToJob(d));
+    return h;
+  }
+  // ---- fuel and sand (Cassie's crewUse / serviceLocos, crews.js). Servicing is mechanical work: it never counts as crew time.
+  function rtIsLoco(v) { return !!(v && (v.type === 'gp9' || (((G && G.TYPES) || {})[v.type] || {}).kind === 'loco')); }
+  function rtLocoUnits(ids) { const mine = playerEngineId(); return (ids || []).filter(function (id) { return id && id !== mine; }).map(rtFindUnit).filter(function (u) { return u && rtIsLoco(u.v); }); }
+  function rtLocoIn(u) { return { id: u.v.id, num: u.v.num, fuel: u.v.fuel, sand: u.v.sand }; }
+  function rtServe(units, now) { // fill to full (same fuel / sand fields the player's fueling uses) and keep them out of service until readyAt
+    const C = R(); if (!C || !C.serviceLocos || !units.length) return null;
+    const sv = C.serviceLocos(units.map(rtLocoIn), now);
+    (sv.refill || []).forEach(function (r) { const u = units.filter(function (x) { return x.v.id === r.id; })[0]; if (u) { u.v.fuel = r.fuel; u.v.sand = r.sand; u.v.svcUntil = sv.readyAt; } });
+    return sv;
+  }
+  function engineBusy(id, at) { // a short note while a loco is out of service for fuel and sand, else null
+    try { const u = rtFindUnit(id), t = at != null ? at : nowT(); if (u && u.v && u.v.svcUntil != null && u.v.svcUntil > t + 0.5) return 'NI&I ' + u.v.num + ' is out of service for fuel and sand until ' + clockStr(u.v.svcUntil) + '.'; } catch (e) { }
+    return null;
+  }
+  // every called crew: the run's fuel and sand come off its engines when it ties up; a road train set to fuel at tie-up is then serviced
+  function rtUnitTons(v) { if (v && v.wt != null && isFinite(v.wt)) return +v.wt; const T = ((G && G.TYPES) || {})[v && v.type] || {}; return ((T.tare || 0) + (v && v.load && v.load.t ? v.load.t : 0)) || 30; }
+  function rtUseOpts(c, units, idleH) { // Cassie's crewUse inputs: heaviest train (engines + caboose + cars), idle / waiting hours, number of moves
+    let cars = 0;
+    if (c.type === 'road' && c.rt) cars = c.rt.maxTons || 0;
+    else if (c.carTons != null) cars = c.carTons; // other jobs: every car the job lifts, spots or pulls (draftToJob), real weights
+    else (c.work || []).forEach(function (w) { cars += (w.cars || 0) * 30; }); // an old call made before mw59ef134: 30 t a car
+    const cab = c.caboose ? rtFindUnit(c.caboose) : null;
+    const tons = units.reduce(function (a, u) { return a + rtUnitTons(u.v); }, 0) + (cab ? rtUnitTons(cab.v) : (R().needsCaboose(c) ? 24 : 0)) + cars;
+    return { tons: Math.round(tons), idleHours: idleH || 0, moves: (c.work || []).length };
+  }
+  function rtFuelAfterJob(c, crew, hours, t, hog, idleH) {
+    const C = R(), notes = []; if (!C || !C.crewUse || !c) return notes;
+    const units = rtLocoUnits(c.engines); if (!units.length) return notes;
+    const est = C.estimateJob(c, crew || null, { yardJobRan: yardJobCalled(c.day, c) }), f = est.hours > 0 ? Math.min(1, (hours || 0) / est.hours) : 1;
+    const use = C.crewUse({ roadHours: est.roadHours * f, switchHours: est.switchHours * f }, units.map(rtLocoIn), rtUseOpts(c, units, idleH));
+    (use.perLoco || []).forEach(function (p) { const u = units.filter(function (x) { return x.v.id === p.id; })[0]; if (u) { u.v.fuel = p.fuelLeft; u.v.sand = p.sandLeft; } });
+    if ((use.perLoco || []).length) notes.push('engines used about ' + use.perLoco[0].fuelUse + ' gal of fuel and ' + use.perLoco[0].sandUse + '% sand each' + (use.perLoco.some(function (p) { return p.runsDry; }) ? ' (one ran dry)' : ''));
+    if (c.type === 'road' && c.rt && c.rt.fuel === 'tie' && !hog) { const sv = rtServe(units, t); if (sv) notes.push('engines fueled and sanded at tie-up; out of service until ' + clockStr(sv.readyAt)); }
+    return notes;
+  }
+  function rtFuelHtml(d, job, crew) {
+    const C = R(), units = rtLocoUnits(d.engines), before = !!d.rtFuel && (d.rtFuelWhen || 'tie') === 'before'; let h = '';
+    if (C.crewUse && units.length) {
+      const est = C.estimateJob(job, crew || null, { yardJobRan: true });
+      const use = C.crewUse(est, units.map(function (u) { const o = rtLocoIn(u); if (before && C.SERVICE) { o.fuel = C.SERVICE.FUEL_CAP; o.sand = C.SERVICE.SAND_FULL; } return o; }), rtUseOpts(job, units, 0));
+      (use.perLoco || []).forEach(function (p) { h += '<div class="cs-split rt-tl"><span>NI&amp;I ' + esc(p.num) + ' fuel and sand on this run</span><b>~' + p.fuelUse + ' gal · ' + p.sandUse + '% sand (leaves ' + p.fuelLeft + ' gal)</b></div>'; });
+      if (use.warn) h += '<div class="cs-box r"><b>Fuel it first</b>' + esc(use.warn) + ' Tick Fuel &amp; sand engines, before the run.</div>';
+    }
+    if (d.rtFuel && C.serviceLocos && units.length) { const sv = C.serviceLocos(units.map(rtLocoIn), 0), m = Math.round(sv.seconds / 60);
+      h += '<div class="cs-split rt-tl"><span>Engines out of service about ' + m + ' min for fuel and sand (' + (before ? 'before the run: the crew goes on duty after' : 'at tie-up, after the run') + '; not crew time)</span><b>' + m + ' min</b></div>'; }
     return h;
   }
   function showSheet(keep) {
@@ -3021,13 +3644,14 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     view = 'sheet';
     const d = draft, C = R(), job = draftToJob(d), crew = crewById(d.crewId);
     let h = head('NI&I Call Sheet', 'Create a job symbol · ' + esc(dateLabel(G.dayNo())), 'back');
-    if (d.loadNote) h += '<div class="cs-box o"><b>Loaded "' + esc(d.loadNote.name) + '"</b>' + (d.loadNote.notes.length ? esc(d.loadNote.notes.join('. ')) + '.' : 'Add or take off customers, then post it.') + '</div>';
+    if (d.loadNote) h += '<div class="cs-box o"><b>Loaded "' + esc(d.loadNote.name) + '"</b>' + (d.loadNote.notes.length ? esc(d.loadNote.notes.join('. ')) + '.' : (d.type === 'road' ? 'Add or delete set-outs or pick-ups, then post it.' : 'Add or take off customers, then post it.')) + '</div>'; // Nov 24 (mw59ef136)
     h += savedListHtml('sheet');
     h += lab('Job symbol') + '<input type="text" class="cs-f cs-sym" data-cs-field="symbol" value="' + esc(d.symbol) + '" placeholder="L-21" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false">';
     h += '<p class="cs-hint">Type your own symbol — any format. Left blank it posts as ' + esc(defaultSymbol(d)) + '.</p>';
     h += lab('Engines');
     const Ls = locos();
     h += Ls.length ? '<div class="cs-chips">' + Ls.map(function (v) { return '<button class="cs-chip' + (d.engines.indexOf(v.id) >= 0 ? ' on' : '') + '" data-cs="tog-eng" data-id="' + esc(v.id) + '">' + esc(locoName(v)) + '</button>'; }).join('') + '</div>' : '<p class="cs-note">No engine on the roster.</p>';
+    h += (d.engines || []).map(function (id) { return engineBusy(id, d.startAt); }).filter(Boolean).map(function (m) { return '<div class="cs-box r"><b>Engine not ready</b>' + esc(m) + ' Pick another engine or a later on-duty time.</div>'; }).join(''); // Nov 24 (mw59ef134)
     h += '<div class="cs-2"><div>' + lab('On-duty / start') + selectHtml('start', d.start, bases()) + '</div><div>' + lab('Tie-up / stop') + selectHtml('tieUp', d.tieUp, bases()) + '</div></div>';
     h += lab('On-duty time', 'game clock') + '<select class="cs-f" data-cs-field="startAt">' + dutySlots().map(function (t) { return '<option value="' + t + '"' + (+d.startAt === t ? ' selected' : '') + '>' + esc(clockStr(t)) + '</option>'; }).join('') + '</select>' +
       '<p class="cs-hint">The crew goes on duty at this time and works on the game clock. Their cars show up as each piece of work finishes.</p>';
@@ -3056,6 +3680,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function markup() {
     ensure();
     const C = R(), job = draftToJob(draft), crew = crewById(draft.crewId);
+    if (job.type === 'road' && (job.rtMissing || []).length) { G.toast('Pick where the interchange cars go and where the engines tie up first.', 'bad'); paintEst(); return; }
     const cab = C.cabooseWarning(job, freeCabooses());
     if (cab) { G.toast(cab, 'bad'); paintEst(); return; }
     if (crew) {
@@ -3064,6 +3689,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     job.day = G.dayNo();
     if (job.startAt == null || job.startAt < nowT()) job.startAt = Math.max(nowT(), dutySlots()[0] || nowT());
+    if (job.type === 'road' && job.rt && job.rt.fuel === 'before') { const sv = rtServe(rtLocoUnits(job.engines), nowT()); if (sv) { job.startAt = Math.max(job.startAt, sv.readyAt); job.svcReadyAt = sv.readyAt; } } // Nov 24 (mw59ef134): fuel and sand first, the crew goes on duty at readyAt
     job.order = (st().calls.filter(function (c) { return c.day === job.day; }).length) + 1;
     job.id = 'call' + (st().crewSeq++);
     job.mode = crew ? 'hire' : 'posted';
@@ -3915,6 +4541,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
 
   // the car moves for a set of finished work (road pickups / setouts carry cars between pieces)
   function applyDoneSet(job, doneSet, day) {
+    if (job && job.type === 'road' && job.rt) return { notes: rtExecute(job, day), lifted: [] }; // Nov 24 (mw59ef134)
     const C = R(), notes = [];
     if (doneSet === (job && job.work)) clearClassified();
     let lifted = [];
@@ -3971,6 +4598,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const notes = applyDoneSet(job, doneSet, day).notes;
     if (hog.hoggedOut) notes.push(crew.name + ' hogged out at ' + townName(hog.trainStaysAt) + ' — ' + hog.note);
     const hours = Math.min(est.hours, C.HOS.ON_DUTY_H);
+    try { notes.push.apply(notes, rtFuelAfterJob(job, crew, hours, st().time, hog.hoggedOut, 0)); } catch (e) { } // Nov 24 (mw59ef134)
     const pay = C.payForCall(crew, hours, G.ECON && G.ECON.CREW_HR);
     G.book('crew', pay);
     C.grantExperience(crew, job, hours);
@@ -4176,6 +4804,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const H = C.HOS.ON_DUTY_H, hours = Math.round(Math.min(H, Math.max(0, (t - s.on) / 3600)) * 100) / 100;
     s.notDone = s.pieces.slice(s.k).filter(function (p) { return !p.travel; }).map(function (p) { return p.place; });
     s.hours = hours;
+    try { s.notes = s.notes.concat(rtFuelAfterJob(c, crew, hours, t, hog, (s.pausedSec || 0) / 3600)); } catch (e) { } // Nov 24 (mw59ef134): fuel and sand used (every called crew)
     if (!crew) return;
     const pay = C.payForCall(crew, hours, G.ECON && G.ECON.CREW_HR);
     s.pay = pay;
@@ -4670,7 +5299,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (c) { const r = crewBlock(c, draftToJob(draft), null); if (r && r !== R().CABOOSE_BLOCK) G.toast(r, 'bad'); }
       draft.crewId = id; draft.crewOpen = false; showSheet(true);
     }
-    else if (a === 'type') { draft.type = b.getAttribute('data-v'); showSheet(true); }
+    else if (a === 'type') { draft.type = b.getAttribute('data-v'); if (draft.type === 'road') rtPrefill(draft); showSheet(true); } // Nov 24 (mw59ef135): a new road job starts with the usual picks
     else if (a === 'ytab') { draft.yardTab = b.getAttribute('data-v'); showSheet(true); }
     else if (a === 'tog-ix') {
       const id = b.getAttribute('data-id');
@@ -4693,6 +5322,28 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     else if (a === 'del-class') { draft.classify.splice(ix, 1); showSheet(true); }
     else if (a === 'up-build') { const o = draft.buildOrder; if (ix > 0) { const t = o[ix - 1]; o[ix - 1] = o[ix]; o[ix] = t; } showSheet(true); }
     else if (a === 'del-build') { draft.buildOrder.splice(ix, 1); showSheet(true); }
+    else if (a === 'tog-rtl') { // Nov 24 (mw59ef134 / mw59ef135)
+      const k = b.getAttribute('data-key'); draft.rtLift = draft.rtLift || []; const i = draft.rtLift.indexOf(k);
+      if (b.checked) {
+        if (i < 0) draft.rtLift.push(k);
+        const p = rtParse(k);
+        if (p && p !== 'sort' && rtKind(p.town, p.track) === 'interchange' && !(draft.rtIxDest && draft.rtIxDest[k])) {
+          const cars = rtCarsOn(p.town, p.track).filter(function (v) { return rtLiftable(v, p.town, p.track, 'interchange'); });
+          draft.rtIxDest = draft.rtIxDest || {}; draft.rtIxDest[k] = rtIxUsual(draft, cars);
+        }
+      } else { if (i >= 0) draft.rtLift.splice(i, 1); if (draft.rtCars) delete draft.rtCars[k]; if (draft.rtIxDest) delete draft.rtIxDest[k]; }
+      showSheet(true);
+    }
+    else if (a === 'tog-rtfuel') { draft.rtFuel = !!b.checked; if (!draft.rtFuelWhen) draft.rtFuelWhen = 'tie'; showSheet(true); }
+    else if (a === 'rtfuelwhen') { draft.rtFuelWhen = b.getAttribute('data-v') === 'before' ? 'before' : 'tie'; showSheet(true); }
+    else if (a === 'tog-rtc') {
+      const k = b.getAttribute('data-key'), id = b.getAttribute('data-id'), inf = rtBuild(draft).info[k]; if (!inf) return;
+      draft.rtCars = draft.rtCars || {}; const cur = Array.isArray(draft.rtCars[k]) ? draft.rtCars[k].filter(function (x) { return inf.ids.indexOf(x) >= 0; }) : inf.ids.slice(), i = cur.indexOf(id);
+      if (b.checked) { if (i < 0) cur.push(id); } else if (i >= 0) cur.splice(i, 1);
+      if (cur.length === inf.ids.length) delete draft.rtCars[k]; else draft.rtCars[k] = cur;
+      if (!b.checked && draft.rtOver) delete draft.rtOver[id];
+      showSheet(true);
+    }
     else if (a === 'add-stop') { if (draft.stopTrack) draft.stops.push({ act: draft.stopAct, track: draft.stopTrack }); showSheet(true); }
     else if (a === 'up-stop') { const o = draft.stops; if (ix > 0) { const t = o[ix - 1]; o[ix - 1] = o[ix]; o[ix] = t; } showSheet(true); }
     else if (a === 'del-stop') { draft.stops.splice(ix, 1); showSheet(true); }
@@ -4722,9 +5373,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!draft) return;
     if (f === 'symbol') { draft.symbol = el.value; return; }
     if (f === 'startAt') { draft.startAt = +el.value; return; }
+    if (f === 'rt-over' || f === 'rt-ixdest' || f === 'rt-eng') { // Nov 24 (mw59ef134)
+      if (f === 'rt-over') { draft.rtOver = draft.rtOver || {}; const id = el.getAttribute('data-id'); if (el.value) draft.rtOver[id] = el.value; else delete draft.rtOver[id]; }
+      else if (f === 'rt-ixdest') { draft.rtIxDest = draft.rtIxDest || {}; const k = el.getAttribute('data-key'); if (el.value) draft.rtIxDest[k] = el.value; else delete draft.rtIxDest[k]; }
+      else { draft.rtEng = el.value; const p = rtParse(el.value); if (p && p !== 'sort') draft.tieUp = p.town; }
+      showSheet(true); return;
+    }
     if (f === 'ixsort') { const k = el.getAttribute('data-rr'); draft.ixSort = draft.ixSort || {}; if (el.value) draft.ixSort[k] = el.value; else delete draft.ixSort[k]; showSheet(true); return; } // Nov 20 (mw59ef133)
     if (f === 'start' || f === 'tieUp' || f === 'buildTrack' || f === 'stopAct' || f === 'stopTrack') {
       draft[f] = el.value;
+      if (f === 'tieUp' && draft.type === 'road') draft.rtEng = el.value + '|' + rtEngDefault(el.value); // Nov 24 (mw59ef134): engines tie up in the tie-up town
       if (f === 'start' || f === 'tieUp') {
         draft.interchanges = selectedInterchanges(draft);
         if (draft.type === 'local') {
@@ -4816,6 +5474,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     savedJobs: function () { return savedJobs(); }, _draftToJob: function () { return draft ? draftToJob(draft) : null; },
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure,
     CSS_TEXT: CSS_TEXT, show: show,
+    engineBusy: function (id, at) { return engineBusy(id, at); }, // Nov 24 (mw59ef134): the towns' Make this my engine asks first
+    _rt: { build: function () { return draft ? rtBuild(draft) : null; }, useOpts: function (job) { return rtUseOpts(job, rtLocoUnits(job.engines), 0); }, execute: function (j, d) { return rtExecute(j, d); }, home: rtHome }, // Nov 24 (mw59ef134): test hooks
     _test: { placeOnNwi: function (v) { return placeOnNwi(v); }, runIndustry: function (k, d) { return runIndustry(k, d); }, runMattoonIc: function (d, s) { return runMattoonIc(d, s); }, sortIntoM: function (i, s, r) { return sortIntoM(i, s, r); }, placeOnTrack: function (i, t) { return placeOnTrack(i, t); }, pickYard: function () { return pickYard(); }, roomOf: function (id) { return roomTop(trackSeg(id), []).room; }, placeInYards: function (i) { return placeInYards(i); }, heldMattoonToRA: function () { return heldMattoonToRA(); }, takeFromRA: function (h) { return takeFromRA(h); }, fetchHeldToEf: function () { return fetchHeldToEf(); }, G: function () { return G; } } // Nov 17: test hooks (puppeteer)
   };
   return api;
@@ -5467,13 +6127,13 @@ function stepConsist(c, dt) {
   live.slip = false; live.slide = false;
   const Rroll = weight(c) * (1.6 + 0.03 * vm) + (vm < 0.3 ? weight(c) * 4 : 0);
   const apRan = !!state.ap; // AP_MOVES: apStep already moved the consist
-  if (state.ap) { apStep(c, dt, running); live.eq = state.ap ? state.ap.eq : 0; }
+  if (state.ap) { apStep(c, dt, running); live.eq = state.ap ? state.ap.eq : 0; live.acc = live.eq > 1 ? 0.1 : 0; }
   else { // Nov 3: the physics step is shared (src/shared.js driveStep), same math as before
     const r = NII_SHARED.driveStep({ v: c.v, W: weight(c), Wl: l.wt, notch: ctl.notch, rev: ctl.rev, sign: locoSign(c), brake: ctl.brake, sand: sanding, running, tapIdle: state.mode === 'tap', lim: trackLimit(c) }, dt);
-    c.v = r.v; live.slip = r.slip; live.slide = r.slide; live.eq = r.eq;
+    live.acc = (Math.abs(r.v) - Math.abs(c.v)) * 0.6818 / Math.max(dt, 1e-3); c.v = r.v; live.slip = r.slip; live.slide = r.slide; live.eq = r.eq;
   }
   // consumables
-  if (running) { l.fuel = Math.max(0, l.fuel - (1 + 2.5 * live.eq) / 60 * dt); if (l.fuel <= 0) { toast('Out of fuel! The engine shut down. Fill up at the fuel pad, or call the fuel truck.', 'bad'); sfx('crash'); save(); } }
+  if (running) { l.fuel = Math.max(0, l.fuel - NII_SHARED.fuelGph(live.eq, weight(c), Math.abs(c.v) * 0.6818, live.acc || 0) / 3600 * dt /* Nov 24: throttle + tonnage + accelerating vs holding speed */); if (l.fuel <= 0) { toast('Out of fuel! The engine shut down. Fill up at the fuel pad, or call the fuel truck.', 'bad'); sfx('crash'); save(); } }
   if (ctl.sand) { if (l.sand > 0) { const u = Math.min(l.sand, 0.8 * dt); book('sand', u * ECON.SAND_PER_PCT); l.sand = Math.max(0, l.sand - 0.8 * dt); ctl.sandT += dt; } if (l.sand <= 0 || ctl.sandT > 12) { ctl.sand = false; ctl.sandT = 0; if (l.sand <= 0) toast('Sand boxes are empty.', 'bad'); } }
   const ylx0 = c.v ? tailX(c, Math.sign(c.v)) : 0;
   if (!apRan || NII_SHARED.AP_MOVES > 1) moveWithContacts(c, c.v * dt);
@@ -6336,7 +6996,7 @@ document.addEventListener('click', e => {
   else if (a === 'waybills') showWaybills();
   else if (a === 'wbCar') showWaybill(b.dataset.id, false);
   else if (a === 'tapGo') { hideModal(); if (TAP_PEND) { TAP_ASKED = true; sceneTap(TAP_PEND.sx, TAP_PEND.sy); } TAP_PEND = null; }
-  else if (a === 'makeEngine') { hideModal(); claimEngine(b.dataset.id); }
+  else if (a === 'makeEngine') { hideModal(); { const bz = window.NII_CALLSHEET && NII_CALLSHEET.engineBusy && NII_CALLSHEET.engineBusy(b.dataset.id); if (bz) toast(bz, 'bad'); else claimEngine(b.dataset.id); } } // Nov 24 (mw59ef134): out of service for fuel and sand
   else if (a === 'giveUpEngine') { hideModal(); releaseEngine(); }
   else if (a === 'callSheet') { if (window.NII_CALLSHEET) NII_CALLSHEET.open(); }
   else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); }
@@ -9071,3 +9731,59 @@ function drawSolid(g, v, G, alpha) {
 return { draw(g, v, alpha) { const G = solidGeom(v); if (!G) return false; drawSolid(g, v, G, alpha == null ? 1 : alpha); return true; }, setDPR(d) { DPR = d; }, HIT, IMG,
   ready(v) { const a = ART[artOf(v)]; return !!(a && a.solid && IMG[artOf(v)] && IMG[artOf(v)].complete); } };
 };
+
+// ================================================================ TRAIN INFO (Nov 24, Stephen, mw59ef134)
+// Two small boxes under the speedometer in every town: the tonnage and the length of the train you are driving (engines, cars and caboose).
+// Tons: each unit's v.wt summed, the same tonnage each town's drive step uses for physics and for fuel (Mattoon weight(c); Neoga and
+// Effingham W = sum of v.wt || 30). Feet: each unit's length the way the towns draw it (v.L, else the picture length, else the type length).
+// Shown in Drive and Tap mode (a slim row under the speedometer row), and as one short pill ('1,240 t · 1,050 ft') just above the
+// speedometer bar when the control panel is collapsed. Updates live (coupling, uncoupling).
+(function () {
+  'use strict';
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  function pack() { const n = window.__neoga, e = window.__effingham; if (e && e.S && typeof e.liveCut === 'function') return e; if (n && n.S && typeof n.liveCut === 'function') return n; return null; }
+  function types() { try { return (window.__game && __game.TYPES) || (window.NII_CORE && NII_CORE.TYPES) || {}; } catch (e) { return {}; } }
+  function units() {
+    try {
+      const p = pack();
+      if (p) { const c = p.liveCut(); return c && c.veh ? c.veh.slice() : []; }
+      const G = window.__game; if (!G || !G.locoCons || !G.state) return [];
+      const c = G.locoCons(); return c && c.veh ? c.veh.map(function (id) { return G.state.veh[id]; }).filter(Boolean) : [];
+    } catch (e) { return []; }
+  }
+  function tonsOf(v) { return v.wt || 30; } // the same sum the drive steps feed physics and fuel: Mattoon weight(c), Neoga / Effingham W = sum (v.wt || 30)
+  function lenOf(v) { if (/^coal_hopper40_/.test(v.art || '')) return 37; const A = (window.NII_CORE && NII_CORE.ART) || {}, a = A[v.art || v.type]; const T = types()[v.type] || {}; return v.L || (a && a.L) || T.L || 50; }
+  const fmt = function (n) { return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); };
+  let el = null, line = null, last = '';
+  function mount() {
+    if (el && line && document.body.contains(el) && document.body.contains(line)) return el;
+    const sp = document.getElementById('speedo'), top = sp && sp.closest('.row'); if (!top || !top.parentNode) return null;
+    if (!document.getElementById('trainInfoCss')) { const s = document.createElement('style'); s.id = 'trainInfoCss';
+      // Full panel (Drive and Tap): a slim row of two boxes under the speedometer row, so the speedometer, fuel and sand gauges keep their room.
+      // Collapsed panel: one short pill riding just above the speedometer bar ('1,240 t · 1,050 ft').
+      s.textContent = '#trainInfo{display:flex;gap:4px;align-items:center;margin:2px 0 0}#trainInfo .ti{display:inline-flex;align-items:baseline;gap:4px;padding:1px 8px;border:1px solid #c9c0ad;border-radius:6px;background:#fbf7ee;line-height:1.25}' +
+        '#trainInfo .ti b{font:700 13px Arial,sans-serif;color:#1c2b50}#trainInfo .ti small{font-size:10px;color:#6b6355;text-transform:uppercase;letter-spacing:.04em}' +
+        '#tiLine{display:none;position:fixed;padding:2px 8px;border:1px solid #c9c0ad;border-radius:6px;background:rgba(251,247,238,.95);font:700 12px Arial,sans-serif;color:#1c2b50;white-space:nowrap;pointer-events:none;z-index:60}' +
+        'body.drawer #tiLine{display:block}body.drawer #trainInfo{display:none}';
+      document.head.appendChild(s); }
+    el = document.getElementById('trainInfo') || document.createElement('div'); el.id = 'trainInfo'; el.setAttribute('aria-label', 'Train tonnage and length');
+    el.innerHTML = '<span class="ti"><b id="tiTons">0</b><small>tons</small></span><span class="ti"><b id="tiFt">0</b><small>feet</small></span>';
+    top.parentNode.insertBefore(el, top.nextSibling);
+    line = document.getElementById('tiLine') || document.createElement('span'); line.id = 'tiLine'; document.body.appendChild(line); // fixed on the page: the collapsed panel clips anything outside its bar
+    last = ''; return el;
+  }
+  function place() { // collapsed panel: the pill sits just above the speedometer bar, right-aligned with it
+    const top = document.getElementById('speedo') && document.getElementById('speedo').closest('.row'); if (!top || !line) return;
+    const r = top.getBoundingClientRect(); line.style.right = Math.max(4, window.innerWidth - r.right) + 'px'; line.style.bottom = (window.innerHeight - r.top + 4) + 'px'; }
+  function paint() {
+    if (!mount()) return; if (document.body.classList.contains('drawer')) place();
+    const u = units(); let t = 0, L = 0; u.forEach(function (v) { t += tonsOf(v); L += lenOf(v); });
+    const key = u.length + '|' + Math.round(t) + '|' + Math.round(L); if (key === last) return; last = key;
+    const T = u.length ? fmt(t) : '—', F = u.length ? fmt(L) : '—';
+    document.getElementById('tiTons').textContent = T; document.getElementById('tiFt').textContent = F;
+    document.getElementById('tiLine').textContent = u.length ? T + ' t · ' + F + ' ft' : 'No train';
+    el.title = u.length ? u.length + ' units, ' + T + ' tons, ' + F + ' ft' : 'No engine yet';
+  }
+  window.NII_TRAININFO = { paint: paint, units: units, tonsOf: tonsOf, lenOf: lenOf };
+  setInterval(paint, 400);
+})();
