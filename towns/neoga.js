@@ -510,17 +510,24 @@ function jobs() { const L = [], cars = standingCars(); for (const q of cars) { c
 // ================================================================= TOWER & SIGNALS (aspect logic only; drawing below)
 // S.tower: null (all home signals stop) | { st: 'hold', until, dir } (N&W train crossing) | { st: 'clear', dir, entered }
 function requestRoute() { const c = liveCut(); if (!c) return; if (S.tower) { toast(S.tower.st === 'hold' ? 'The N&W operator says hold: their train is coming through.' : 'You already have the route.'); return; }
-  const xs = vehPos(c).map(q => ptAt(q.pm.t, q.pm.d)[0]), mid = xs.reduce((a, b) => a + b, 0) / xs.length, dir = mid < NWX ? 'S' : 'N';
+  const xs = vehPos(c).map(q => ptAt(q.pm.t, q.pm.d)[0]), mid = xs.reduce((a, b) => a + b, 0) / xs.length, mv = routeDirOf(c); // Nov 24 (mw59ef137): the way the train is headed picks the signal
+  if (mv === 'away') { toast('Your train is headed away from the diamond. Set the reverser toward it, then request the route.', 'bad'); return; } const dir = mv || (mid < NWX ? 'S' : 'N');
   if (Math.random() < ROUTE_CLEAR_ODDS) { S.tower = { st: 'clear', dir }; toast(`Neoga tower (N&W): "NI&I, you're lined ${dir === 'S' ? 'south' : 'north'} over the diamond."`, 'good'); }
   else { S.tower = { st: 'hold', dir }; NWT.run = nwTrain(); toast('Neoga tower (N&W): "Hold at the home signal, I\'ve got an N&W train coming through."', 'bad'); }
   save(); }
-function aspects() { const tw = S.tower, nwGo = !!(tw && tw.st === 'hold');
-  return { SH: { upper: tw && tw.st === 'clear' && tw.dir === 'S' ? 'green' : 'red', lower: 'red' }, NH: { upper: tw && tw.st === 'clear' && tw.dir === 'N' ? 'green' : 'red', lower: 'red' },
+// Nov 24 (mw59ef137, Stephen): the home signal drops back to Stop once the head of the train is SIG_DROP_FT past it. Display only:
+// the route stays yours (aspects(true) = authority, used for the red-signal fine and the autopilot stop) until the train clears the interlocking.
+const SIG_DROP_FT = 10;
+function routeDirOf(c) { const sgn = Math.sign(ctl.sv || 0) || (ctl.ap && ctl.ap.sgn) || (ctl.rev ? ctl.rev * fwdSign(c) : 0); if (!sgn) return null;
+  const e = leadingEnd(c, sgn), x = ptAt(e.t, e.d)[0], dx = sgn * sideOfHead(c); return dx > 0 ? (x < NWX ? 'S' : 'away') : (x > NWX ? 'N' : 'away'); }
+function sigPassed(c, dir) { return vehPos(c).some(q => [q.p0, q.p1].some(p => /^M[234]$/.test(p.t) && (dir === 'S' ? ptAt(p.t, p.d)[0] > SIGS + SIG_DROP_FT : ptAt(p.t, p.d)[0] < SIGN - SIG_DROP_FT))); }
+function aspects(auth) { const tw = S.tower, nwGo = !!(tw && tw.st === 'hold'), on = !!(tw && tw.st === 'clear' && (auth || !tw.passed));
+  return { SH: { upper: on && tw.dir === 'S' ? 'green' : 'red', lower: 'red' }, NH: { upper: on && tw.dir === 'N' ? 'green' : 'red', lower: 'red' },
     WB: { upper: nwGo ? 'green' : 'red' }, WT: { upper: nwGo ? 'green' : 'red' } }; }
 function interlockOcc(c) { return vehPos(c).some(q => [q.p0, q.p1].some(p => p.t === 'M3' && Math.abs(ptAt(p.t, p.d)[0] - NWX) < NWX - SIGS)); }
 function towerTick() { const tw = S.tower, c = liveCut(); if (!tw) return;
   if (tw.st === 'hold' && !NWT.run) { S.tower = { st: 'clear', dir: tw.dir }; toast('Neoga tower (N&W): "N&W is by. NI&I, you\'re lined over the diamond."', 'good'); save(); }
-  else if (tw.st === 'clear' && c) { const occ = interlockOcc(c); if (occ) tw.entered = true; else if (tw.entered) { S.tower = null; save(); } } }
+  else if (tw.st === 'clear' && c) { const occ = interlockOcc(c); if (occ) tw.entered = true; else if (tw.entered) { S.tower = null; save(); return; } if (!tw.passed && sigPassed(c, tw.dir)) { tw.passed = true; save(); } } } // Nov 24 (mw59ef137): passed = signal back to Stop
 // ================================================================= MOVEMENT
 const ctl = { dir: 0, mph: 10, v: 0, ap: null, sv: 0, rev: 0, notch: 0, brake: 1, sand: false, sandT: 0, slip: false, slide: false }; // Nov 3: Mattoon cab (reverser, throttle, independent brake, sand)
 const FUEL_CAP = SH.FUEL_CAP, TRUCK_COST = SH.TRUCK_COST;
@@ -541,13 +548,13 @@ function couple(c, o, sgn) { // c moved toward its head (sgn>0) or tail and touc
   else { if (dt2 < dh) reverseCut(o); c.path = o.path.concat(c.path); c.veh = o.veh.concat(c.veh); c.aT = o.aT.concat(c.aT); }
   for (const v of o.veh) v.ngPicked = true; S.cuts.splice(S.cuts.indexOf(o), 1); } // ngPicked: the player coupled to it here (a car he chose to take)
 function crossSignal(c, sgn, before, after) { // fine for running a red home signal toward the diamond
-  const A = aspects(); const check = (x, sig, wantDir) => { if (!/^M[234]$/.test(before.t) || !/^M[234]$/.test(after.t)) return;
+  const A = aspects(true); const check = (x, sig, wantDir) => { if (!/^M[234]$/.test(before.t) || !/^M[234]$/.test(after.t)) return;
     const x0 = ptAt(before.t, before.d)[0], x1 = ptAt(after.t, after.d)[0]; 
     if ((wantDir > 0 && x0 < x && x1 >= x) || (wantDir < 0 && x0 > x && x1 <= x)) if (A[sig].upper === 'red') { book('crew', RED_FINE); M.rep = Math.max(0, (M.rep || 0) - RED_REP); ctl.dir = 0; ctl.v = 0; ctl.ap = null;
       showModal(`<h2>Ran a red signal</h2><p>The train passed the ${wantDir > 0 ? 'north' : 'south'} home signal at stop. The N&W fines us <b>$${RED_FINE}</b> and our reputation drops <b>${RED_REP}</b>.</p><p>Use <b>Request route</b> and wait for a green top light.</p><div class="btns"><button data-a="close">OK</button></div>`); } };
   check(SIGS, 'SH', 1); check(SIGN, 'NH', -1); }
 function signalAhead(c, sgn) { // distance to a red home signal ahead on the main (autopilot stops 25 ft short)
-  const e = leadingEnd(c, sgn), p = ptAt(e.t, e.d); if (Math.abs(p[1]) > 1 || !/^M/.test(e.t)) return Infinity; const A = aspects(), dx = sgn * sideOfHead(c);
+  const e = leadingEnd(c, sgn), p = ptAt(e.t, e.d); if (Math.abs(p[1]) > 1 || !/^M/.test(e.t)) return Infinity; const A = aspects(true), dx = sgn * sideOfHead(c);
   if (dx > 0 && p[0] < SIGS && A.SH.upper === 'red') return SIGS - p[0]; if (dx < 0 && p[0] > SIGN && A.NH.upper === 'red') return p[0] - SIGN; return Infinity; }
 // ---- Nov 4: Mattoon's yard limit rule (game.js cabooseRule / ylRoom), in Neoga's cut terms. Only the rear end of the move counts.
 const ylX = p => ptAt(p.t, p.d)[0], ylMain = p => /^M\d$/.test(p.t);
@@ -1535,6 +1542,11 @@ function ngRaUnfoul() { const res = { moved: 0, cars: 0, stuck: 0 }; if (!T.RA) 
   return res; }
 if (!VISIT && S && S.cuts && T.RA && !S.raFoul132) { try { const r = ngRaUnfoul(); S.raFoul132 = 1; if (r.stuck) console.warn('runaround fouling repair: ' + r.stuck + ' cuts foul, no room to clear them'); if (r.moved) { console.log('runaround fouling repair (Neoga): ' + r.moved + ' cuts, ' + r.cars + ' cars moved clear');
   try { note(r.cars + ' car' + (r.cars > 1 ? 's' : '') + ' a crew left fouling the main on the runaround ' + (r.cars > 1 ? 'were' : 'was') + ' shoved back clear.'); } catch (e) { } } } catch (e) { console.warn('runaround fouling repair', e); } }
+// Nov 24 (mw59ef137, Stephen: "when a player leaves the map, if a signal is lined for them, that signal goes away"). Every way off this map
+// reloads the page, so on arrival any route or hold the tower had for you is dropped and every home signal is back at Stop. Also the
+// one-time repair for saves stuck with a stale route (S.sigFix137): request a new route when you get to the diamond.
+if (!VISIT && S && S.cuts) { try { const tw = S.tower; if (tw) { S.tower = null; NWT.run = null; console.log('Neoga: dropped the ' + (tw.st || '') + ' route left from your last visit (mw59ef137)');
+  try { note('The Neoga tower route from your last visit was dropped when you left the map. Request a new route at the diamond.'); } catch (e) { } } S.sigFix137 = 1; } catch (e) { console.warn('route drop on arrival', e); } }
 function moveStandingCar(q, t, dHead) {
   const c0 = isolateStandingCar(q); if (!c0) return false;
   const aT = c0.aT.slice(), veh = c0.veh.slice();

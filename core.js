@@ -2202,8 +2202,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       spots: countSpots(key),
       allow: function (v) {
         if (key !== 'CIC') return true;
+        if (G.cicNext) { const allow = G.cicNext(); return !allow || allow.has(v.id); } // mw59ef137: cicNext = the 6 AM switch-day release (+ a taken hot switch)
         if (G.cicDay && !G.cicDay(G.dayNo())) return false;
-        if (G.cicNext) { const allow = G.cicNext(); return !allow || allow.has(v.id); }
         return true;
       }
     };
@@ -4482,7 +4482,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       notes.push(custName(customer) + ': crew will switch when you are next in Neoga');
       return notes;
     }
-    if (customer === 'CIC' && G.cicDay && !G.cicDay(day)) {
+    if (customer === 'CIC' && G.cicDay && !G.cicDay(day) && !(G.cicNext && G.dayNo && day === G.dayNo() && G.cicNext().size)) { // mw59ef137: a taken hot switch releases CIC cars
       notes.push('CIC is not a switch day — left those cars for the next Mon / Wed / Fri');
       return notes;
     }
@@ -6408,14 +6408,21 @@ function repAdd(n, why) { state.rep += n; if (why) toast(`${n > 0 ? '+' : ''}${n
 // Nov 2 (Stephen): CIC takes its oldest waiting cars, one per door spot; every other CIC car stays HOLD until a spot opens (stable, oldest first).
 // Age = the day IC set the car out, then its IC sequence number; nothing is stored, so old saves fix themselves on load.
 const cicAge = v => [v.day != null ? v.day : -1, +(/\d+$/.exec(v.id) || [0])[0]];
-function cicNext() { const cars = Object.values(state.veh).filter(v => TYPES[v.type].kind === 'car'), n = SPOTS.CIC.spots.length;
+function cicPick() { const cars = Object.values(state.veh).filter(v => TYPES[v.type].kind === 'car'), n = SPOTS.CIC.spots.length;
   const used = cars.filter(v => carWhere(v).spot('CIC') || (v.work && v.dest === 'CIC')).length;
   const wait = cars.filter(v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC')).sort((a, b) => { const A = cicAge(a), B = cicAge(b); return A[0] - B[0] || A[1] - B[1]; });
   return new Set(wait.slice(0, Math.max(0, n - used)).map(v => v.id)); }
+// Nov 24 (mw59ef137, Stephen): CIC cars stay HOLD unless it's their switch day. At 6:00 AM on Mon / Wed / Fri CIC releases its oldest
+// waiting cars, one per door spot free at that moment (cicPick); that is all it asks for that day. Every other CIC car stays HOLD (storage
+// on CIC, never car hire on us alone) until the next switch day. A hot switch the player takes can release CIC cars on any day (state.cicHot).
+const CIC_REL_H = 6;
+function cicRelease() { const d = dayNo(), r = state.cicRel; if (cicDay(d) && state.time >= (d - 1) * 86400 + CIC_REL_H * 3600 && !(r && r.day === d)) state.cicRel = { day: d, ids: [...cicPick()] };
+  const ids = new Set(), R = state.cicRel; if (R && R.day === d && cicDay(d)) R.ids.forEach(i => ids.add(i)); const h = state.cicHot; if (h && state.time <= h.until) h.ids.forEach(i => ids.add(i)); else if (h) delete state.cicHot; return ids; }
+function cicNext() { return new Set([...cicRelease()].filter(id => { const v = state.veh[id]; return v && v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC'); })); }
 const cicHeld = v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC') && !cicNext().has(v.id);
 function needOf(v) { // what this car needs moved to right now, or null
   if (TYPES[v.type].kind !== 'car' || v.work) return null; const w = carWhere(v), d = v.dest || '';
-  if (SPOTS[d] && !w.spot(d)) return d === 'CIC' && (!cicDay(dayNo()) || cicHeld(v)) ? null : { type: 'spot', spot: d };
+  if (SPOTS[d] && !w.spot(d)) return d === 'CIC' && cicHeld(v) ? null : { type: 'spot', spot: d }; // mw59ef137: cicHeld knows the switch day
   if (d === 'HOUSE' && !w.house) return { type: 'house' };
   const ym = /^YARD (\d)$/.exec(d); if (ym && !w.yard(+ym[1])) return { type: 'yard', yard: +ym[1] };
   if (d === 'IC-INT' && !w.icx) return { type: 'icout' };
@@ -6437,8 +6444,8 @@ function syncTasks() {
   state.sel = sel ? sel.id : null;
   state.job = sel ? { n: 0, done: false, type: sel.type, car: sel.car, spot: sel.spot, yard: sel.yard, rep: sel.rep, text: sel.text, id: sel.id } : { n: 0, done: false, type: 'none', car: null, rep: 0, text: noTaskText() };
 }
-function noTaskText() { const cars = Object.values(state.veh), today = dayNo(), busy = cars.filter(v => v.work).length, held = cars.filter(v => v.dest === 'CIC' && !v.work && !carWhere(v).spot('CIC') && (!cicDay(today) || cicHeld(v))).length;
-  return busy || held ? `No jobs right now${busy ? `: ${busy} car${busy > 1 ? 's are' : ' is'} being worked by customers` : ''}${held ? `${busy ? '; ' : ': '}${held} for the box plant held until ${cicDay(today) ? 'a door spot opens there' : cicDay(today + 1) ? 'tomorrow' : 'the next Mon / Wed / Fri'}` : ''}. Open the menu (&#9776;) and tap <b>End Day</b> to finish the day.`
+function noTaskText() { const cars = Object.values(state.veh), today = dayNo(), busy = cars.filter(v => v.work).length, held = cars.filter(v => cicHeld(v)).length;
+  return busy || held ? `No jobs right now${busy ? `: ${busy} car${busy > 1 ? 's are' : ' is'} being worked by customers` : ''}${held ? `${busy ? '; ' : ': '}${held} for the box plant held until ${cicDay(today + 1) ? 'tomorrow' : 'the next Mon / Wed / Fri'} at 6 AM` : ''}. Open the menu (&#9776;) and tap <b>End Day</b> to finish the day.`
     : 'All of today\'s jobs are done. Open the menu (&#9776;) and tap <b>End Day</b>: ICG picks up the ICG-INT cars on its two interchange tracks and sets out new cars.'; }
 function makeJob() { syncTasks(); return state.job; } // (kept for old callers: the "job" is now just the selected checklist task)
 function taskThere(t) { const v = state.veh[t.car]; if (!v) return false; const w = carWhere(v); return t.type === 'house' ? w.house : t.type === 'icout' ? w.icx : t.type === 'spot' ? w.spot(t.spot) : w.yard(t.yard); }
@@ -6615,7 +6622,7 @@ const DEST = {
   'PC-INT': { sub: 'EFF', name: 'To the Penn Central: take it to the PC Interchange at Effingham' },
   HOLD: { sub: 'MAT', name: 'No orders yet: hold it in the Mattoon yard' },
   CIC: { sub: 'MAT', name: 'Central Illinois Corrugated (box plant): spot inside the plant' },
-  'CIC HOLD': { sub: 'MAT', name: 'Central Illinois Corrugated: held until one of its two door spots is free (oldest cars go first; switched Mon / Wed / Fri)' },
+  'CIC HOLD': { sub: 'MAT', name: 'Central Illinois Corrugated: on hold until its next switch day (Mon / Wed / Fri at 6 AM CIC releases its oldest cars, one per free door spot)' },
   'IFS NH3': { sub: 'MAT', name: 'Illini Farm Supply: anhydrous ammonia (NH3) spot' },
   'IFS UAN': { sub: 'MAT', name: 'Illini Farm Supply: UAN spot' },
   'IFS DOCK': { sub: 'MAT', name: 'Illini Farm Supply: boxcar dock (ramp)' },
@@ -6713,7 +6720,45 @@ function finishWork(all) { // all = end of day: everything finishes. Otherwise o
   return out;
 }
 let workT = 0;
+// ---------------------------------------------------------------- HOT SWITCH REQUESTS (Nov 24, mw59ef137, Stephen)
+// Now and then (at most one a day, HOT_SW.odds) a customer with a car to spot or pull asks for a hot switch at a random time of the
+// working day. Take it: do the work within HOT_SW.hours game hours for an extra switching fee + a hot car bonus (per car) on top of the
+// normal pay; late = no hot pay and HOT_SW.lateRep. Leave it: the request is dropped and the normal schedule applies. Never offered while
+// a pop-up or the call screen is open (the clock is stopped then anyway). A taken CIC hot switch releases those CIC cars on any day.
+// Test hook: NII_HOT.force(key?) offers one now; NII_HOT.state() / NII_HOT.cands().
+const HOT_SW = { odds: 0.35, from: 8, to: 16, giveUp: 17, hours: 2, fee: 15, bonus: 25, maxCars: 2, lateRep: REP.LATE, onTimeRep: REP.HOT };
+const HOT_NAMES = { CIC: 'Central Illinois Corrugated', 'IFS NH3': 'Illini Farm Supply (NH3 spot)', 'IFS UAN': 'Illini Farm Supply (UAN spot)', 'IFS DOCK': 'Illini Farm Supply (boxcar dock)', GRAIN: 'Prairie Grain Co.', HOUSE: 'the Mattoon freight house' };
+const hotBF = K => /^IFS/.test(K) ? 'IFS' : K;
+function hotCands() { const today = dayNo(), cars = Object.values(state.veh).filter(v => TYPES[v.type].kind === 'car' && !locoOf(C(v.cid)) && !(v.day != null && v.day > today)), out = [], bf = bfS();
+  for (const K of SPOT_KEYS()) { if (bf[hotBF(K)] && bf[hotBF(K)].up) continue;
+    const used = cars.filter(o => atKey(o, K) || (o.work && o.dest === K)).length, free = K === 'HOUSE' ? HOT_SW.maxCars : Math.max(0, ((SPOTS[K] && SPOTS[K].spots) || []).length - used);
+    let wait = cars.filter(v => v.dest === K && !v.work && !atKey(v, K) && (K === 'CIC' || needOf(v)));
+    if (K === 'CIC') wait.sort((a, b) => { const A = cicAge(a), B = cicAge(b); return A[0] - B[0] || A[1] - B[1]; });
+    wait = wait.slice(0, Math.min(free, HOT_SW.maxCars)); if (wait.length) out.push({ K, kind: 'spot', ids: wait.map(v => v.id) });
+    if (K !== 'CIC' || cicDay(today)) { const rel = cars.filter(v => v.relK === K && atKey(v, K)).slice(0, HOT_SW.maxCars); if (rel.length) out.push({ K, kind: 'pull', ids: rel.map(v => v.id) }); } }
+  return out; }
+function hotCarLine(v) { const l = carLoad(v); return `<div class="hs-car"><b>${roadOf(v)} ${v.num}</b><span>${TYPES[v.type].name}${l ? ` · ${l.c} ${l.t}T` : ' · empty'}</span></div>`; }
+function hotShow() { const h = state.hot; if (!h || h.st !== 'offer') return; const n = h.ids.length, per = HOT_SW.fee + HOT_SW.bonus;
+  if (!document.getElementById('hsCss')) { const st = document.createElement('style'); st.id = 'hsCss'; st.textContent = '#modal .hs{margin:-16px -16px -12px;border-radius:16px;overflow:hidden;background:#fffdf7}#modal .hs-top{background:linear-gradient(135deg,#ea7424,#c4501a);color:#fff;padding:14px 16px 12px;position:relative}#modal .hs-tag{display:inline-block;background:#1c2b50;color:#ffd27a;font-weight:800;letter-spacing:.12em;font-size:12px;padding:3px 9px;border-radius:6px}#modal .hs-top h2{color:#fff;margin:8px 0 2px;font-size:22px}#modal .hs-sub{opacity:.92;font-size:14px}#modal .hs-body{padding:12px 16px 14px}#modal .hs-cars{border:2px dashed #d9cfb8;background:#fff8e8;border-radius:10px;padding:6px 10px;margin:4px 0 10px}#modal .hs-car{display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:1px solid #eadfc8}#modal .hs-car:last-child{border-bottom:0}#modal .hs-car span{color:#5a5f68;font-size:14px;text-align:right}#modal .hs-pay{display:grid;grid-template-columns:1fr auto;gap:2px 12px;background:#e6f4ea;border:1px solid #17733a;border-radius:10px;padding:8px 12px;color:#17733a}#modal .hs-pay .t{font-weight:800;border-top:1px solid #17733a;padding-top:3px}#modal .hs-note{font-size:13px;color:#5a5f68;margin:8px 0 0}#modal .hs .btns button.hs-take{background:#ea7424}#modal .hs .btns button.hs-leave{background:#fff;color:#1c2b50;border:2px solid #1c2b50}'; document.head.appendChild(st); }
+  const cars = h.ids.map(V).filter(Boolean), what = h.kind === 'spot' ? `wants ${n === 1 ? 'this car' : 'these cars'} spotted` : `wants ${n === 1 ? 'this car' : 'these cars'} pulled`;
+  showModal(`<div class="hs"><div class="hs-top"><span class="hs-tag">HOT SWITCH</span><h2>${HOT_NAMES[h.K] || h.K}</h2><div class="hs-sub">Mattoon · ${what} in the next ${HOT_SW.hours} hours (by ${clockStr(state.time + HOT_SW.hours * 3600)})</div></div>` +
+    `<div class="hs-body"><div class="hs-cars">${cars.map(hotCarLine).join('')}</div><div class="hs-pay"><span>Extra switching fee</span><b>$${HOT_SW.fee * n}</b><span>Hot car bonus</span><b>$${HOT_SW.bonus * n}</b><span class="t">Extra pay on top of normal pay</span><b class="t">$${per * n}</b></div>` +
+    `<p class="hs-note">Late: no extra pay and ${HOT_SW.lateRep} rep. Leave it and ${HOT_NAMES[h.K] || h.K} waits for its next normal window.</p><div class="btns"><button class="hs-take" data-act="hotTake">Take it</button><button class="hs-leave" data-act="hotLeave">Leave it until their next window</button></div></div></div>`); }
+function hotOffer(c) { const n = c.ids.length; state.hot = { day: dayNo(), K: c.K, kind: c.kind, ids: c.ids.slice(), st: 'offer', at: state.time, pay: (HOT_SW.fee + HOT_SW.bonus) * n }; hotShow(); save(); return state.hot; }
+function hotAnswer(take) { const h = state.hot; hideModal(); if (!h || h.st !== 'offer') return; if (!take) { h.st = 'left'; toast(`Left it: ${HOT_NAMES[h.K] || h.K} waits for its next normal window.`); save(); return; }
+  h.st = 'taken'; h.until = state.time + HOT_SW.hours * 3600; if (h.K === 'CIC' && h.kind === 'spot') state.cicHot = { ids: h.ids.slice(), until: h.until };
+  toast(`Hot switch taken: ${h.kind === 'spot' ? 'spot' : 'pull'} ${h.ids.map(id => V(id) ? roadOf(V(id)) + ' ' + V(id).num : id).join(', ')} at ${HOT_NAMES[h.K] || h.K} by ${clockStr(h.until)}.`, 'good'); save(); }
+function hotDone(h) { const vs = h.ids.map(id => state.veh[id]); return h.kind === 'spot' ? vs.every(v => !v || v.work || (atKey(v, h.K) && !locoOf(C(v.cid)))) : vs.every(v => !v || !atKey(v, h.K)); }
+function hotTick() { if (VISIT || LEAVING || !state) return; const d = dayNo(), t0 = (d - 1) * 86400, h = state.hot;
+  if (h && h.st === 'taken') { if (hotDone(h)) { h.st = 'paid'; book('earn', h.pay); IND(h.K, 'inc', h.pay); repAdd(HOT_SW.onTimeRep, `hot switch at ${HOT_NAMES[h.K] || h.K} on time: +$${h.pay}`); delete state.cicHot; save(); }
+    else if (state.time > h.until) { h.st = 'late'; repAdd(HOT_SW.lateRep, `hot switch at ${HOT_NAMES[h.K] || h.K} not done in ${HOT_SW.hours} hours: no hot pay`); delete state.cicHot; save(); } return; }
+  if (h && h.st === 'offer') { if (!$('modalBg').classList.contains('show')) hotAnswer(false); return; } // closed some other way = left it
+  const plan = state.hotDay && state.hotDay.day === d ? state.hotDay : (state.hotDay = { day: d, at: (() => { const r = seeded(d * 7331 + 17 + (NII.gameSeed ? NII.gameSeed(d) : 0)); return r() < HOT_SW.odds ? t0 + (HOT_SW.from + r() * (HOT_SW.to - HOT_SW.from)) * 3600 : null; })() });
+  if (plan.at == null || plan.done || state.time < plan.at || $('modalBg').classList.contains('show')) return;
+  if (state.time > t0 + HOT_SW.giveUp * 3600) { plan.done = true; return; } const cs = hotCands(); if (!cs.length) return; plan.done = true; hotOffer(cs[Math.floor(seeded(d * 97 + 3)() * cs.length)]); }
+window.NII_HOT = { force: K => { if (state.hot && (state.hot.st === 'offer' || state.hot.st === 'taken')) return null; const cs = hotCands().filter(c => !K || c.K === K); if (!cs.length) return null; (state.hotDay = state.hotDay || { day: dayNo() }).done = true; return hotOffer(cs[0]); }, state: () => state.hot, cands: () => hotCands(), conf: HOT_SW };
 function workTick() { // a few times a game minute: start work on cars left at their spot, finish what's due
+  cicRelease(); // mw59ef137: the 6 AM CIC release happens on the clock, even overnight
   // any empty boxcar left (uncoupled, stopped) at the freight house door gets an outbound load from the freight agent
   for (const v of Object.values(state.veh)) if (v.fhDone && !carWhere(v).house) delete v.fhDone;
   for (const v of Object.values(state.veh)) if (!v.work && !v.fhDone && !carLoad(v) && (v.type === 'boxcarIC' || v.type === 'boxcar50' || v.type === 'boxcar40') && carWhere(v).house) { const c = C(v.cid); if (locoOf(c) || Math.abs(c.v) > 0.01) continue;
@@ -6979,6 +7024,8 @@ function menu() {
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return; const a = b.dataset.act;
   if (a === 'close') { hideModal(); state.help = false; save(); }
+  else if (a === 'hotTake') hotAnswer(true);
+  else if (a === 'hotLeave') hotAnswer(false);
   else if (a === 'help') showModal(HELP);
   else if (a === 'townsPick') { hideModal(); NII.pickTown(); }
   else if (a === 'nextJob') { hideModal(); }
@@ -8800,7 +8847,7 @@ function frame(t) {
   const dtR = Math.min(0.1, (t - lastT) / 1000 || 0); lastT = t;
   // Nov 16 fix (Stephen: Mattoon froze when scrolling): one error in a frame no longer stops the game loop for good
   try { if (!paused && !$('modalBg').classList.contains('show')) advanceTime(dtR * state.speed); } catch (e) { frameFail(e, 'sim'); }
-  if ((csT += dtR) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } }
+  if ((csT += dtR) > 0.5) { csT = 0; try { if (window.NII_CALLSHEET) NII_CALLSHEET.tick(); } catch (e) { } try { hotTick(); } catch (e) { frameFail(e, 'hot'); } }
   try { crossTick(); } catch (e) { frameFail(e, 'cross'); }
   try { sceneCam(dtR); drawMap(); } catch (e) { frameFail(e, 'map'); }
   try { drawScene(dtR); } catch (e) { frameFail(e, 'scene'); try { gctx.setTransform(DPR, 0, 0, DPR, 0, 0); gctx.globalAlpha = 1; } catch (er) { } }
