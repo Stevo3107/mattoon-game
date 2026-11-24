@@ -2101,9 +2101,10 @@ const locoV = c => c && c.veh.find(isLoco);
 function fwdSign(c) { const i = c.veh.findIndex(isLoco); return c.aT[i] ? 1 : -1; } // F runs short hood first (GP9 B end); +1 = toward the cut head
 function drivePhys(c, dt, lim, tapIdle) { // the shared engine physics (Mattoon's stepConsist), in Effingham's cut terms (sv: ft/s, + toward the head)
   const l = locoV(c); if (l.fuel == null) l.fuel = 320; if (l.sand == null) l.sand = 60; const running = l.fuel > 0;
-  const r = SH.driveStep({ v: ctl.sv || 0, W: c.veh.reduce((a, v) => a + (v.wt || 30), 0), Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: !!tapIdle, lim }, dt);
+  const W = c.veh.reduce((a, v) => a + (v.wt || 30), 0), mph0 = Math.abs(ctl.sv || 0) * 0.6818; // train tons (same sum as the tonnage box) and speed before this step
+  const r = SH.driveStep({ v: ctl.sv || 0, W, Wl: l.wt || 124, notch: ctl.notch, rev: ctl.rev, sign: fwdSign(c), brake: ctl.brake, sand: ctl.sand && l.sand > 0, running, tapIdle: !!tapIdle, lim }, dt);
   ctl.sv = r.v; ctl.slip = r.slip; ctl.slide = r.slide;
-  const u = SH.consume(l, ctl, r.eq, dt); if (u.sandCost) book('sand', u.sandCost); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); if (u.sandEmpty) toast('Sand boxes are empty.', 'bad');
+  const u = SH.consume(l, ctl, r.eq, dt, { tons: W, mph: Math.abs(r.v) * 0.6818, accel: (Math.abs(r.v) * 0.6818 - mph0) / Math.max(dt, 1e-3) }); /* Nov 24: throttle + tonnage + accelerating vs holding speed */ if (u.sandCost) book('sand', u.sandCost); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); if (u.sandEmpty) toast('Sand boxes are empty.', 'bad');
   ctl.v = Math.abs(ctl.sv); return Math.sign(ctl.sv); }
 function sideOfHead(c) { const h = pathPt(c, cutLen(c)), t = pathPt(c, 0), a = ptAt(h.t, h.d), b = ptAt(t.t, t.d); return Math.abs(a[0] - b[0]) > 5 ? (a[0] > b[0] ? 1 : -1) : (a[1] < b[1] ? 1 : -1); } // +1: head is screen-right (or up)
 function leadingEnd(c, sgn) { return sgn > 0 ? pathPt(c, cutLen(c)) : pathPt(c, 0); }
@@ -2300,7 +2301,7 @@ function apStep(c, dt, lim) { const ap = ctl.ap, l = locoV(c), running = !l || l
   if (approach && ap.left < -15) return apArriveN();
   let vdes = SH.apVdes(limit, approach, lim);
   if (!running) { vdes = 0; if (ctl.v < 0.05) { ctl.ap = null; ctl.v = 0; toast('No fuel - the engine is dead.', 'bad'); return; } }
-  const r = SH.apAccel(ctl.v, vdes, dt); ctl.v = r.sp; eq = r.eq; if (l) { const u = SH.consume(l, ctl, eq, dt); if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); }
+  const r = SH.apAccel(ctl.v, vdes, dt); ctl.v = r.sp; eq = r.eq; if (l) { const u = SH.consume(l, ctl, eq, dt, { tons: c.veh.reduce((a, v) => a + (v.wt || 30), 0), mph: ctl.v * 0.6818, accel: eq > 1 ? 0.1 : 0 }); /* Nov 24: autopilot counts as speeding up above notch 1, as in Mattoon */ if (u.out) toast('Out of fuel! The engine shut down. Call the fuel truck.', 'bad'); }
   let dx = ctl.v * dt; if (!approach && dx > limit) dx = limit; ctl.sv = ctl.v * ap.sgn;
   moveStep(c, ap.sgn, dx);
   if (ctl.ap === ap && edgeRun && ap.left <= 20) { crossLeave(); return; } if (ctl.ap === ap && !approach && ap.left <= 0.05) { apArriveN(); return; }
@@ -4889,7 +4890,7 @@ function build() {
     else if (a === 'endGo') { if (NII.runEndDay) NII.runEndDay(() => endDay()).catch(() => {}); else endDay(); } else if (a === 'zin') { cam.z = Math.min(4, cam.z * 1.35); } else if (a === 'zout') { cam.z = Math.max(0.25, cam.z / 1.35); } else if (a === 'follow') cam.follow = true;
     else if (a === 'x') { S.speedX = (S.speedX || 1) >= 4 ? 1 : (S.speedX || 1) * 2; } else if (a === 'north') { const cc = liveCut(); const e = cc && [pathPt(cc, 0), pathPt(cc, cutLen(cc))].some(p => p.t === 'M1' && p.d < 120); if (!cc || e) askNorth(); else toast('Run the train to the north end of the main first (◀ on the main).'); }
     else if (a === 'wb') { const v = standingCars().find(q => q.v.id === b.dataset.id); if (v) carModal(v); }
-    else if (a === 'namesToggle') { NAMES_ON = !NAMES_ON; try { localStorage.setItem('nii-mattoon-tracknames', NAMES_ON ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'waybills') showWaybillsN(); else if (a === 'resetAsk') { hideModal(); $('restartBtn').onclick(); } else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); } else if (a === 'makeEngine') { hideModal(); if (carModal.q) claimEngine(carModal.q.v.id); } else if (a === 'giveUpEngine') { hideModal(); releaseEngine(); }
+    else if (a === 'namesToggle') { NAMES_ON = !NAMES_ON; try { localStorage.setItem('nii-mattoon-tracknames', NAMES_ON ? '1' : '0'); } catch (e) { } $('menuBtn').onclick(); } else if (a === 'waybills') showWaybillsN(); else if (a === 'resetAsk') { hideModal(); $('restartBtn').onclick(); } else if (a === 'simTime') { if (window.NII_CALLSHEET && NII_CALLSHEET.openSimTime) NII_CALLSHEET.openSimTime(); } else if (a === 'makeEngine') { hideModal(); if (carModal.q) { const bz = window.NII_CALLSHEET && NII_CALLSHEET.engineBusy && NII_CALLSHEET.engineBusy(carModal.q.v.id); if (bz) toast(bz, 'bad'); else claimEngine(carModal.q.v.id); } } // Nov 24 (mw59ef134): out of service for fuel and sand else if (a === 'giveUpEngine') { hideModal(); releaseEngine(); }
     else if (a === 'uncL' || a === 'uncR') { hideModal(); uncouple(carModal.q, a === 'uncL' ? 'L' : 'R'); }
     else if (a === 'apCar') { hideModal(); const q = carModal.q, e = (q.p0.d < q.p1.d) ? q.p0 : q.p1; apTo(q.pm.t, q.pm.d); } });
   // canvas: drag to pan, tap a stand to throw it, tap a car for its waybill, tap the track to run the engine there
