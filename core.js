@@ -1476,10 +1476,19 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     REST_AFTER_FULL_H: 10, // after a continuous 12-hour tour
     MIN_OFF_IN_24_H: 8     // 8 consecutive hours off in the preceding 24 to be called
   };
+  // Van HOS (Stephen, Nov 25): a van ride TO go on duty (deadhead to the job's railroad town
+  // before the job starts) COUNTS toward the 12-hour clock. On-duty time starts when that
+  // van ride starts, so a 30-minute deadhead leaves 11.5 hours for the job itself. A van
+  // ride AFTER release (applyTieUp taxi back) is paid the same way but does NOT count.
+  // Once a man hits 12 hours he must stop working (no more moves), but he may still ride
+  // the post-release van and gets paid for it — a tie-up taxi at hour 12+ is never refused.
+  // Required rest (10h after a full tour / 8h after a shorter one) starts when that
+  // after-release ride ends. The ride itself is 1970s "limbo time": neither on duty nor
+  // off duty. Home-town commuting is not a van ride and is not HOS time.
 
   const MAIN_MPH = 25;
   const YARD_MPH = 10;
-  const TAXI_MPH = 40; // first-pass highway speed; paid, but not counted against the 12-hour clock
+  const TAXI_MPH = 40; // highway speed for van deadheads between railroad towns
 
   // Road trains: yard tracks, runarounds, and interchange tracks. Not customer spots.
   const ROAD_STOP_KIND = { yard: true, runaround: true, interchange: true, industry: false, main: false, engine: false };
@@ -1492,8 +1501,81 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     'neoga-effingham': 18,
     'effingham-neoga': 18
   };
-  const TOWN_NAME = { mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' };
+  // Real Illinois towns a person may live in, each within about 45 minutes of at least one
+  // railroad town. `minutes` are road drive times to Mattoon, Neoga, and Effingham.
+  // Published times: distance-cities.com, Travelmath, and routeplanner.app (OSRM). Remaining
+  // legs: published I-57 / I-70 legs added, or haversine × 1.25 road factor ÷ 50 mph, rounded.
+  // Paris (~60 min to Mattoon) and Flora (50 min to Effingham) were dropped as over ~45 min
+  // to every railroad town. Coordinates are city-center lat/lon.
+  const HOME_TOWNS = [
+    { id: 'mattoon', name: 'Mattoon', lat: 39.4831, lon: -88.3728, minutes: { mattoon: 0, neoga: 18, effingham: 32 }, nearest: 'mattoon' },
+    { id: 'neoga', name: 'Neoga', lat: 39.3217, lon: -88.4523, minutes: { mattoon: 18, neoga: 0, effingham: 22 }, nearest: 'neoga' },
+    { id: 'effingham', name: 'Effingham', lat: 39.1203, lon: -88.5434, minutes: { mattoon: 32, neoga: 22, effingham: 0 }, nearest: 'effingham' },
+    { id: 'charleston', name: 'Charleston', lat: 39.4961, lon: -88.1761, minutes: { mattoon: 19, neoga: 30, effingham: 40 }, nearest: 'mattoon' },
+    { id: 'sullivan', name: 'Sullivan', lat: 39.5995, lon: -88.6078, minutes: { mattoon: 27, neoga: 43, effingham: 55 }, nearest: 'mattoon' },
+    { id: 'arcola', name: 'Arcola', lat: 39.6848, lon: -88.3064, minutes: { mattoon: 20, neoga: 38, effingham: 52 }, nearest: 'mattoon' },
+    { id: 'tuscola', name: 'Tuscola', lat: 39.7992, lon: -88.2811, minutes: { mattoon: 34, neoga: 52, effingham: 66 }, nearest: 'mattoon' },
+    { id: 'shelbyville', name: 'Shelbyville', lat: 39.4064, lon: -88.7901, minutes: { mattoon: 38, neoga: 45, effingham: 36 }, nearest: 'effingham' },
+    { id: 'windsor', name: 'Windsor', lat: 39.4406, lon: -88.5948, minutes: { mattoon: 20, neoga: 38, effingham: 45 }, nearest: 'mattoon' },
+    { id: 'altamont', name: 'Altamont', lat: 39.0620, lon: -88.7481, minutes: { mattoon: 50, neoga: 33, effingham: 18 }, nearest: 'effingham' },
+    { id: 'teutopolis', name: 'Teutopolis', lat: 39.1331, lon: -88.4795, minutes: { mattoon: 41, neoga: 25, effingham: 6 }, nearest: 'effingham' },
+    { id: 'casey', name: 'Casey', lat: 39.2992, lon: -87.9925, minutes: { mattoon: 55, neoga: 47, effingham: 40 }, nearest: 'effingham' },
+    { id: 'toledo', name: 'Toledo', lat: 39.2736, lon: -88.2437, minutes: { mattoon: 38, neoga: 28, effingham: 34 }, nearest: 'neoga' },
+    { id: 'greenup', name: 'Greenup', lat: 39.2478, lon: -88.1634, minutes: { mattoon: 43, neoga: 40, effingham: 25 }, nearest: 'effingham' },
+    { id: 'vandalia', name: 'Vandalia', lat: 38.9606, lon: -89.0937, minutes: { mattoon: 70, neoga: 54, effingham: 32 }, nearest: 'effingham' },
+    { id: 'arthur', name: 'Arthur', lat: 39.7148, lon: -88.4723, minutes: { mattoon: 39, neoga: 53, effingham: 62 }, nearest: 'mattoon' }
+  ];
+  const HOME_TOWN_BY_ID = {};
+  HOME_TOWNS.forEach(function (t) { HOME_TOWN_BY_ID[t.id] = t; });
+  const TOWN_NAME = {};
+  HOME_TOWNS.forEach(function (t) { TOWN_NAME[t.id] = t.name; });
   function townName(id) { return (id && TOWN_NAME[id]) || id || ''; }
+  function isRailTown(id) { return TOWN_LINE.indexOf(id) >= 0; }
+  function homeTownInfo(id) { return (id && HOME_TOWN_BY_ID[id]) || null; }
+  function reportTownOf(personOrId) {
+    if (personOrId && typeof personOrId === 'object' && personOrId.reportTown) return personOrId.reportTown;
+    const home = personOrId && typeof personOrId === 'object' ? (personOrId.homeTown || personOrId.homeYard) : personOrId;
+    const h = homeTownInfo(home);
+    if (h) return h.nearest;
+    return isRailTown(home) ? home : 'mattoon';
+  }
+  // Minutes from a person's (or town id's) home to a railroad town. 0 if already there or unknown.
+  function commuteMinutes(personOrId, railTown) {
+    const home = personOrId && typeof personOrId === 'object' ? (personOrId.homeTown || personOrId.homeYard) : personOrId;
+    railTown = railTown || reportTownOf(personOrId);
+    if (!home || !railTown || home === railTown) return 0;
+    const h = homeTownInfo(home);
+    if (h && h.minutes && h.minutes[railTown] != null) return h.minutes[railTown];
+    return 0;
+  }
+  // Bid location score only (50% of jobAppeal). <=15 min → 1.0, then linearly to 0 at 60 min.
+  // The drive from home is the person's own time: not paid, not hog-law, and not used by
+  // firstOut, the extra board, whoWorks readiness, or van/deadhead. Van rides stay
+  // terminal-to-terminal between Mattoon, Neoga, and Effingham.
+  const COMMUTE = { FULL_MIN: 15, ZERO_MIN: 60 };
+  function commuteScore(min) {
+    min = +min || 0;
+    if (min <= COMMUTE.FULL_MIN) return 1;
+    if (min >= COMMUTE.ZERO_MIN) return 0;
+    return (COMMUTE.ZERO_MIN - min) / (COMMUTE.ZERO_MIN - COMMUTE.FULL_MIN);
+  }
+  // e.g. "lives in Sullivan, about 27 min to Mattoon" or "lives in Mattoon"
+  function homeLine(person) {
+    if (!person) return '';
+    const home = person.homeTown;
+    const report = person.reportTown || reportTownOf(person);
+    const mins = commuteMinutes(person, report);
+    const live = 'lives in ' + townName(home);
+    if (!mins) return live;
+    return live + ', about ' + mins + ' min to ' + townName(report);
+  }
+  function attachHome(person) {
+    if (!person) return person;
+    person.reportTown = reportTownOf(person);
+    person.commute = commuteMinutes(person, person.reportTown);
+    if (!person.location || !isRailTown(person.location)) person.location = person.reportTown;
+    return person;
+  }
 
   // First-pass switching minutes. Retune here without touching callers.
   const SWITCH = {
@@ -1641,6 +1723,46 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     }
     return mi;
   }
+  // Outbound van hours between railroad towns (0 if already there). This is on-duty time.
+  function deadheadHours(fromTown, toTown, extraMiles, taxiMph) {
+    if (!fromTown || !toTown || fromTown === toTown) return 0;
+    return round2(milesBetween(fromTown, toTown, extraMiles) / (taxiMph || TAXI_MPH));
+  }
+  // Hours left for the job itself after an outbound deadhead (12 minus the van). Home commute does not apply.
+  function hoursAvailable(personOrFrom, town, opts) {
+    opts = opts || {};
+    const from = personOrFrom && typeof personOrFrom === 'object' ? personOrFrom.location : personOrFrom;
+    const dh = deadheadHours(from, town, opts.miles, opts.taxiMph);
+    return round2(Math.max(0, HOS.ON_DUTY_H - dh));
+  }
+  // On-duty clock: job work plus the outbound van, not a post-release taxi.
+  function onDutyHours(workHours, outboundDeadheadHours) {
+    return round2((workHours || 0) + (outboundDeadheadHours || 0));
+  }
+  function makeDeadhead(fromTown, toTown, opts) {
+    opts = opts || {};
+    if (!fromTown || !toTown || fromTown === toTown) return null;
+    const hours = deadheadHours(fromTown, toTown, opts.miles, opts.taxiMph);
+    if (!hours) return null;
+    const miles = milesBetween(fromTown, toTown, opts.miles);
+    return {
+      from: fromTown, to: toTown, miles: miles, hours: hours,
+      countsAgainstHogLaw: true,
+      hoursAvailable: round2(Math.max(0, HOS.ON_DUTY_H - hours))
+    };
+  }
+  // Job on-duty time, or that time minus the outbound van so they arrive when the job starts.
+  function dutyStartsAt(job, dayStart, person) {
+    const dest = job && (job.town || job.start);
+    const on = onDutyAt(job, dayStart);
+    const dh = deadheadHours(person && person.location, dest);
+    return on - dh * 3600;
+  }
+  // Rest must be finished when on-duty starts: at job on-duty if already in town, or when the outbound van starts.
+  function isRestedForCall(person, now, town) {
+    const dh = deadheadHours(person && person.location, town);
+    return isRested(person, (now || 0) - dh * 3600);
+  }
 
   function roadHours(job, extraMiles) {
     const stops = [job.start];
@@ -1718,14 +1840,21 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     const roadAdj = roadH * famFactor(((crew && crew.familiarity && crew.familiarity.road) || {})[rk] || 0);
     const exp = expTimeFactor(crew && crew.hoursWorked);
     const totalH = (switchH + roadAdj) * exp;
+    const dest = job.start || job.town;
+    const dh = deadheadHours(crew && crew.location, dest, ctx.miles, ctx.taxiMph);
+    const onDutyH = onDutyHours(totalH, dh);
+    const left = round2(Math.max(0, HOS.ON_DUTY_H - dh));
     return {
       switchHours: round2(switchH * exp),
       roadHours: round2(roadAdj * exp),
       hours: round2(totalH),
       seconds: Math.round(totalH * 3600),
       hogLawHours: HOS.ON_DUTY_H,
-      hogRisk: totalH > HOS.ON_DUTY_H,
-      overHours: totalH > HOS.ON_DUTY_H ? round2(totalH - HOS.ON_DUTY_H) : 0,
+      deadheadHours: dh,
+      hoursAvailable: left,
+      onDutyHours: onDutyH,
+      hogRisk: onDutyH > HOS.ON_DUTY_H,
+      overHours: onDutyH > HOS.ON_DUTY_H ? round2(onDutyH - HOS.ON_DUTY_H) : 0,
       noYardJobPenalty: !!noYard,
       label: formatAboutHours(totalH),
       parts: parts
@@ -1994,6 +2123,11 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     return { needed: true, options: ['bunkhouse', 'taxi'], taxiTo: job.start };
   }
 
+  // Post-release van (choice === 'taxi'): paid, does not count toward the 12-hour clock,
+  // and is allowed even if tourHours is already 12 (he must stop working, but may still
+  // ride back). lastTourHours should be on-duty time (work + outbound deadhead only).
+  // Rest starts at restStarts / lastReleaseTime when the van arrives — 1970s limbo time
+  // while he is riding: neither on duty nor off duty.
   function applyTieUp(crew, job, choice, now, opts) {
     opts = opts || {};
     const same = !job || job.start === job.tieUp;
@@ -2016,6 +2150,9 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     return { crew: crew, paidHours: paidHours, vanPay: vanPay, entries: entries, restStarts: signOff, location: job.start, choice: 'taxi', countsAgainstHogLaw: false };
   }
 
+  // hoursWorked is time already on the 12-hour clock (job work plus any outbound deadhead;
+  // a post-release taxi is not included). At 12 hours he must stop working; the train stays
+  // put. This does not block a later applyTieUp taxi.
   function hogOut(job, progress, hoursWorked) {
     if ((hoursWorked || 0) < HOS.ON_DUTY_H - 1e-9) return { hoggedOut: false };
     if (progress && progress.finished) return { hoggedOut: false };
@@ -2046,10 +2183,11 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
 
   function seniorityKey(person) { return person && person.seniority ? person.seniority : 'h' + String(99999999 - Math.round(person && person.hoursWorked || 0)).padStart(8, '0'); }
   function bySeniority(a, b) { const x = seniorityKey(a), y = seniorityKey(b); return x < y ? -1 : x > y ? 1 : String(a.id).localeCompare(String(b.id)); }
-  // Location factor uses the person's home town (prefs.town defaults to homeTown).
+  // prefs.town is the railroad town he prefers to work (defaults to reportTown).
+  // jobAppeal's location factor uses commute minutes from homeTown, not this hop count.
   function crewPrefs(person) {
     const p = (person && person.prefs) || {};
-    return { town: p.town || person.homeTown || person.homeYard || person.location || 'mattoon', hours: p.hours != null ? p.hours : 8, offDays: p.offDays || ['sat', 'sun'] };
+    return { town: p.town || person.reportTown || reportTownOf(person), hours: p.hours != null ? p.hours : 8, offDays: p.offDays || ['sat', 'sun'] };
   }
   const personPrefs = crewPrefs;
 
@@ -2113,15 +2251,19 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     return job;
   }
   function townGap(a, b) { const i = TOWN_LINE.indexOf(a), j = TOWN_LINE.indexOf(b); return i < 0 || j < 0 ? 2 : Math.abs(i - j); }
-  // 0..1: how much this person wants this job (home town, hours, off days).
+  // 0..1: how much this person wants this job (commute from home, hours, off days).
+  // Location (50%) is commuteScore of minutes from homeTown to job.town; <=15 min = 1.0,
+  // linearly to 0 at 60 min. Hours still read job.avgHours. Commute is a bid preference
+  // only — not used for firstOut, whoWorks, or van/deadhead.
   function jobAppeal(person, job) {
-    const p = personPrefs(person), g = townGap(p.town, job.town);
-    const town = g === 0 ? 1 : g === 1 ? 0.4 : 0;
+    const p = personPrefs(person);
+    const mins = commuteMinutes(person, job && job.town);
+    const town = commuteScore(mins);
     const hours = clamp(1 - Math.abs((job.avgHours || 8) - p.hours) / BID.HOURS_SPAN, 0, 1);
-    const want = p.offDays, got = job.offDays || [];
+    const want = p.offDays, got = (job && job.offDays) || [];
     const off = want.length ? want.filter(function (d) { return got.indexOf(d) >= 0; }).length / want.length : 1;
     const score = round2(BID.W_TOWN * town + BID.W_HOURS * hours + BID.W_OFF * off);
-    return { score: score, town: town, hours: round2(hours), off: round2(off), bids: score >= BID.MIN_APPEAL };
+    return { score: score, town: round2(town), hours: round2(hours), off: round2(off), commute: mins, bids: score >= BID.MIN_APPEAL };
   }
 
   // Bulletin a set of jobs. Most senior person in each craft picks first among open seats of that craft.
@@ -2272,13 +2414,15 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
   // firstOut(people, craft, jobs, now, town). Also accepts the older (people, jobs, now, town) shape.
   function firstOut(people, craft, jobs, now, town) {
     if (Array.isArray(craft)) { town = now; now = jobs; jobs = craft; craft = null; }
-    const b = extraBoard(people, jobs, now, craft).filter(function (e) { return e.available && e.rested; });
+    const b = extraBoard(people, jobs, now, craft).filter(function (e) {
+      if (!e.available) return false;
+      return isRestedForCall(personById(people, e.person) || e, now, town);
+    });
     const here = b.find(function (e) { return !town || e.location === town; });
     if (here) return here;
     const away = b[0];
     if (!away) return null;
-    const mi = milesBetween(away.location, town);
-    return Object.assign({}, away, { deadhead: { from: away.location, to: town, miles: mi, hours: round2(mi / TAXI_MPH) } });
+    return Object.assign({}, away, { deadhead: makeDeadhead(away.location, town) });
   }
   function boardReason(people, jobs, now, craft) {
     const b = extraBoard(people, jobs, now, craft);
@@ -2310,6 +2454,7 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     if (!e) return { seat: seat, craft: craft, person: null, via: null, reason: (why ? why + '. ' : '') + boardReason(people, jobs, now, craft) };
     return {
       seat: seat, craft: craft, person: e.person, name: e.name, via: 'extra', deadhead: e.deadhead || null,
+      hoursAvailable: e.deadhead ? e.deadhead.hoursAvailable : HOS.ON_DUTY_H,
       reason: (why ? why + '; ' : '') + e.name + ' covers from the extra board' +
         (e.deadhead ? ', riding the van from ' + townName(e.deadhead.from) + ' (' + formatAboutHours(e.deadhead.hours) + ')' : '') + '.'
     };
@@ -2386,7 +2531,7 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
         seatMap[seat] = assignExtraSeat(people, jobs, now, job, seat, why);
         return;
       }
-      seatMap[seat] = { seat: seat, craft: seatCraft(seat), person: p.id, name: p.name, via: 'regular', reason: null };
+      seatMap[seat] = { seat: seat, craft: seatCraft(seat), person: p.id, name: p.name, via: 'regular', reason: null, hoursAvailable: HOS.ON_DUTY_H };
     });
     return summarizeWho({ seats: seatMap }, job, people, opts);
   }
@@ -2406,17 +2551,21 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
 
   function makePerson(o) {
     o = o || {};
-    const home = o.homeTown || o.homeYard || o.location || 'mattoon';
+    const home = o.homeTown || o.homeYard || (isRailTown(o.location) ? o.location : null) || 'mattoon';
+    const report = o.reportTown || reportTownOf({ homeTown: home });
+    const loc = (o.location && isRailTown(o.location)) ? o.location : report;
     return {
       id: o.id,
       name: o.name,
       craft: normalizeCraft(o.craft) || 'brakeman',
       art: o.art !== undefined ? o.art : null, // NII_CREW_ART key, e.g. 'earl-jenkins'
-      placeholder: !!o.placeholder,           // TBD seats, easy to rename when Danny posts names
+      placeholder: !!o.placeholder,
       seniority: o.seniority || null,
       homeTown: home,
+      reportTown: report,
+      commute: commuteMinutes({ homeTown: home }, report),
       prefs: o.prefs || null,
-      location: o.location || home,
+      location: loc,
       status: o.status || 'available',
       hoursWorked: o.hoursWorked || 0,
       lastReleaseTime: o.lastReleaseTime != null ? o.lastReleaseTime : null,
@@ -2520,9 +2669,9 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
       if (!p.id || PERSON_ALIAS[p.id] || PERSON_ALIAS[sur] || sur === 'hogger' || /^new\d+$/.test(p.id)) return;
       if (!byId[p.id]) byId[p.id] = p;
     });
-    const out = starters.map(function (s) { return byId[s.id]; });
+    const out = starters.map(function (s) { return attachHome(byId[s.id]); });
     Object.keys(byId).forEach(function (id) {
-      if (!starters.some(function (s) { return s.id === id; })) out.push(byId[id]);
+      if (!starters.some(function (s) { return s.id === id; })) out.push(attachHome(byId[id]));
     });
     return out;
   }
@@ -2585,21 +2734,21 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     function P(o) { return makePerson(o); }
     function named(id, name, craft, extra) { return P(Object.assign({ id: id, name: name, craft: craft, art: id }, extra)); }
     return [
-      named('harold-greer', 'Harold Greer', 'engineer', { seniority: '1946-04-08', homeTown: 'effingham', hoursWorked: 14000, prefs: { town: 'effingham', hours: 8, offDays: ['sat', 'sun'] } }),
+      named('harold-greer', 'Harold Greer', 'engineer', { seniority: '1946-04-08', homeTown: 'vandalia', hoursWorked: 14000, prefs: { town: 'effingham', hours: 8, offDays: ['sat', 'sun'] } }),
       named('ray-kovacs', 'Ray Kovacs', 'engineer', { seniority: '1954-03-22', homeTown: 'mattoon', hoursWorked: 9800, prefs: { town: 'mattoon', hours: 6, offDays: ['sat', 'sun'] } }),
-      named('bill-kessler', 'Bill Kessler', 'engineer', { seniority: '1963-11-18', homeTown: 'mattoon', hoursWorked: 6200, prefs: { town: 'mattoon', hours: 10, offDays: ['sun', 'mon'] } }),
+      named('bill-kessler', 'Bill Kessler', 'engineer', { seniority: '1963-11-18', homeTown: 'arcola', hoursWorked: 6200, prefs: { town: 'mattoon', hours: 10, offDays: ['sun', 'mon'] } }),
       named('pete-gallagher', 'Pete Gallagher', 'engineer', { seniority: '1970-05-04', homeTown: 'neoga', hoursWorked: 2400, prefs: { town: 'neoga', hours: 8, offDays: ['sat', 'sun'] } }),
       named('don-palladino', 'Don Palladino', 'conductor', { seniority: '1949-03-02', homeTown: 'effingham', hoursWorked: 13050, status: 'vacation', prefs: { town: 'effingham', hours: 8, offDays: ['sat', 'sun'] } }),
       named('earl-jenkins', 'Earl Jenkins', 'conductor', { seniority: '1952-04-14', homeTown: 'mattoon', hoursWorked: 11400, prefs: { town: 'mattoon', hours: 6, offDays: ['sat', 'sun'] } }),
-      named('nick-pappas', 'Nick Pappas', 'conductor', { seniority: '1953-08-17', homeTown: 'effingham', hoursWorked: 10800, prefs: { town: 'effingham', hours: 8, offDays: ['tue', 'wed'] } }),
-      named('tom-hale', 'Tom Hale', 'conductor', { seniority: '1961-09-05', homeTown: 'mattoon', hoursWorked: 6800, prefs: { town: 'mattoon', hours: 10, offDays: ['sun', 'mon'] } }),
-      named('pat-morelli', 'Pat Morelli', 'conductor', { seniority: '1972-06-19', homeTown: 'neoga', hoursWorked: 1160, status: 'off', prefs: { town: 'neoga', hours: 8, offDays: ['sat', 'sun'] } }),
+      named('nick-pappas', 'Nick Pappas', 'conductor', { seniority: '1953-08-17', homeTown: 'teutopolis', hoursWorked: 10800, prefs: { town: 'effingham', hours: 8, offDays: ['tue', 'wed'] } }),
+      named('tom-hale', 'Tom Hale', 'conductor', { seniority: '1961-09-05', homeTown: 'sullivan', hoursWorked: 6800, prefs: { town: 'mattoon', hours: 10, offDays: ['sun', 'mon'] } }),
+      named('pat-morelli', 'Pat Morelli', 'conductor', { seniority: '1972-06-19', homeTown: 'toledo', hoursWorked: 1160, status: 'off', prefs: { town: 'neoga', hours: 8, offDays: ['sat', 'sun'] } }),
       named('stan-novak', 'Stan Novak', 'brakeman', { seniority: '1948-01-19', homeTown: 'mattoon', hoursWorked: 13200, prefs: { town: 'mattoon', hours: 8, offDays: ['sat', 'sun'] } }),
-      named('walt-nowak', 'Walt Nowak', 'brakeman', { seniority: '1950-06-30', homeTown: 'mattoon', hoursWorked: 12100, prefs: { town: 'mattoon', hours: 8, offDays: ['wed', 'thu'] } }),
-      named('mike-ruiz', 'Mike Ruiz', 'brakeman', { seniority: '1956-02-08', homeTown: 'mattoon', hoursWorked: 8900, prefs: { town: 'mattoon', hours: 6, offDays: ['sat', 'sun'] } }),
-      named('gene-schaeffer', 'Gene Schaeffer', 'brakeman', { seniority: '1959-10-12', homeTown: 'effingham', hoursWorked: 7100, prefs: { town: 'effingham', hours: 10, offDays: ['sun', 'mon'] } }),
-      named('joe-deluca', 'Joe DeLuca', 'brakeman', { seniority: '1965-07-21', homeTown: 'neoga', hoursWorked: 4800, prefs: { town: 'neoga', hours: 8, offDays: ['fri', 'sat'] } }),
-      named('leon-brooks', 'Leon Brooks', 'brakeman', { seniority: '1974-09-03', homeTown: 'effingham', hoursWorked: 400, prefs: { town: 'effingham', hours: 8, offDays: ['sat', 'sun'] } })
+      named('walt-nowak', 'Walt Nowak', 'brakeman', { seniority: '1950-06-30', homeTown: 'charleston', hoursWorked: 12100, prefs: { town: 'mattoon', hours: 8, offDays: ['wed', 'thu'] } }),
+      named('mike-ruiz', 'Mike Ruiz', 'brakeman', { seniority: '1956-02-08', homeTown: 'arthur', hoursWorked: 8900, prefs: { town: 'mattoon', hours: 6, offDays: ['sat', 'sun'] } }),
+      named('gene-schaeffer', 'Gene Schaeffer', 'brakeman', { seniority: '1959-10-12', homeTown: 'greenup', hoursWorked: 7100, prefs: { town: 'effingham', hours: 10, offDays: ['sun', 'mon'] } }),
+      named('joe-deluca', 'Joe DeLuca', 'brakeman', { seniority: '1965-07-21', homeTown: 'windsor', hoursWorked: 4800, prefs: { town: 'mattoon', hours: 8, offDays: ['fri', 'sat'] } }),
+      named('leon-brooks', 'Leon Brooks', 'brakeman', { seniority: '1974-09-03', homeTown: 'altamont', hoursWorked: 400, prefs: { town: 'effingham', hours: 8, offDays: ['sat', 'sun'] } })
     ];
   }
   const starterPeople = starterRoster;
@@ -2726,7 +2875,15 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     TOWN_LINE: TOWN_LINE,
     TOWN_MILES: TOWN_MILES,
     TOWN_NAME: TOWN_NAME,
+    HOME_TOWNS: HOME_TOWNS,
+    COMMUTE: COMMUTE,
     townName: townName,
+    isRailTown: isRailTown,
+    homeTownInfo: homeTownInfo,
+    reportTownOf: reportTownOf,
+    commuteMinutes: commuteMinutes,
+    commuteScore: commuteScore,
+    homeLine: homeLine,
     occupiedSeats: occupiedSeats,
     trackInfo: trackInfo,
     trackKind: trackKind,
@@ -2737,6 +2894,12 @@ if (typeof window !== 'undefined' && window.NII_SHARED && window.NII_LEDGER && !
     needsCaboose: needsCaboose,
     cabooseWarning: cabooseWarning,
     milesBetween: milesBetween,
+    deadheadHours: deadheadHours,
+    hoursAvailable: hoursAvailable,
+    onDutyHours: onDutyHours,
+    makeDeadhead: makeDeadhead,
+    dutyStartsAt: dutyStartsAt,
+    isRestedForCall: isRestedForCall,
     roadHours: roadHours,
     expTimeFactor: expTimeFactor,
     expPayFactor: expPayFactor,
@@ -2844,7 +3007,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function st() { return G.getState(); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
-  function townName(id) { return ({ mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' })[id] || id || ''; }
+  function townName(id) {
+    const known = ({ mattoon: 'Mattoon', neoga: 'Neoga', effingham: 'Effingham' })[id];
+    if (known) return known;
+    try { const C = R(); if (C && C.townName && id) { const n = C.townName(id); if (n) return n; } } catch (e) { }
+    return id || '';
+  }
   function placeName(id) { return id === 'mattoon' ? 'Mattoon Yard' : townName(id); }
   function neogaOpen() { const s = st(); return !!(s.unlocks && s.unlocks.neoga); }
   // Nov 13 (Stephen): N&W interchange work stays closed until 100 reputation (same flag as the Neoga unlock, or raw rep if the flag hasn't been stamped yet).
@@ -3764,7 +3932,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   }
   function expTier(h) { return (h || 0) >= 10000 ? 'Veteran' : (h || 0) >= 4000 ? 'Experienced' : 'Rookie'; }
   function commas(n) { return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
-  function crewSub(c) { const C = R(); const craft = c.craft && C && C.BID_CRAFT_LABEL ? (C.BID_CRAFT_LABEL[c.craft] || c.craft) : ''; const town = c.homeTown || c.homeYard || c.location; return (craft ? craft + ' · ' : '') + expTier(c.hoursWorked) + ' · ' + commas(c.hoursWorked) + ' hrs' + (town ? ' · ' + townName(town) : ''); }
+  function crewSub(c) { const C = R(); const craft = c.craft && C && C.BID_CRAFT_LABEL ? (C.BID_CRAFT_LABEL[c.craft] || c.craft) : ''; const town = (c && c.location && (!C || !C.isRailTown || C.isRailTown(c.location)) ? c.location : null) || (C && C.reportTownOf && C.reportTownOf(c)) || (c && c.reportTown) || null; return (craft ? craft + ' · ' : '') + expTier(c.hoursWorked) + ' · ' + commas(c.hoursWorked) + ' hrs' + (town ? ' · ' + townName(town) : ''); }
   function dateLabel(day) {
     const d = new Date(Date.UTC(1975, 8, 29) + ((day || 1) - 1) * 86400000); // Day 1 = Monday 29 Sep 1975 (game.js START_DATE)
     return WD[d.getUTCDay()] + ', ' + d.getUTCDate() + ' ' + MO[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
@@ -4234,7 +4402,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return sj ? sj.name : (job && job.work ? 'Assigned work' : 'No work assigned');
   }
   function appealWords(a, job) {
-    const townW = a.town === 1 ? 'it works in their home town' : a.town >= 0.4 ? 'it is one town away' : 'it is two towns away';
+    const mins = a && a.commute != null ? a.commute : null;
+    const townW = mins == null
+      ? (a.town === 1 ? 'it works in their home town' : a.town >= 0.4 ? 'it is one town away' : 'it is two towns away')
+      : (mins <= 0 ? 'they live in ' + townName(job && job.town) : mins <= 15 ? ('it is about ' + mins + ' min from home (a short commute)') : mins < 60 ? ('it is about ' + mins + ' min from home') : ('it is a long commute from home (about ' + mins + ' min)'));
     const hoursW = a.hours >= 0.85 ? 'the hours are what they like' : a.hours >= 0.5 ? 'the hours are close to what they like' : 'the hours are not what they like';
     const offW = a.off === 1 ? 'it has the days off they want' : a.off > 0 ? 'it has some of the days off they want' : 'it does not have the days off they want';
     const how = a.score >= 0.8 ? 'a strong bid' : a.score >= 0.65 ? 'a good bid' : a.score >= 0.5 ? 'a fair bid' : 'too low to bid';
@@ -4271,7 +4442,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (c.status === 'vacation') return c.name + ' is on vacation; the extra board is covering it.';
     if (c.status === 'off') return c.name + ' is marked off; the extra board is covering it.';
     if (c.status === 'onDuty') return c.name + ' is already on a call; the extra board is covering it.';
-    if (C && !C.isRested(c, now)) {
+    if (C && (C.isRestedForCall ? !C.isRestedForCall(c, now, job.town) : !C.isRested(c, now))) {
       const need = C.restRequiredHours(c);
       return need >= 10
         ? c.name + ' is still resting after a full 12-hour tour; the extra board is covering it.'
@@ -4279,6 +4450,155 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     }
     if (c.location && c.location !== job.town) return c.name + ' is at ' + townName(c.location) + ', not ' + townName(job.town) + '; the extra board is covering it.';
     return 'The regular crew is unavailable; the extra board is covering it.';
+  }
+
+  // Average job time (mw59ef142, Stephen): not a player-entered field. Bids still
+  // read job.avgHours in crews.js jobAppeal / runBids; we write that field here
+  // so Cassie does not have to change crews.js.
+  //
+  // Formula:
+  // - Each completed run of a regular job (hired regular, extra-board, or a
+  //   player/extra call of the same regularJobId) is stored on job.runs and
+  //   also on state.jobRuns[jobId], capped at the last 10:
+  //   { hours, at, via }. hours = on-duty/call to tie-up, rounded to 0.01 h
+  //   (the same figure finishJob already books).
+  // - The average is the mean of the last up to 8 runs whose hours are >= 0.5;
+  //   shorter runs are treated as aborted and ignored. That average is written
+  //   to job.avgHours (capped at 12) and is what jobAppeal / runBids already read.
+  // - With no qualifying runs yet: if the job already has a numeric avgHours
+  //   (an older player-entered value, or a previously written estimate), keep
+  //   it until real runs exist. Otherwise estimate from the assigned Saved Job:
+  //     1.5 h  base for on-duty and tie-up
+  //   + 0.5 h  per assigned customer/industry (savedJob.industries)
+  //   + travel: NII_CREWS.roadHours({ start, tieUp, work }) when the work or
+  //     tie-up leaves the start town (main-line miles / MAIN_MPH 25).
+  //     Extra-board van to the job and post-tie-up taxi are not included,
+  //     because recorded run hours are on-duty to tie-up only.
+  //   Capped at 12 h. A job with no work assigned estimates 1.5 h and does not throw.
+  // Recomputed on each recorded run and again just before weekly bids close.
+  // A "Run it yourself" day with no call/tie-up is not recorded (no clock).
+  function jobRunsStore() {
+    const s = st();
+    if (!s.jobRuns || typeof s.jobRuns !== 'object' || Array.isArray(s.jobRuns)) s.jobRuns = {};
+    return s.jobRuns;
+  }
+  function runsOf(job) {
+    const id = job && job.id;
+    const a = (job && Array.isArray(job.runs)) ? job.runs : [];
+    const b = (id && Array.isArray(jobRunsStore()[id])) ? jobRunsStore()[id] : [];
+    return a.length ? a : b;
+  }
+  function workForEstimate(job) {
+    const sj = job && job.savedJobId ? savedById(job.savedJobId) : null;
+    const industries = (sj && Array.isArray(sj.industries)) ? sj.industries.filter(Boolean) : [];
+    const work = [];
+    industries.forEach(function (id) {
+      let town = null;
+      try { town = customerTown(id); } catch (e) { }
+      work.push({ kind: 'industry', town: town || undefined, customer: id });
+    });
+    if (sj && Array.isArray(sj.interchanges)) {
+      sj.interchanges.forEach(function (id) {
+        try {
+          const ix = interchangeById(id);
+          if (ix) work.push({ kind: 'localInterchange', town: ix.town, interchange: id });
+        } catch (e) { }
+      });
+    }
+    if (sj && Array.isArray(sj.rtLift)) {
+      sj.rtLift.forEach(function (k) {
+        try {
+          const p = typeof rtParse === 'function' ? rtParse(k) : null;
+          if (p && p.town) work.push({ kind: 'pickup', town: p.town, track: p.track });
+        } catch (e) { }
+      });
+    }
+    return {
+      start: (sj && sj.start) || (job && job.town) || 'mattoon',
+      tieUp: (sj && (sj.tieUp || sj.start)) || (job && job.town) || 'mattoon',
+      industries: industries,
+      work: work
+    };
+  }
+  function estimateAvgHours(job) {
+    const w = workForEstimate(job);
+    let h = 1.5 + 0.5 * w.industries.length;
+    try {
+      const C = R();
+      if (C && C.roadHours) {
+        const travel = C.roadHours({ start: w.start, tieUp: w.tieUp, work: w.work });
+        if (isFinite(travel) && travel > 0) h += travel;
+      }
+    } catch (e) { }
+    if (!isFinite(h) || h < 0) h = 1.5;
+    return Math.round(Math.min(12, h) * 100) / 100;
+  }
+  function usableRuns(runs) {
+    return (runs || []).filter(function (r) {
+      return r && isFinite(+r.hours) && +r.hours >= 0.5;
+    }).slice(-8);
+  }
+  function setAvgHours(job, keepStored) {
+    if (!job) return 8;
+    const used = usableRuns(runsOf(job));
+    if (used.length) {
+      let sum = 0;
+      used.forEach(function (r) { sum += +r.hours; });
+      job.avgHours = Math.round(Math.min(12, sum / used.length) * 100) / 100;
+      return job.avgHours;
+    }
+    if (keepStored && job.avgHours != null && isFinite(+job.avgHours) && +job.avgHours > 0) {
+      job.avgHours = Math.round(Math.min(12, +job.avgHours) * 100) / 100;
+      return job.avgHours;
+    }
+    job.avgHours = estimateAvgHours(job);
+    return job.avgHours;
+  }
+  function computeAvgHours(job) {
+    if (!job) return estimateAvgHours(job);
+    const used = usableRuns(runsOf(job));
+    if (used.length) {
+      let sum = 0;
+      used.forEach(function (r) { sum += +r.hours; });
+      return Math.round(Math.min(12, sum / used.length) * 100) / 100;
+    }
+    if (job.id && job.avgHours != null && isFinite(+job.avgHours) && +job.avgHours > 0) {
+      return Math.round(Math.min(12, +job.avgHours) * 100) / 100;
+    }
+    return estimateAvgHours(job);
+  }
+  function refreshAllAvgHours() {
+    regularJobs().forEach(function (j) {
+      if (!j || j.status === 'abolished') return;
+      setAvgHours(j, true);
+    });
+  }
+  function fmtAvgHours(n, ones) {
+    const x = Math.round((+n) * 10) / 10;
+    if (ones) return x.toFixed(1);
+    return Math.abs(x - Math.round(x)) < 1e-9 ? String(Math.round(x)) : x.toFixed(1);
+  }
+  function avgHoursLabel(job) {
+    const used = usableRuns(runsOf(job));
+    if (used.length) {
+      return 'Avg time: ' + fmtAvgHours(computeAvgHours(job), true) + ' h (last ' + used.length + ' run' + (used.length === 1 ? '' : 's') + ')';
+    }
+    return 'Avg time: about ' + fmtAvgHours(computeAvgHours(job)) + ' h (estimate, no runs yet)';
+  }
+  function recordRegularJobRun(jobId, hours, via, at) {
+    const h = Math.round((+hours) * 100) / 100;
+    if (!jobId || !isFinite(h)) return null;
+    const rec = { hours: h, at: at != null ? at : nowT(), via: via || 'hire' };
+    const job = regularById(jobId);
+    const store = jobRunsStore();
+    const prev = ((job && Array.isArray(job.runs)) ? job.runs : null) || (Array.isArray(store[jobId]) ? store[jobId] : []) || [];
+    const next = prev.concat([rec]).slice(-10);
+    store[jobId] = next;
+    if (job) {
+      job.runs = next;
+      setAvgHours(job, false);
+    }
+    return job || { id: jobId, runs: next, avgHours: computeAvgHours({ id: jobId, runs: next }) };
   }
   function blankJobForm(edit) {
     const src = edit ? regularById(edit) : null;
@@ -4289,7 +4609,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       onDuty: hhmmOf(src && src.onDuty),
       offDays: ((src && src.offDays) || ['sat', 'sun']).slice(),
       runOnOffDays: ((src && src.runOnOffDays) || []).slice(),
-      avgHours: src && src.avgHours != null ? src.avgHours : 8,
+      avgHours: src && src.avgHours != null ? src.avgHours : null,
       savedJobId: (src && src.savedJobId) || '',
       holder: src ? src.holder : null,
       status: src ? src.status : 'bulletined'
@@ -4302,15 +4622,19 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!name) { G.toast('Type a name for this regular job first.', 'bad'); return; }
     if (!f.savedJobId) { G.toast('Pick a Saved Job for the work first.', 'bad'); return; }
     if (!savedById(f.savedJobId)) { G.toast('That Saved Job is gone. Pick another.', 'bad'); return; }
-    const hours = Math.max(1, Math.min(12, +f.avgHours || 8));
     const off = (f.offDays || []).filter(function (d, i, a) { return RJ_DAYS.indexOf(d) >= 0 && a.indexOf(d) === i; });
     const run = (f.runOnOffDays || []).filter(function (d, i, a) { return off.indexOf(d) >= 0 && a.indexOf(d) === i; });
     const s = st(), list = regularJobs();
+    const prev = f.id ? regularById(f.id) : null;
     const rec = C.makeRegularJob({
       id: f.id, name: name, town: f.town || 'mattoon', onDuty: hhmmOf(f.onDuty), offDays: off.length ? off : [],
-      runOnOffDays: run, savedJobId: f.savedJobId, avgHours: hours, holder: f.id ? (f.holder || null) : null,
+      runOnOffDays: run, savedJobId: f.savedJobId,
+      avgHours: prev && prev.avgHours != null ? prev.avgHours : estimateAvgHours({ savedJobId: f.savedJobId, town: f.town || 'mattoon' }),
+      holder: f.id ? (f.holder || null) : null,
       status: 'bulletined'
     });
+    if (prev && Array.isArray(prev.runs)) rec.runs = prev.runs.slice();
+    setAvgHours(rec, !!(prev && !usableRuns(runsOf(rec)).length && prev.avgHours != null));
     rec.bidsCloseAt = nextMondayMidnight(nowT());
     if (f.id && regularById(f.id)) {
       const i = list.indexOf(regularById(f.id));
@@ -4357,6 +4681,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         (j.status === 'bulletined' || j.status === 'rebid' || j.status === 'noBids');
     });
     if (!due.length) return false;
+    refreshAllAvgHours();
     const closeAt = due[0].bidsCloseAt;
     const res = C.runBids(people(), due, { allJobs: jobs.filter(function (j) { return j.status !== 'abolished'; }), forceJunior: !!s.forceJuniorBids });
     s.regularJobs = C.applyBids(jobs, res, closeAt);
@@ -4377,8 +4702,22 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     });
     return true;
   }
+  // Outbound van (deadhead to the job) counts toward the 12-hour clock; the taxi home does not.
+  function outboundDeadheadHours(job) {
+    const dh = job && job.deadhead;
+    if (!dh || dh.hours == null || dh.countsAgainstHogLaw === false) return 0;
+    const h = +dh.hours;
+    return isFinite(h) && h > 0 ? h : 0;
+  }
+  function tourHoursOf(workHours, job) {
+    const C = R(), work = Math.max(0, +workHours || 0), dh = outboundDeadheadHours(job);
+    const cap = (C && C.HOS && C.HOS.ON_DUTY_H) || 12;
+    const tour = (C && C.onDutyHours) ? C.onDutyHours(work, dh) : (work + dh);
+    return Math.round(Math.min(cap, tour) * 100) / 100;
+  }
   function applyDeadhead(crew, dh) {
-    // Same rule as a tie-up taxi: the van is paid, and the ride does not count against the 12-hour clock.
+    // Outbound van is paid here and counts toward the 12-hour clock (onDutyHours).
+    // The taxi home after release is paid in applyTieUp and does not count; rest starts at drop-off.
     if (!crew || !dh) return 0;
     const C = R(); if (!C) return 0;
     const hours = Math.round((dh.hours != null ? dh.hours : (dh.miles || 0) / (C.TAXI_MPH || 40)) * 100) / 100;
@@ -4519,7 +4858,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         const run = (j.runOnOffDays || []).filter(function (d) { return (j.offDays || []).indexOf(d) >= 0; });
         h += '<div class="cs-card cs-rj">' +
           '<div class="cs-jt"><b>' + esc(j.name) + '</b><code>' + esc(townName(j.town)) + '</code></div>' +
-          '<div class="cs-jp">On duty ' + esc(timeLabel(j.onDuty)) + ' · About ' + esc(String(j.avgHours)) + ' hr · Work: ' + esc(workLabel(j)) + '</div>' +
+          '<div class="cs-jp">On duty ' + esc(timeLabel(j.onDuty)) + ' · ' + esc(avgHoursLabel(j)) + ' · Work: ' + esc(workLabel(j)) + '</div>' +
           '<div class="cs-jp">Works ' + esc(workDayList(j)) + ' · Off ' + esc(dayList(j.offDays)) + (run.length ? ' · Runs anyway ' + esc(dayList(run)) + ' (extra board)' : '') + '</div>' +
           '<div class="cs-jp"><b>' + esc(statusLine(j)) + '</b></div>' +
           seatHoldersHtml(j) +
@@ -4535,7 +4874,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       if (gone.length) h += '<p class="cs-note">Abolished: ' + esc(gone.map(function (j) { return j.name; }).join(', ')) + '.</p>';
       h += '<p class="cs-note">Crews bid on a job from three things: work location, average job time, and off days. The most senior crew picks first. Bids close Sun midnight; assignments run Monday to Monday. A job posted mid-week stays open and the extra board covers it until then. Hold a job off bids this week to run it yourself with no claim, or let the extra board cover it.</p>';
     }
-    h += '<div class="cs-foot"><button data-cs="close" class="alt">Back to game</button></div>';
+    if (!jobForm) h += '<div class="cs-foot"><button data-cs="close" class="alt">Back to game</button></div>';
     render(h, keep);
   }
   function jobFormHtml() {
@@ -4548,10 +4887,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += '<button type="button" data-cs="rj-town" data-v="' + esc(b.id) + '" class="' + (f.town === b.id ? 'on' : '') + '">' + esc(b.name.replace(' Yard', '')) + '</button>';
     });
     h += '</div>';
-    h += '<div class="cs-2">' + lab('On-duty time') + lab('Average hours') +
-      '<input type="time" class="cs-f" data-cs-field="rj-onduty" value="' + esc(hhmmOf(f.onDuty)) + '">' +
-      '<input type="number" class="cs-f" data-cs-field="rj-avg" value="' + esc(f.avgHours) + '" min="1" max="12" step="0.5">' +
-      '</div>';
+    h += lab('On-duty time') + '<input type="time" class="cs-f" data-cs-field="rj-onduty" value="' + esc(hhmmOf(f.onDuty)) + '">';
+    h += '<p class="cs-hint cs-avg">' + esc(avgHoursLabel(f.id ? (regularById(f.id) || f) : { savedJobId: f.savedJobId, town: f.town })) + '</p>';
     h += lab('Off days', 'the regular crew is off') + '<div class="cs-chips">';
     RJ_DAYS.forEach(function (d) {
       const on = (f.offDays || []).indexOf(d) >= 0;
@@ -4590,7 +4927,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       h += lab('Open bids', 'bids close Sun midnight');
       open.forEach(function (j) {
         h += '<div class="cs-card cs-rj"><div class="cs-jt"><b>' + esc(j.name) + '</b><code>' + esc(townName(j.town)) + '</code></div>' +
-          '<div class="cs-jp">Closes <b>' + esc(closeLabel(j.bidsCloseAt, now)) + '</b> · On duty ' + esc(timeLabel(j.onDuty)) + ' · ' + esc(String(j.avgHours)) + ' hr · Off ' + esc(dayList(j.offDays)) + '</div>';
+          '<div class="cs-jp">Closes <b>' + esc(closeLabel(j.bidsCloseAt, now)) + '</b> · On duty ' + esc(timeLabel(j.onDuty)) + ' · ' + esc(avgHoursLabel(j)) + ' · Off ' + esc(dayList(j.offDays)) + '</div>';
         if (!C || !C.jobAppeal || !C.seatIds) h += '<div class="cs-box r">This build is missing the bid rules.</div>';
         else {
           C.seatIds(j).forEach(function (sid) {
@@ -4600,9 +4937,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
             const pool = folks.filter(function (p) { return (p.craft || '') === craft; });
             if (!pool.length) h += '<div class="cs-jp">No ' + esc((C.BID_CRAFT_LABEL && C.BID_CRAFT_LABEL[craft]) || craft) + ' on the roster.</div>';
             pool.forEach(function (p) {
-              if (p.status === 'vacation') { h += '<div class="cs-jp">' + esc(p.name) + ' — on vacation, so they are not bidding.</div>'; return; }
-              const a = C.jobAppeal(p, j);
-              h += '<div class="cs-jp">' + esc(p.name) + ' — ' + esc(appealWords(a, j)) + '</div>';
+              const a = p.status === 'vacation' ? null : C.jobAppeal(p, j);
+              const home = p.homeTown ? ((C.townName && C.townName(p.homeTown)) || townName(p.homeTown)) : '';
+              const mins = a && a.commute != null ? a.commute : (C.commuteMinutes ? C.commuteMinutes(p, j.town) : null);
+              const bit = home ? (mins != null && mins > 0 ? home + ', ' + mins + ' min' : home) : '';
+              const who = esc(p.name) + (bit ? ' (' + esc(bit) + ')' : '');
+              if (p.status === 'vacation') { h += '<div class="cs-jp">' + who + ' — on vacation, so they are not bidding.</div>'; return; }
+              h += '<div class="cs-jp">' + who + ' — ' + esc(appealWords(a, j)) + '</div>';
             });
           });
         }
@@ -4658,7 +4999,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         board.forEach(function (e) {
           const crew = crewById(e.crew || e.person);
           const rest = boardRestLabel(e, crew);
-          const loc = (crew && (crew.location || crew.homeTown)) || e.location;
+          const loc0 = (crew && (crew.location || crew.reportTown || (C.reportTownOf && C.reportTownOf(crew)))) || e.location;
+          const loc = (loc0 && C.isRailTown && !C.isRailTown(loc0) && C.reportTownOf) ? (C.reportTownOf(crew) || 'mattoon') : loc0;
           const next = (crew && crew.status === 'available' && e.rested)
             ? 'Next available now' + (loc ? ' at ' + townName(loc) : '')
             : (e.restedAt != null && !(crew && (crew.status === 'vacation' || crew.status === 'off'))
@@ -4754,14 +5096,16 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         const craft = (C.BID_CRAFT_LABEL && C.BID_CRAFT_LABEL[r.craft]) || r.craft || (p && p.craft);
         const hire = (p && p.seniority) || r.seniority || '';
         const hireLab = hire ? (hire.slice(0, 4) === hire ? hire : hire) : '—';
-        const town = (p && (p.homeTown || p.homeYard)) || r.homeTown;
+        const home = (p && (p.homeTown || p.homeYard)) || r.homeTown;
+        const homeName = home ? ((C && C.townName) ? C.townName(home) : townName(home)) : '';
+        const line = (p && C && C.homeLine) ? C.homeLine(p) : '';
         const faceP = p ? leadOf(p) : { name: r.name, art: p && p.art };
         h += '<div class="cs-row">' +
           '<span class="cs-st" style="min-width:2.2em">#' + r.rank + '</span>' +
           '<span data-cs="roster" data-crew="' + esc(r.id || r.person) + '">' + face(faceP, 'thumb', 'cs-th') + '</span>' +
           '<span class="cs-rt"><b>' + esc((p && p.name) || r.name) + (p && p.placeholder ? ' <small>(TBD)</small>' : '') + '</b><small>' +
-          esc(craft || '') + ' · ' + esc(town ? townName(town) : '') + ' · Hired ' + esc(hireLab) + '<br>' +
-          esc(p ? personJobLine(p) : '') + ' · ' + esc(personStatusLabel(p)) + '</small></span></div>';
+          esc(craft || '') + (homeName ? ' · ' + esc(homeName) : '') + ' · Hired ' + esc(hireLab) + '<br>' +
+          (line ? esc(line) + ' · ' : '') + esc(p ? personJobLine(p) : '') + ' · ' + esc(personStatusLabel(p)) + '</small></span></div>';
       });
     }
     h += '<p class="cs-note">Rank 1 is the most senior person.</p>';
@@ -4996,7 +5340,6 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!jobForm) return;
     if (f === 'rj-name') { jobForm.name = el.value; return; }
     if (f === 'rj-onduty') { jobForm.onDuty = hhmmOf(el.value); return; }
-    if (f === 'rj-avg') { const n = parseFloat(el.value); if (isFinite(n)) jobForm.avgHours = Math.max(1, Math.min(12, n)); return; }
     if (f === 'rj-work') { jobForm.savedJobId = el.value || ''; showCrewMenu(true); return; }
   }
   // ---- crew call board (job list + Call a crew dropdown)
@@ -6522,7 +6865,8 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
         if (w.kind === 'pickup' || w.kind === 'setout') return (C.SWITCH.pickupBase + C.SWITCH.pickupPerCar * n) / 60;
         return 0;
       })() * exp;
-      if (used + road + sw > C.HOS.ON_DUTY_H) remaining.push(w);
+      const cap = (est && est.hoursAvailable != null) ? est.hoursAvailable : C.HOS.ON_DUTY_H;
+      if (used + road + sw > cap) remaining.push(w);
       else { used += road + sw; done.push(w); loc = dest; }
     });
     if (remaining.length) return { finished: false, location: loc, done: done, remaining: remaining };
@@ -6584,11 +6928,12 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     if (!crew) return { notes: ['No crew on ' + (job.symbol || 'a call') + '.'], pay: 0 };
     const est = C.estimateJob(job, crew, { yardJobRan: yardJobCalled(day) });
     const prog = progressFor(job, est, crew);
-    const hog = C.hogOut(job, prog, Math.max(est.hours, prog.finished ? est.hours : C.HOS.ON_DUTY_H));
+    const hog = C.hogOut(job, prog, (est.onDutyHours != null ? est.onDutyHours : Math.max(est.hours, prog.finished ? est.hours : C.HOS.ON_DUTY_H)));
     const doneSet = prog.done || [];
     const notes = applyDoneSet(job, doneSet, day).notes;
     if (hog.hoggedOut) notes.push(crew.name + ' hogged out at ' + townName(hog.trainStaysAt) + ' — ' + hog.note);
-    const hours = Math.min(est.hours, C.HOS.ON_DUTY_H);
+    const hours = Math.min(est.hours, est.hoursAvailable != null ? est.hoursAvailable : C.HOS.ON_DUTY_H);
+    const tour = tourHoursOf(hours, job);
     try { notes.push.apply(notes, rtFuelAfterJob(job, crew, hours, st().time, hog.hoggedOut, 0)); } catch (e) { } // Nov 24 (mw59ef134)
     const persons = ((job.peopleIds || []).map(crewById).filter(Boolean));
     if (!persons.length && crew) persons.push(crew);
@@ -6599,10 +6944,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const finalLoc = hog.hoggedOut ? hog.trainStaysAt : job.tieUp;
     const opt = C.tieUpOptions({ start: job.start, tieUp: finalLoc });
     if (opt.needed) {
-      st().crewTieUps.push({ crewId: crew.id, start: job.start, tieUp: finalLoc, planned: job.tieUp, hoggedOut: !!hog.hoggedOut, tourHours: hours, symbol: job.symbol });
+      st().crewTieUps.push({ crewId: crew.id, start: job.start, tieUp: finalLoc, planned: job.tieUp, hoggedOut: !!hog.hoggedOut, tourHours: tour, symbol: job.symbol });
       notes.push(crew.name + ' tied up at ' + townName(finalLoc) + ' — bunkhouse or taxi back to ' + townName(job.start));
     } else {
-      C.applyTieUp(crew, { start: job.start, tieUp: finalLoc }, 'sign-off', st().time, { tourHours: hours });
+      C.applyTieUp(crew, { start: job.start, tieUp: finalLoc }, 'sign-off', st().time, { tourHours: tour });
       notes.push(crew.name + ' signed off at ' + townName(finalLoc));
     }
     return { notes: notes, pay: pay, assigned: doneSet.filter(function (w) { return w.kind === 'industry'; }).map(function (w) { return w.customer; }) };
@@ -6796,9 +7141,13 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function finishJob(c, t, hog) {
     const C = R(), s = c.sim, crew = crewById(c.crewId);
     s.finished = true; s.endAt = t; s.hog = !!hog;
-    const H = C.HOS.ON_DUTY_H, hours = Math.round(Math.min(H, Math.max(0, (t - s.on) / 3600)) * 100) / 100;
+    const H = C.HOS.ON_DUTY_H, workH = Math.max(0, (t - s.on) / 3600);
+    const hours = Math.round(Math.min(H, workH) * 100) / 100;
+    const tour = tourHoursOf(hours, c);
     s.notDone = s.pieces.slice(s.k).filter(function (p) { return !p.travel; }).map(function (p) { return p.place; });
     s.hours = hours;
+    s.tourHours = tour;
+    if (c.regularJobId) { try { recordRegularJobRun(c.regularJobId, hours, c.regularVia || 'hire', t); } catch (e) { } }
     try { s.notes = s.notes.concat(rtFuelAfterJob(c, crew, hours, t, hog, (s.pausedSec || 0) / 3600)); } catch (e) { } // Nov 24 (mw59ef134): fuel and sand used (every called crew)
     if (!crew) return;
     const persons = ((c.peopleIds || []).map(crewById).filter(Boolean));
@@ -6811,10 +7160,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const finalLoc = hog ? (s.loc || c.start) : c.tieUp;
     const opt = C.tieUpOptions({ start: c.start, tieUp: finalLoc });
     if (opt.needed) {
-      st().crewTieUps.push({ crewId: crew.id, start: c.start, tieUp: finalLoc, planned: c.tieUp, hoggedOut: !!hog, tourHours: hours, symbol: c.symbol });
+      st().crewTieUps.push({ crewId: crew.id, start: c.start, tieUp: finalLoc, planned: c.tieUp, hoggedOut: !!hog, tourHours: tour, symbol: c.symbol });
       s.tie = crew.name + ' tied up at ' + townName(finalLoc) + ' (bunkhouse or taxi)';
     } else {
-      C.applyTieUp(crew, { start: c.start, tieUp: finalLoc }, 'sign-off', t, { tourHours: hours });
+      C.applyTieUp(crew, { start: c.start, tieUp: finalLoc }, 'sign-off', t, { tourHours: tour });
       s.tie = crew.name + ' signed off at ' + townName(finalLoc);
     }
     if (crew.status === 'onDuty' && !opt.needed) crew.status = 'available';
@@ -6831,10 +7180,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     return t;
   }
   function stepSim(c, now) {
-    const s = c.sim, HOG = R().HOS.ON_DUTY_H * 3600;
+    const s = c.sim, HOG = R().HOS.ON_DUTY_H * 3600, dhSec = outboundDeadheadHours(c) * 3600;
     let t = s.last, g = 0;
     while (t < now - 1e-6 && !s.finished && g++ < 200) {
-      const hogAt = s.on + HOG;
+      const hogAt = s.on + HOG - dhSec;
       if (s.paused) { const u = Math.min(now, hogAt); s.pausedSec += u - t; t = u; if (t >= hogAt - 1e-6) finishJob(c, t, true); continue; }
       const p = s.pieces[s.k];
       if (!p) { finishJob(c, t, false); break; }
@@ -7243,7 +7592,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     const p = (s.crewTieUps || []).filter(function (x) { return x.crewId === crewId; })[0];
     const crew = crewById(crewId);
     if (!p || !crew) return;
-    const r = C.applyTieUp(crew, { start: p.start, tieUp: p.tieUp }, choice, s.time, { tourHours: p.tourHours });
+    const r = C.applyTieUp(crew, { start: p.start, tieUp: p.tieUp }, choice, s.time, { tourHours: p.tourHours }); // tourHours is work + outbound van, not the ride home
     if (r.paidHours) {
       const pay = C.payForCall(crew, r.paidHours, G.ECON && G.ECON.CREW_HR);
       bookCat('van', pay, { personId: crew.id, hours: r.paidHours, note: 'Taxi back to ' + townName(p.start) });
@@ -7425,7 +7774,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
       e.preventDefault();
       openSimTime();
     });
-    document.addEventListener('input', function (e) { const f = e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field'); if (f === 'symbol' || f === 'sj-name' || f === 'rj-name' || f === 'rj-avg' || f === 'rj-onduty') onField(e.target); });
+    document.addEventListener('input', function (e) { const f = e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field'); if (f === 'symbol' || f === 'sj-name' || f === 'rj-name' || f === 'rj-onduty') onField(e.target); });
     document.addEventListener('keydown', function (e) { // Enter in a saved-job name box = Save
       const f = e.key === 'Enter' && e.target && e.target.getAttribute && e.target.getAttribute('data-cs-field');
       if (f === 'sj-name') { e.preventDefault(); saveDraftAs(e.target.value); }
@@ -7483,6 +7832,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     savedJobs: function () { return savedJobs(); }, regularJobs: function () { return regularJobs(); }, people: function () { return people(); }, _draftToJob: function () { return draft ? draftToJob(draft) : null; },
     _reg: { closeBidsIfDue: closeBidsIfDue, callRegularJobsDue: callRegularJobsDue, runHooks: runCrewClockHooks, weekdayKey: weekdayKey, coverWhy: coverWhy, postSavedAsCall: postSavedAsCall, nextMorning7: nextMorning7, nextMondayMidnight: nextMondayMidnight, weekOfLabel: weekOfLabel, closeLabel: closeLabel, payClaimOnce: payClaimOnce, applyDeadhead: applyDeadhead, postWeeklyRebids: postWeeklyRebids, playerJobs: playerJobs, claimsPaid: claimsPaid }, // Nov 25 (mw59ef139)
     summaryHtml: summaryHtml, pendingTieUps: pendingTieUps, showTieUps: showTieUps, ensure: ensure, openFinance: openFinance,
+    recordRegularJobRun: recordRegularJobRun, computeAvgHours: computeAvgHours, estimateAvgHours: estimateAvgHours, avgHoursLabel: avgHoursLabel, refreshAllAvgHours: refreshAllAvgHours,
     CSS_TEXT: CSS_TEXT, show: show,
     engineBusy: function (id, at) { return engineBusy(id, at); }, // Nov 24 (mw59ef134): the towns' Make this my engine asks first
     _rt: { build: function () { return draft ? rtBuild(draft) : null; }, useOpts: function (job) { return rtUseOpts(job, rtLocoUnits(job.engines), 0); }, execute: function (j, d) { return rtExecute(j, d); }, home: rtHome }, // Nov 24 (mw59ef134): test hooks
