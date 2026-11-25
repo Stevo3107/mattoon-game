@@ -3934,7 +3934,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .cs-f.acc{border-color:var(--orange)}' +
     '#modal .csheet .cs-ro{display:flex;align-items:center;height:44px;border-radius:8px;border:1px solid var(--line);background:var(--cream);padding:0 10px;font:700 16px "Courier Prime","Courier New",monospace;color:var(--navy)}' +
     '#modal .csheet .cs-ro.acc{border-color:var(--orange)}' +
-    '#modal .csheet .cs-foot{display:flex;gap:8px;margin-top:14px}' +
+    '#modal .csheet .cs-foot{display:flex;gap:8px;margin-top:14px;position:sticky;bottom:0;z-index:4;background:var(--cream);padding:8px 0 0;box-shadow:0 -10px 10px var(--cream)}' +
     '#modal .csheet .cs-foot button{flex:1;height:48px;border-radius:12px;border:0;background:var(--navy);color:#fff;font-weight:700;font-size:16px}' +
     '#modal .csheet .cs-foot button.alt{background:var(--alt);color:var(--ink)}' +
     '#modal .csheet .cs-foot button:disabled{background:#c8c3b8;color:#7b776f}' +
@@ -3962,7 +3962,7 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .rt-li{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:6px 8px;border-top:1px solid var(--line);font-size:13px}' +
     '#modal .csheet .rt-li:first-child{border-top:0}#modal .csheet .rt-li small{color:var(--muted);font-size:12px}#modal .csheet .rt-li span{font-size:12px}' +
     '#modal .csheet .cs-empty{border:1px dashed var(--line);border-radius:10px;padding:14px;text-align:center;color:var(--muted);font-size:14px;margin:0 0 8px}' +
-    '#modal.cs-wide{max-width:640px;width:100%;max-height:92vh}' +
+    '#modal.cs-wide{max-width:640px;width:100%;max-height:min(92vh,100%);min-height:0;overflow:auto}' +
     '#modal .csheet .cs-tabs{display:flex;flex-wrap:wrap;gap:0;border:1px solid #8f8774;border-radius:10px;background:var(--alt);overflow:hidden;margin:0 0 10px}' +
     '#modal .csheet .cs-tabs button{flex:1 1 14%;min-width:72px;height:36px;border:0;background:none;color:var(--ink);font-weight:700;font-size:11px;padding:0 4px;line-height:1.15}' +
     '#modal .csheet .cs-tabs button.on{background:var(--navy);color:#fff}' +
@@ -3982,7 +3982,9 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
     '#modal .csheet .cs-rj .cs-jb button{height:40px;padding:0 12px;border:0;border-radius:10px;background:var(--navy);color:#fff;font-weight:700;font-size:13px}' +
     '#modal .csheet .cs-rj .cs-jb button.a{background:var(--alt);color:var(--ink)}' +
     '@media (orientation:landscape) and (max-height:500px){' +
-    '#modal.cs-wide{max-width:min(920px,96vw);max-height:96vh}' +
+    '#modal.cs-wide{max-width:min(920px,96vw);max-height:100%}' +
+    '#modal .csheet .cs-foot{margin-top:8px;padding:6px 0 0}' +
+    '#modal .csheet .cs-foot button{height:40px;font-size:15px}' +
     '#modal .csheet .cs-tabs{flex-wrap:wrap}' +
     '#modal .csheet .cs-tabs button{height:32px;font-size:10px;flex:1 1 30%;min-width:64px}' +
     '#modal .csheet .cs-hd h2{font-size:18px}' +
@@ -3992,10 +3994,10 @@ window.NII_CREW_ART = {"bill-kessler":{"portrait":"data:image/png;base64,iVBORw0
   function render(h, keepScroll) {
     const m = typeof document !== 'undefined' ? document.getElementById('modal') : null;
     const top = m ? m.scrollTop : 0;
-    if (m) { m.classList.remove('ind'); m.classList.add('cs-wide'); }
+    if (m) { m.classList.remove('ind', 'nii-menu'); m.classList.add('cs-wide'); }
     G.showModal(CSS() + '<div class="csheet">' + h + '</div>');
     const m2 = typeof document !== 'undefined' ? document.getElementById('modal') : null;
-    if (m2) m2.classList.add('cs-wide');
+    if (m2) { m2.classList.remove('ind', 'nii-menu'); m2.classList.add('cs-wide'); }
     if (m2 && keepScroll) m2.scrollTop = top;
   }
   function dropWide() { const m = typeof document !== 'undefined' ? document.getElementById('modal') : null; if (m) m.classList.remove('cs-wide'); }
