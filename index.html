@@ -93,14 +93,17 @@ body.drawer #controls{display:none}body.drawer #drawerBtn{transform:rotate(180de
 body.tapmode #drive{display:none}body.tapmode #tap{display:flex}
 #modalBg{position:fixed;inset:0;background:rgba(10,14,22,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:14px}
 #modalBg.show{display:flex}
-#modal{background:#fffdf7;border-radius:16px;max-width:460px;width:100%;max-height:92vh;overflow:auto;padding:16px 16px 12px;box-shadow:0 10px 40px rgba(0,0,0,.4);font-size:15px;line-height:1.4}
+#modal{background:#fffdf7;border-radius:16px;max-width:460px;width:100%;max-height:min(92vh,100%);min-height:0;overflow:auto;padding:16px 16px 12px;box-shadow:0 10px 40px rgba(0,0,0,.4);font-size:15px;line-height:1.4}
 #modal h2{margin:0 0 8px;font-size:20px;color:#1c2b50}
 #modal p{margin:6px 0}#modal ul{margin:6px 0;padding-left:20px}#modal li{margin:3px 0}
 #modal .btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
 #modal .btns button{flex:1;min-width:120px;height:48px;border-radius:12px;border:0;background:#1c2b50;color:#fff;font-weight:700;font-size:16px}
 #modal .btns button.alt{background:#d9d2c2;color:#1d222b}
 #modal .btns button.red{background:#b3261e}
-#modal.nii-menu{max-width:min(560px,96vw)}
+#modal.nii-menu{max-width:min(560px,96vw);display:flex;flex-direction:column;max-height:min(92vh,100%);min-height:0;overflow:hidden}
+#modal.nii-menu .nii-menu-hd,#modal.nii-menu .nii-tabs,#modal.nii-menu .nii-menu-foot{flex-shrink:0}
+#modal.nii-menu .nii-tab-body{flex:1 1 auto;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}
+#modal.nii-menu .nii-menu-foot{margin-top:8px}
 #modal.nii-menu .nii-menu-hd{display:flex;align-items:flex-start;gap:8px;margin:0 0 8px}
 #modal.nii-menu .nii-menu-hd h2{flex:1;margin:0}
 #modal.nii-menu .nii-x{flex:none;width:36px;height:36px;border:0;border-radius:10px;background:transparent;color:#1c2b50;font-size:28px;line-height:1;cursor:pointer}
@@ -110,9 +113,17 @@ body.tapmode #drive{display:none}body.tapmode #tap{display:flex}
 #modal.nii-menu .nii-tab-body .btns{margin-top:8px}
 #modal.nii-menu .nii-tab-body .btns:first-child{margin-top:0}
 @media (orientation:landscape) and (max-height:500px){
-  #modal.nii-menu{max-width:min(640px,96vw);padding:10px 12px 8px}
+  #modalBg{padding:8px}
+  #modal{max-height:100%;padding:10px 12px 8px}
+  #modal.nii-menu{max-width:min(640px,96vw);padding:8px 12px 8px;max-height:100%}
+  #modal.nii-menu .nii-menu-hd{margin:0 0 6px}
+  #modal.nii-menu .nii-tabs{margin:0 0 6px}
   #modal.nii-menu .nii-tabs button{height:32px;font-size:11px;flex:1 1 20%;min-width:64px}
   #modal.nii-menu h2{font-size:18px}
+  #modal.nii-menu .nii-x{width:32px;height:32px;font-size:24px}
+  #modal.nii-menu p{margin:4px 0 6px}
+  #modal.nii-menu .btns{margin-top:6px}
+  #modal.nii-menu .btns button{height:40px;font-size:15px}
 }
 .pay{font-size:26px;font-weight:800;color:#17733a}
 @media (orientation:landscape) and (max-height:620px){
@@ -298,7 +309,7 @@ body.visit header{visibility:hidden}
   </div>
 </div>
 <div id="modalBg"><div id="modal"></div></div>
-<script>window.NII_BUILD = "mw59ef140";</script>
+<script>window.NII_BUILD = "mw59ef141";</script>
 <script>// ---------------------------------------------------------------- NI&I town loader (Oct 30): shared core + one town at a time.
 // index.html shows the loading screen, loads core.js (engine + shared art), then the current town's pack from towns/.
 // Moving to another town saves, shows the travel screen and reloads the page, so the last town's art is fully released.
@@ -509,7 +520,7 @@ function sharedMenu() {
   ).join('') + '</div>';
   const body = tabs.map(t => '<div class="nii-tab-body" data-tab="' + t[0] + '"' + (t[0] === cur ? '' : ' hidden') + '>' + t[2] + '</div>').join('');
   m.classList.remove('ind'); m.classList.add('nii-menu');
-  m.innerHTML = '<div class="nii-menu-hd"><h2>Menu</h2><button type="button" class="nii-x" data-nm="close" aria-label="Close">&times;</button></div>' + tabBar + body + '<div class="btns"><button type="button" data-nm="close">Back to game</button></div>';
+  m.innerHTML = '<div class="nii-menu-hd"><h2>Menu</h2><button type="button" class="nii-x" data-nm="close" aria-label="Close">&times;</button></div>' + tabBar + body + '<div class="btns nii-menu-foot"><button type="button" data-nm="close">Back to game</button></div>';
   bg.classList.add('show'); m.scrollTop = 0;
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-nm]'); if (!b) return; const a = b.dataset.nm, bg = document.getElementById('modalBg'), md = document.getElementById('modal');
