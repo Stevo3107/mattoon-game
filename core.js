@@ -141,6 +141,7 @@ window.NII_SHARED = (() => {
   // ---- BLUE FLAGS (Nov 4: shared by every town). The town supplies the geometry through hooks; the rules, toasts and penalties live here.
   // Raised when the crew has spotted cars at a customer and left the area; down at the next switch window (downOdds) or on request (5-10 min).
   const BLUE_FLAG = { rep: 20, fine: 250, downOdds: 0.85, rmMin: [5, 10], warnFt: 150, flagIn: 110, near: 300 };
+  const HOUSE_DOOR_FLAGS = false; // Nov 25 (mw59ef143, Stephen): decorative orange pennants at freight-house door ends. One switch for every town that draws them; false hides them everywhere. Spot positions and house-job logic stay.
   const bfFresh = () => ({ up: false, rm: null, visit: 0, raised: 0, stuck: false });
   // H: { defs: { K: { name, day(d) } }, S(): state object, onTrack(K): train on the customer track, near(K): train on its tracks or within BLUE_FLAG.near ft of
   //      either end, carsOn(K): cars standing on its track (array), day(), time(), toast(msg, kind), save(), seeded(n) -> rng, sfx(name), penalize(fine, rep) }
@@ -1083,7 +1084,7 @@ window.NII_SHARED = (() => {
     return list;
   }
 
-  return { tagShow, CUST, repairRoute, ROUTE_DIRECT, ROAD_ROUTE, normRoad, TOWN_IX, setPlacePicker, ownerRoad, farRoadOf, routeMain, routeAlt, pickRoute, routeRelease, nwPickup, nwMsg, NW_REP_CUT, NW_WRONG_FEE, numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, fuelGph, RESTART_HTML, VIEW_CARS, LPG_ART, GON_ART, PS2_ART, CF_ART, CF_GRAIN_ART, PS2K_GRAIN_ART, PS2K_GRAIN_SHARE, beamFree, LIME_ART, CF_GRAIN_SHARE, OWNER_VIA, ownerVia, biasVia, isNii, openVias, openTowns, viaToDest, destToVia, townOfCustomer, townOfIx, haulMiles, HAUL_MILES, freightPay, roadToVia, pickNiiOutbound, flipVia, emptyNiiDest, stampRelease, niiGoAway, niiKind, niiKindFits, NII_REQ_CUST, niiEligibleCustomers, niiPickOutLoad, isIdleNiiEmpty, collectIdleNii, assignNiiRequest, runNiiRequests, isPropaneDest, isIfsDest, isLpgTank, isOtherTank, carDestOk, pickViewCar, isScrapDest, isGon, isGlassDest, isGrainDest, isPs2, isCf, isCf2, cfGrainOk, GLASS_MOVES, pickGlassMove, pickGrainCar, SAND_ART, ACF_2BAY_ART, SODA_OUTSTANDING_CAP, isSodaAshCar, sodaOutstandingCount, LIME_OUTSTANDING_CAP, isLimeCar, limeOutstandingCount, BURGESS_LUMBER, BURGESS_MATERIALS, BURGESS_SHIPPER_GAP, pickBurgessMove, stencilOf, stencilTareT, stencilCapT, applyStencil, clampLoadToStencil, GLASS_SHIPPERS, SODA_GREEN_RIVER, SODA_SP, SODA_OTHER, BOTTLE_CONSIGNEES, pickGlassShipper, pickBottleConsignee, EF_WEEK, efWeekPlan, efSeason, BEAM, beamFleet, blockTogether, isBeamArt, isBeamMeta, scrapKindOf, scrapLoadOf, scrapOverlayKey, withScrapLoad, prefetchScrapLoads, armScrapGon, prepareScrapGons, efRoll, EF };
+  return { tagShow, CUST, repairRoute, ROUTE_DIRECT, ROAD_ROUTE, normRoad, TOWN_IX, setPlacePicker, ownerRoad, farRoadOf, routeMain, routeAlt, pickRoute, routeRelease, nwPickup, nwMsg, NW_REP_CUT, NW_WRONG_FEE, numSeries, carRoad, usedNums, freeNum, PS1, NG, ngRng, ngRelease, ngRoll, ngAway, CABOOSE_RULE, cabOK, CABOOSE_TOAST, hopperArt, BLUE_FLAG, HOUSE_DOOR_FLAGS, blueFlags, wbCard, wbStamp, STOP_DEC, AP_MOVES, AP, PLAN, apVdes, apAccel, PICK, standHitR, audioOn, sfx, SUBDIVS, drawTags, tagLoad, ECON, STORAGE_DAY, PHY, FUEL_CAP, TRUCK_GAL, TRUCK_COST, isLease, switchFee, hireRate, demurrage, crewFuel, driveStep, consume, fuelGph, RESTART_HTML, VIEW_CARS, LPG_ART, GON_ART, PS2_ART, CF_ART, CF_GRAIN_ART, PS2K_GRAIN_ART, PS2K_GRAIN_SHARE, beamFree, LIME_ART, CF_GRAIN_SHARE, OWNER_VIA, ownerVia, biasVia, isNii, openVias, openTowns, viaToDest, destToVia, townOfCustomer, townOfIx, haulMiles, HAUL_MILES, freightPay, roadToVia, pickNiiOutbound, flipVia, emptyNiiDest, stampRelease, niiGoAway, niiKind, niiKindFits, NII_REQ_CUST, niiEligibleCustomers, niiPickOutLoad, isIdleNiiEmpty, collectIdleNii, assignNiiRequest, runNiiRequests, isPropaneDest, isIfsDest, isLpgTank, isOtherTank, carDestOk, pickViewCar, isScrapDest, isGon, isGlassDest, isGrainDest, isPs2, isCf, isCf2, cfGrainOk, GLASS_MOVES, pickGlassMove, pickGrainCar, SAND_ART, ACF_2BAY_ART, SODA_OUTSTANDING_CAP, isSodaAshCar, sodaOutstandingCount, LIME_OUTSTANDING_CAP, isLimeCar, limeOutstandingCount, BURGESS_LUMBER, BURGESS_MATERIALS, BURGESS_SHIPPER_GAP, pickBurgessMove, stencilOf, stencilTareT, stencilCapT, applyStencil, clampLoadToStencil, GLASS_SHIPPERS, SODA_GREEN_RIVER, SODA_SP, SODA_OTHER, BOTTLE_CONSIGNEES, pickGlassShipper, pickBottleConsignee, EF_WEEK, efWeekPlan, efSeason, BEAM, beamFleet, blockTogether, isBeamArt, isBeamMeta, scrapKindOf, scrapLoadOf, scrapOverlayKey, withScrapLoad, prefetchScrapLoads, armScrapGon, prepareScrapGons, efRoll, EF };
 })();
 
 // Nov 25: finance ledger lives in src/ledger.js (NII_LEDGER). Hang it on NII_SHARED when the file has already loaded.
@@ -7890,15 +7891,17 @@ const IC_IN_END = IC_NX + 2 * DX8 + ICS8, IC_OUT_END = IC_NX;   // north ends of
 const CIC_X = -1150;  // Central Illinois Corrugated box plant, north edge of town: art x 0 (the building's rail door is at art x 12)
 const IFS_X = -1980;  // Illini Farm Supply, ~0.5 mile out where the fields start: art x 0 = west edge of the unloading pad
 const PG_X = -7270;   // Prairie Grain Co., ~1.5 miles out: art x 0 (the loading spout is at art x 10)
-const NW_X = -8400;   // end of the line on the map (north to Champaign)
+const PG_OFF = 34;    // loading track, town side of the main
+const PG_ICS = (PG_OFF - 2 * DY10) / T10, PG_LEAD = 2 * DX10 + PG_ICS; // #10, 34 ft offset (Matt, Nov 25: no turnout sharper than a #10)
+const NW_X = -8800;   // Nov 25 (mw59ef143): extended 400 ft north so both Prairie Grain #10s and the end-of-track sign sit north of the north switch
 const P = {
   nW: [NW_X, 0], jW: [-500, 0],
   // CIC: spur off the main 20 ft behind it, switch C points north, stub end (bumping post inside the building) south
   cS: [CIC_X - 230, 0], bCIC: [CIC_X + 132.67, 20],
   // Illini Farm Supply (top-view/trackplan.json): spur switch F (points north), run-around on the camera side of the main (14 ft over), switches F1 / F2
   fS: [IFS_X - 239.32, 0], fN: [IFS_X - 127.51, 0], fX: [IFS_X + 407.83, 0], bIFS: [IFS_X + 502, 20],
-  // Prairie Grain: switch G off the main (points south) to the loading track 34 ft behind the main; run-around 14 ft over on its camera side, switches G1 (north) and G2 (south)
-  gM: [PG_X + 934, 0], gE: [PG_X + 633.51, 34], gW: [PG_X - 602.51, 34], bG: [PG_X - 720, 34],
+  // Prairie Grain (mw59ef143, Stephen): one loading track whose both ends connect to the main via #10 turnouts (34 ft offset). South switch G points south, north switch G1 points north. The old inner G1/G2/run-around and north bumper are gone. bG/gHid keep the retired tail's segment index off-map.
+  gW: [PG_X - 602.51, PG_OFF], gE: [PG_X + 633.51, PG_OFF], gN: [PG_X - 602.51 - PG_LEAD, 0], gM: [PG_X + 633.51 + PG_LEAD, 0], bG: [NW_X, -10000], gHid: [NW_X + 1, -10000],
  W0: [0, 0], E0: [E0X, 0], nE: [IC_NE, 0],
   iM: [IC_X, 0], iC: [ICC_X, 0], eIC: ICC_END, iJ: [IC_JX, TS], iK: [IC_JX - 100, TS], iN: [IC_NX, TS], bT: [IC_TAIL_END, TS], iT: [IT_X, 0], bIn: [IC_IN_END, 2 * TS], bOut: [IC_OUT_END, TS],
 };
@@ -7908,7 +7911,7 @@ for (let n = 1; n < NY; n++) P['E' + n] = [E0X - P['L' + n][0], P['L' + n][1]];
 P.ET = [E0X - P['L' + NY][0] - DX8, YD(NY)]; P.bCab = [2000, YD(NY)]; // Nov 25 (mw59ef138b, Stephen): caboose stub extended; bumper at x 2000 leaves ~264 ft clear, room for 5 cabooses
 P.H = [ladX(Y_H - DY8), Y_H - DY8]; P.T = [ladX(Y_E - DY8) + DX8, Y_E]; P.bEng = [P.T[0] + 190, Y_E];
 const FH_X0 = Math.round(P.bEng[0] + 60); P.bHse = [FH_X0 + 240, Y_H];   // freight house spot (180 ft) just south of the engine track's bumper
-const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, bG: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, bCab: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0, iT: 0, iC: 0, eIC: -ICC_TH };
+const TAN = { jW: 0, cS: 0, bCIC: 0, fS: 0, fN: 0, fX: 0, bIFS: 0, gM: 0, gE: 0, gW: 0, gN: 0, bG: 0, gHid: 0, nW: 0, W0: 0, E0: 0, nE: 0, T: 0, bEng: 0, bHse: 0, H: LAD, ET: 0, bCab: 0, iM: 0, iJ: 0, iK: 0, iN: 0, bT: 0, iT: 0, iC: 0, eIC: -ICC_TH };
 for (let n = 1; n <= NY; n++) TAN['L' + n] = LAD; for (let n = 1; n < NY; n++) TAN['E' + n] = 180 - LAD;
 const yv = n => { const l = P['L' + n], e = n === NY ? null : P['E' + n]; return e ? [[l[0] + DX8, YD(n), 0], [e[0] - DX8, YD(n), 0]] : [[l[0] + DX8, YD(n), 0]]; };
 const ICS = (TS - 2 * DY10) / T10; // straight between the two #10 curves of a 14 ft offset
@@ -7922,16 +7925,17 @@ const SEGDEF = [
   ['MS', 'iM', 'iC'], ['ICL', 'iM', 'iJ', [[IC_X - DX10, DY10, 180 - TH10], [IC_X - DX10 - ICS, TS - DY10, 180 - TH10], [IC_X - 2 * DX10 - ICS, TS, 0]]],
   ['ICI', 'iJ', 'iN', [[IC_JX - DX8, TS + DY8, 180 - LAD], [IC_JX - DX8 - ICS8, 2 * TS - DY8, 180 - LAD], [IC_JX - 2 * DX8 - ICS8, 2 * TS, 0], [IC_NX + 2 * DX8 + ICS8, 2 * TS, 0], [IC_NX + DX8 + ICS8, 2 * TS - DY8, LAD], [IC_NX + DX8, TS + DY8, LAD]]], ['ICK', 'iJ', 'iK'], ['ICO', 'iK', 'iN'],
   // the main north of town and the three customers (appended, so the older indices stay put)
-  ['MNC', 'cS', 'jW'], ['MN0', 'fX', 'cS'], ['MN1', 'fN', 'fX'], ['MN2', 'fS', 'fN'], ['MN3', 'gM', 'fS'], ['MN4', 'nW', 'gM'],
+  ['MNC', 'cS', 'jW'], ['MN0', 'fX', 'cS'], ['MN1', 'fN', 'fX'], ['MN2', 'fS', 'fN'], ['MN3', 'gM', 'fS'], ['MN4', 'nW', 'gN'],
   ['CIC', 'cS', 'bCIC', [[CIC_X - 10, 20, 0]]],
   ['IFS', 'fS', 'bIFS', [[IFS_X - 10, 20, 0]]], ['IRA', 'fN', 'fX', [[IFS_X + 54, -14, 0], [IFS_X + 226.32, -14, 0]]],
-  ['GL', 'gE', 'gM'], ['GLD', 'gW', 'gE'], ['GRA', 'gW', 'gE', [[PG_X - 421, 20, 0], [PG_X + 452, 20, 0]]], ['GT', 'bG', 'gW'],
+  ['GL', 'gE', 'gM', [[P.gM[0] - DX10 - PG_ICS, PG_OFF - DY10, -TH10], [P.gM[0] - DX10, DY10, -TH10]]], ['GLD', 'gW', 'gE'], ['GRA', 'gN', 'gW', [[P.gN[0] + DX10, DY10, TH10], [P.gN[0] + DX10 + PG_ICS, PG_OFF - DY10, TH10]]], ['GT', 'bG', 'gHid'],
   // Yards 5 and 6 (Oct 30), appended
   ['WL5', 'L4', 'L5'], ['WL6', 'L5', 'L6'], ['Y5', 'L5', 'E5', yv(5)], ['Y6', 'L6', 'ET', yv(6)], ['EL5', 'E4', 'E5'], ['EL6', 'E5', 'ET', [[E0X - P.L6[0], P.L6[1], 180 - LAD]]],
   ['ICT', 'iN', 'iT', [[IT_X + IT_LEN, TS, 0], [IT_X + IT_LEN - DX10, TS - DY10, TH10], [IT_X + DX10, DY10, TH10]]],   // IC Tail: Oct 30 stub; Nov 1 curves back onto the main at switch IT
   ['MS2', 'iC', 'nE'], ['ICX', 'iC', 'eIC', ICC_ARC.slice(0, -1)],
   ['ME2', 'iT', 'iM'],   // Nov 1: the main between switch IT and switch IC (ME now ends at IT)   // IC Connection (Oct 30): MS now ends at switch ICC
   ['CB', 'ET', 'bCab'], // Nov 25 (mw59ef138): caboose track, appended so older segment indices stay put
+  ['MN5', 'gN', 'gM'], // Nov 25 (mw59ef143): main between Prairie Grain's two #10 switches; appended so older indices stay put
 ];
 function buildPath(a, b, via) {
   const dirOf = (deg, cx, cy) => { let ux = Math.cos(deg * DEG), uy = Math.sin(deg * DEG); if (ux * cx + uy * cy < 0) { ux = -ux; uy = -uy; } return [ux, uy]; };
@@ -7956,7 +7960,7 @@ const SI = {}; SEG.forEach(s => { SI[s.name] = s.i; });
 const L = (name, end) => ({ seg: SI[name], end });
 const NODES = {
   nW: { type: 'edge', label: 'north to Champaign' }, nE: { type: 'edge', label: 'south to Neoga' }, eIC: { type: 'edge', label: 'onto the ICG main' },
-  bEng: { type: 'bumper' }, bHse: { type: 'bumper' }, bCIC: { type: 'bumper', art: true }, bIFS: { type: 'bumper', art: true }, bG: { type: 'bumper' }, bCab: { type: 'bumper' },
+  bEng: { type: 'bumper' }, bHse: { type: 'bumper' }, bCIC: { type: 'bumper', art: true }, bIFS: { type: 'bumper', art: true }, bCab: { type: 'bumper' },
   jW: { type: 'joint', links: [L('MNC', 'b'), L('MW', 'a')] },
   iK: { type: 'joint', links: [L('ICK', 'b'), L('ICO', 'a')] },
   T: { type: 'joint', links: [L('WLT', 'b'), L('ENG', 'a')] }, ET: { type: 'switch', tag: 'CB', name: 'Caboose track', trunk: L('Y6', 'b'), N: L('EL6', 'b'), R: L('CB', 'a') },
@@ -7984,9 +7988,10 @@ const NODES = {
   fS: { type: 'switch', tag: 'F', name: 'Illini Farm Supply spur', trunk: L('MN3', 'b'), N: L('MN2', 'a'), R: L('IFS', 'a') },
   fN: { type: 'switch', high: false, tag: 'F1', name: 'Farm Supply run-around (north)', trunk: L('MN2', 'b'), N: L('MN1', 'a'), R: L('IRA', 'a') },
   fX: { type: 'switch', high: false, tag: 'F2', name: 'Farm Supply run-around (south)', trunk: L('MN0', 'a'), N: L('MN1', 'b'), R: L('IRA', 'b') },
-  gM: { type: 'switch', tag: 'G', name: 'Prairie Grain lead', trunk: L('MN3', 'a'), N: L('MN4', 'b'), R: L('GL', 'b') },
-  gE: { type: 'switch', tag: 'G2', name: 'Prairie Grain run-around (south)', trunk: L('GL', 'a'), N: L('GLD', 'b'), R: L('GRA', 'b') },
-  gW: { type: 'switch', tag: 'G1', name: 'Prairie Grain run-around (north)', trunk: L('GT', 'b'), N: L('GLD', 'a'), R: L('GRA', 'a') },
+  gN: { type: 'switch', tag: 'G1', name: 'Prairie Grain (north main)', trunk: L('MN4', 'b'), N: L('MN5', 'a'), R: L('GRA', 'a') },
+  gM: { type: 'switch', tag: 'G', name: 'Prairie Grain (south main)', trunk: L('MN3', 'a'), N: L('MN5', 'b'), R: L('GL', 'b') },
+  gE: { type: 'joint', links: [L('GLD', 'b'), L('GL', 'a')] },
+  gW: { type: 'joint', links: [L('GRA', 'b'), L('GLD', 'a')] },
 };
 const SWITCHES = Object.keys(NODES).filter(k => NODES[k].type === 'switch');
 const YARD = {}; for (let n = 1; n <= NY; n++) YARD[n] = SI['Y' + n];
@@ -8554,16 +8559,16 @@ function cabooseRule(c, x0) { if (!c.v) return; const sg = Math.sign(c.v); if (c
 // At the next switch window it's down (BLUE_FLAG.downOdds), or still up until the player taps the building and asks (5-10 game min).
 const BLUE_FLAG = NII_SHARED.BLUE_FLAG; // Nov 4: rules, toasts and penalties shared by every town (shared.js blueFlags)
 // per customer: its track, where the flag stands (ft from the switch end, inside the fouling point), which way is "in", the building to tap,
-// and (Nov 4) its other tracks: a train anywhere on them is "still working the area" (Prairie Grain's run-around and lead), so no flag yet
+// and (Nov 4 / Nov 25) its other tracks: a train anywhere on them is "still working the area" (Prairie Grain's two #10 leads), so no flag yet
 const BF = {
   CIC: { name: 'Central Illinois Corrugated', short: 'CIC', seg: SI.CIC, inDir: 1, dests: ['CIC'], bx: [CIC_X - 10, CIC_X + 490], bh: 45, by: 20, day: d => cicDay(d), near: [] },
   IFS: { name: 'Illini Farm Supply', short: 'Farm Supply', seg: SI.IFS, inDir: 1, dests: ['IFS NH3', 'IFS UAN', 'IFS DOCK'], bx: [IFS_X - 10, IFS_X + 570], bh: 45, by: 20, day: () => true, near: [SI.IRA] },
-  GRAIN: { name: 'Prairie Grain Co.', short: 'Prairie Grain', seg: SI.GLD, inDir: -1, dests: ['GRAIN'], bx: [PG_X - 120, PG_X + 150], bh: 120, by: 34, day: () => true, near: [SI.GRA, SI.GL, SI.GT] },
-  HOUSE: { name: 'the Mattoon freight house', short: 'Freight house', seg: SI.HSE, inDir: 1, dests: ['HOUSE'], bx: [FH.x0 - 10, FH.x1 + 10], bh: 40, by: Y_H + 6, day: () => true, near: [], flagIn: Math.max(20, Math.min(BLUE_FLAG.flagIn, FH.d0 - 10)) },
+  GRAIN: { name: 'Prairie Grain Co.', short: 'Prairie Grain', seg: SI.GLD, inDir: -1, dests: ['GRAIN'], bx: [PG_X - 120, PG_X + 150], bh: 120, by: PG_OFF, day: () => true, near: [SI.GRA, SI.GL] }, // Nov 25 (mw59ef143, Stephen): a flag at each end of the loading track; positions filled in after segClear
+  HOUSE: { name: 'the Mattoon freight house', short: 'Freight house', seg: SI.HSE, inDir: 1, dests: ['HOUSE'], bx: [FH.x0 - 10, FH.x1 + 10], bh: 40, by: Y_H + 6, day: () => true, near: [], flagIn: Math.max(20, FH.d0 + (FH.d1 - FH.d0) / 6 - 25) }, // Nov 25 (mw59ef143, Stephen): just beyond the northernmost of the 3 door spots, 25 ft past it toward the switch
 };
 for (const K in BF) { const z = BF[K], L = SEG[z.seg].len, fi = z.flagIn || BLUE_FLAG.flagIn; z.d = z.inDir > 0 ? fi : L - fi; }
 const bfS = () => { const s = state.bf || (state.bf = {}); for (const K in BF) if (!s[K]) s[K] = { up: false, rm: null, visit: 0, raised: 0, stuck: false }; return s; }; // old saves: new customers added
-const inBF = (K, p) => p.s === BF[K].seg && (p.d - BF[K].d) * BF[K].inDir > 0;
+const inBF = (K, p) => { const z = BF[K]; if (p.s !== z.seg) return false; if (z.ds) return p.d > z.ds[0] && p.d < z.ds[1]; return (p.d - z.d) * z.inDir > 0; };
 const consInBF = (K, c) => !!(c && c.veh.some(id => { const v = V(id); return inBF(K, v.f) || inBF(K, v.r); }));
 // Nov 2 / Nov 4 (Stephen): no flag while the player's train is on the customer's tracks (its own, its run-around, lead or tail) or within
 // BLUE_FLAG.near ft of EITHER end of its track, either direction along the rails; it waits until the train has left the area
@@ -8572,12 +8577,14 @@ const trainNearBF = (K, c) => { if (!c) return false; const z = BF[K], segs = ne
   const nodes = new Set([SEG[z.seg].a, SEG[z.seg].b, ...(z.near || []).flatMap(i => [SEG[i].a, SEG[i].b])]), hit = p => walk(p, BLUE_FLAG.near, 'loose', null, id => nodes.has(id) ? true : undefined) === true;
   return [front(c), rear(c)].some(p => hit(p) || hit(rev(p))); };
 const BFX = NII_SHARED.blueFlags({ defs: BF, S: bfS, onTrack: K => consInBF(K, locoCons()), near: K => trainNearBF(K, locoCons()),
-  carsOn: K => Object.values(state.veh).filter(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r))), day: () => dayNo(), time: () => state.time,
+  carsOn: K => Object.values(state.veh).filter(v => !locoOf(C(v.cid)) && (inBF(K, v.f) || inBF(K, v.r)) && (K !== 'GRAIN' || (v.work && BF.GRAIN.dests.includes(v.dest)))), day: () => dayNo(), time: () => state.time,
   toast: (m, k) => toast(m, k), save: () => save(), seeded: n => seeded(n), sfx: n => sfx(n), penalize: (f, r) => { book('fines', f, { note: 'Penalty' }); state.rep -= r; state.dayBad = true; } });
 // feet before the moving end runs past an UP flag going in (Infinity if none ahead within maxD)
+function bfMarks(z) { return z.ds ? z.ds.map((d, i) => ({ d, inDir: i === 0 ? 1 : -1 })) : [{ d: z.d, inDir: z.inDir }]; } // Nov 25 (mw59ef143, Stephen): Prairie Grain has a mark at each end
 function bfAhead(p, maxD) { let best = { t: Infinity, K: null }; const S = bfS();
-  for (const K in BF) { if (!S[K].up || inBF(K, p)) continue; const z = BF[K], a = routeTo(p, { s: z.seg, d: z.d }, maxD); if (!a) continue;
-    const b = routeTo(p, { s: z.seg, d: z.d + z.inDir }, maxD + 2); if (b && b.t > a.t && a.t < best.t) best = { t: a.t, K }; }
+  for (const K in BF) { if (!S[K].up || inBF(K, p)) continue; const z = BF[K];
+    for (const m of bfMarks(z)) { const a = routeTo(p, { s: z.seg, d: m.d }, maxD); if (!a) continue;
+      const b = routeTo(p, { s: z.seg, d: m.d + m.inDir }, maxD + 2); if (b && b.t > a.t && a.t < best.t) best = { t: a.t, K }; } }
   return best; }
 function bfMove(c, sign) { // after each move: incursion check and the warning
   if (!c.v) return; const lead = sign > 0 ? front(c) : rev(rear(c));
@@ -8585,7 +8592,10 @@ function bfMove(c, sign) { // after each move: incursion check and the warning
     if (BFX.incursion(K, now, was)) { c.v = 0; state.ap = null; state.ctl.notch = 0; return; } }
   const a = bfAhead(lead, BLUE_FLAG.warnFt); if (a.K) { if (live.bfw !== a.K) { live.bfw = a.K; toast(BFX.warnMsg(a.K), 'bad'); } } else live.bfw = null;
 }
-function bfTick() { BFX.tick(); }
+function bfTick() { BFX.tick();
+  const f = bfS().GRAIN; // Nov 25 (mw59ef143, Stephen): through runaround — take the flags down once nothing is being loaded, unless they left them up from the last switch (stuck).
+  if (f && f.up && !f.stuck) { const loading = Object.values(state.veh).some(v => v.work && BF.GRAIN.dests.includes(v.dest) && (inBF('GRAIN', v.f) || inBF('GRAIN', v.r)));
+    if (!loading) { f.up = false; f.rm = null; toast('Prairie Grain Co. took down its blue flags. You can switch them now.', 'good'); save(); } } }
 function bfNewDay(day) { return BFX.newDay(day); }
 function bfRequest(K) { BFX.request(K); }
 function bfPanel(K) { showModal(BFX.panelHtml(K, clockStr)); }
@@ -8636,8 +8646,8 @@ function apStep(c, dt, running) {
 // car, the route may go past it on another track (yard track, main, ladder) and come back in from the other end.
 const { CLEAR, REV_COST, MAX_REV } = NII_SHARED.PLAN; // Nov 4: the planner's rules live in shared.js
 const TRACK_NAME = { MW: 'the main (Champaign side)', MM: 'the main', ME: 'the main (Effingham side)', ME2: 'the main (Effingham side)', WLT: 'the engine lead', ENG: 'the Engine track', HSE: 'the House track', Y1: 'Yard 1', Y2: 'Yard 2', Y3: 'Yard 3', Y4: 'Yard 4', Y5: 'Yard 5', Y6: 'Yard 6', WL5: 'the north ladder', WL6: 'the north ladder', EL5: 'the south ladder', EL6: 'the south ladder', MS: 'the main (south of the ICG switch)', MS2: 'the main (south end)', ICX: 'the ICG Connection', ICL: 'the ICG lead', ICK: 'the ICG lead', ICI: 'ICG Interchange 1', ICO: 'ICG Interchange 2', ICT: 'the ICG Tail',
-  MNC: 'the main (north of town)', MN0: 'the main (north of town)', MN1: 'the main at Illini Farm Supply', MN2: 'the main (north of town)', MN3: 'the main (north of town)', MN4: 'the main (north of Prairie Grain)',
-  CIC: 'the CIC box plant spur', IFS: 'the Farm Supply spur', IRA: 'the Farm Supply run-around', GL: 'the Prairie Grain lead', GLD: 'the Prairie Grain loading track', GRA: 'the Prairie Grain run-around', GT: 'the Prairie Grain tail track', CB: 'the Caboose track' };
+  MNC: 'the main (north of town)', MN0: 'the main (north of town)', MN1: 'the main at Illini Farm Supply', MN2: 'the main (north of town)', MN3: 'the main (north of town)', MN4: 'the main (north of Prairie Grain)', MN5: 'the main at Prairie Grain',
+  CIC: 'the CIC box plant spur', IFS: 'the Farm Supply spur', IRA: 'the Farm Supply run-around', GL: 'the Prairie Grain south lead', GLD: 'the Prairie Grain loading track', GRA: 'the Prairie Grain north lead', CB: 'the Caboose track' };
 const trackName = s => TRACK_NAME[SEG[s].name] || (SEG[s].name[0] === 'W' ? 'the north ladder' : 'the south ladder');
 const swLabel = n => n === 'iC' ? 'ICC (ICG Connection, locked)' : n === 'iM' ? 'IC (ICG lead)' : n === 'iJ' ? 'IO (ICG Interchange 1 / 2)' : /^[LE][0-9]$/.test(n) ? `${NODES[n].tag} ${n[0] === 'L' ? 'north' : 'south'}` : NODES[n].tag;
 const vehName = v => `${TYPES[v.type].name.toLowerCase()} ${v.num}`;
@@ -8921,6 +8931,9 @@ function segClear(s) { if (SEG_CLR[s]) return SEG_CLR[s]; const g = SEG[s]; if (
   const clear = d => { const [x, y] = xy(s, d); for (const p of near) if (Math.hypot(p[0] - x, p[1] - y) < 13) return false; return true; };
   let a = 0; while (a < L && !clear(a)) a += 1; let b = L; while (b > a && !clear(b)) b -= 1;
   return (SEG_CLR[s] = [a, b]); }
+// Nov 25 (mw59ef143, Stephen): Prairie Grain blue flags at both ends of the loading track, just inside each clearance point on the loading-track side (toward G1 north and G south), so they protect the whole track. BLUE_FLAG.near (300 ft) is unchanged: the crew must leave the area before the flags go up, so a runaround is not interrupted mid-move.
+{ const z = BF.GRAIN, c = segClear(z.seg), L = SEG[z.seg].len, pad = 2;
+  z.dN = Math.max(pad, (c ? c[0] : 13) + pad); z.dS = Math.min(L - pad, (c ? c[1] : L - 13) - pad); z.ds = [z.dN, z.dS]; z.d = z.dS; }
 function carWhere(v) {
   const onSeg = (s, d0, d1) => v.f.s === s && v.r.s === s && Math.min(v.f.d, v.r.d) >= d0 - 0.5 && Math.max(v.f.d, v.r.d) <= d1 + 0.5;
   return { spot: k => !!SPOTS[k] && onSeg(SPOTS[k].s, SPOTS[k].d0, SPOTS[k].d1), house: onSeg(FH.s, FH.d0, FH.d1), yard: n => onSeg(YARD[n], 0, SEG[YARD[n]].len), icOut: onSeg(SI.ICO, 0, SEG[SI.ICO].len), icIn: onSeg(SI.ICI, 0, SEG[SI.ICI].len), get icx() { return this.icOut || this.icIn; } }; // Nov 17 (Stephen): icx = on either ICG interchange track (ICI = ICG Interchange 1, ICO = ICG Interchange 2)
@@ -9277,7 +9290,7 @@ function mapSnap() { if (!SNAP_T) SNAP_T = SEG.map(s => flat(s.X.map((x, i) => [
   const cars = Object.values(state.veh).map(v => ({ p: flat(vehPath(v)), c: (TYPES[v.type] || {}).color || '#555' }));
   const R = MAP_YARD, ys = SNAP_T.flatMap(p => p.filter((v, i) => i % 2 && p[i - 1] >= R[0] && p[i - 1] <= R[1])), box = [R[0], Math.min(...ys) - 30, R[1], Math.max(...ys) + 30];
   const names = SEG.map(g => trackName(g.i).replace(/^the /, '')), sws = SWITCHES.map(k => [r1(P[k][0]), r1(P[k][1])]);
-  return { t: Date.now(), fy: 1, box, names, sws, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bCIC', 'bIFS', 'bG', 'bCab'].map(k => [r1(P[k][0]), r1(P[k][1])]),
+  return { t: Date.now(), fy: 1, box, names, sws, tracks: SNAP_T, lined, cars, bump: ['bEng', 'bHse', 'bCIC', 'bIFS', 'bCab'].map(k => [r1(P[k][0]), r1(P[k][1])]),
     blds: [[FH.x0, Y_H + 10, FH.x1, Y_H + 40]], labels: [['Freight house', (FH.x0 + FH.x1) / 2, Y_H + 25, 1], ['House track', P.H[0] + 70, Y_H + 9, 1, 'left'], ['Engine track', P.bEng[0] + 10, Y_E, 1, 'left'], ['Caboose track', (P.ET[0] + P.bCab[0]) / 2, YD(NY) + 9, 1, 'left'], ['ICG Connection', ICC_X + 230, -90, 1, 'left'], ['◀ N to Champaign', MAP_YARD[0] + 10, box[1] + 12, 0, 'left'], ['to Neoga S ▶', MAP_YARD[1] - 10, box[1] + 12, 0, 'right']] }; }
 // cross-town taps (Oct 30): tap a track on another town's tab -> autopilot to the south main end, the travel prompt, then autopilot on from the next town's edge
 let crossAsk = null;
@@ -9313,9 +9326,69 @@ function migrateICC() { // saves from before switch ICC: MS was iM->nE (800 ft);
   const me = SEG[SI.ME].len, fix2 = p => { if (p && p.s === SI.ME && p.d > me) { p.s = SI.ME2; p.d -= me; } };
   for (const v of Object.values(state.veh)) { fix2(v.f); fix2(v.r); }
 }
+function migratePG() { // Nov 25 (mw59ef143): Prairie Grain is a full #10 runaround on the main. Old s,d were measured on the previous geometry, so remap those cars by their old world position.
+  if (!state.sw.gN) state.sw.gN = 'N';
+  if (state.pg143) return;
+  state.pg143 = 1;
+  const oldNW = -8400, oldGM = PG_X + 934, oldGE = PG_X + 633.51, oldGW = PG_X - 602.51, oldBG = PG_X - 720;
+  const oldPath = (function () {
+    const P0 = { gM: [oldGM, 0], gE: [oldGE, 34], gW: [oldGW, 34], bG: [oldBG, 34] }, T0 = { gM: 0, gE: 0, gW: 0, bG: 0 };
+    const dirOf = (deg, cx, cy) => { let ux = Math.cos(deg * DEG), uy = Math.sin(deg * DEG); if (ux * cx + uy * cy < 0) { ux = -ux; uy = -uy; } return [ux, uy]; };
+    const build = (a, b, via) => {
+      const w = [[...P0[a], T0[a]], ...(via || []), [...P0[b], T0[b]]], X = [w[0][0]], Y = [w[0][1]];
+      for (let i = 0; i < w.length - 1; i++) {
+        const [x0, y0, h0] = w[i], [x1, y1, h1] = w[i + 1], cx = x1 - x0, cy = y1 - y0, ch = Math.hypot(cx, cy);
+        const [ax, ay] = dirOf(h0, cx, cy), [bx, by] = dirOf(h1, cx, cy), n = Math.max(2, Math.ceil(ch));
+        for (let k = 1; k <= n; k++) {
+          const t = k / n, t2 = t * t, t3 = t2 * t, h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+          X.push(h00 * x0 + h10 * ch * ax + h01 * x1 + h11 * ch * bx); Y.push(h00 * y0 + h10 * ch * ay + h01 * y1 + h11 * ch * by);
+        }
+      }
+      const D = [0]; for (let i = 1; i < X.length; i++) D.push(D[i - 1] + Math.hypot(X[i] - X[i - 1], Y[i] - Y[i - 1]));
+      return { X, Y, D, len: D[D.length - 1] };
+    };
+    const at = (pa, d) => { const D = pa.D; let lo = 0, hi = D.length - 1; if (d <= 0) return [pa.X[0], pa.Y[0]]; if (d >= D[hi]) return [pa.X[hi], pa.Y[hi]]; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (D[m] <= d) lo = m; else hi = m; } const t = (d - D[lo]) / ((D[hi] - D[lo]) || 1); return [pa.X[lo] + (pa.X[hi] - pa.X[lo]) * t, pa.Y[lo] + (pa.Y[hi] - pa.Y[lo]) * t]; };
+    const GL = build('gE', 'gM'), GRA = build('gW', 'gE', [[PG_X - 421, 20, 0], [PG_X + 452, 20, 0]]);
+    return function (s, d) {
+      if (s === SI.MN4) return [oldNW + d, 0];
+      if (s === SI.MN3) return [oldGM + d, 0];
+      if (s === SI.GLD) return [oldGW + d, 34];
+      if (s === SI.GT) return [oldBG + d, 34];
+      if (s === SI.GL) return at(GL, d);
+      if (s === SI.GRA) return at(GRA, d);
+      return null;
+    };
+  })();
+  const want = [SI.MN4, SI.MN5, SI.MN3, SI.GL, SI.GLD, SI.GRA].filter(s => s != null);
+  const project = (x, y) => {
+    let best = null, bd = 1e9;
+    for (const s of want) {
+      const g = SEG[s], step = Math.max(2, g.len / 400);
+      for (let d = 0; d <= g.len; d += step) {
+        const [px, py] = xy(s, d), dd = Math.hypot(px - x, py - y);
+        if (dd < bd) { bd = dd; best = { s, d, dd }; }
+      }
+    }
+    return best;
+  };
+  const affected = new Set([SI.MN4, SI.MN3, SI.GL, SI.GRA, SI.GT]);
+  for (const v of Object.values(state.veh)) {
+    const ends = [v.f, v.r].filter(p => p && affected.has(p.s));
+    if (!ends.length) continue;
+    const mid = ends.length === 2 ? [(oldPath(ends[0].s, ends[0].d)[0] + oldPath(ends[1].s, ends[1].d)[0]) / 2, (oldPath(ends[0].s, ends[0].d)[1] + oldPath(ends[1].s, ends[1].d)[1]) / 2] : oldPath(ends[0].s, ends[0].d);
+    if (!mid) continue;
+    const hit = project(mid[0], mid[1]);
+    if (!hit) continue;
+    const L = v.L || 50, dir = (v.f && v.r && v.f.d <= v.r.d) ? 1 : -1;
+    const d1 = Math.max(0, Math.min(SEG[hit.s].len, hit.d + dir * L / 2)), d0 = Math.max(0, Math.min(SEG[hit.s].len, hit.d - dir * L / 2));
+    if (v.f) { v.f.s = hit.s; v.f.d = d0; }
+    if (v.r) { v.r.s = hit.s; v.r.d = d1; }
+  }
+  if (state.ap) state.ap = null;
+}
 function load() {
   try { localStorage.removeItem('nii-mattoon-test-v4'); localStorage.removeItem('nii-mattoon-test-v5'); localStorage.removeItem('nii-mattoon-test-v6'); localStorage.removeItem('nii-mattoon-test-v7'); } catch (e) { } // old saves can hold unapproved cars (Day 1 flour car)
-  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; if (window.NII_LEDGER && NII_LEDGER.migrate) NII_LEDGER.migrate(state); migrateICC(); migrateTasks(); try { repairStackedM(); } catch (e) { } trainHome(); try { stripStraysM(); } catch (e) { } return true; } } catch (e) { }
+  try { const s = NII.loadTown('mattoon'); if (s && s.v === 1 && s.veh && s.cons) { state = s; if (window.NII_LEDGER && NII_LEDGER.migrate) NII_LEDGER.migrate(state); migrateICC(); migratePG(); migrateTasks(); try { repairStackedM(); } catch (e) { } trainHome(); try { stripStraysM(); } catch (e) { } return true; } } catch (e) { }
   return false;
 }
 
@@ -9335,7 +9408,7 @@ function resize() {
 }
 const MAP_ALL = [-75, P.iM[0] + 70], MAP_YARD = [-75, P.E0[0] + 70], MAP_IC = [IT_X - 120, P.iM[0] + 90];
 // the customers north of town, west to east (map chips pan to them)
-const MAP_PLACES = [{ go: 'pg', t: 'Prairie Grain', r: [P.bG[0] - 40, P.gM[0] + 40] }, { go: 'ifs', t: 'Farm Supply', r: [P.fS[0] - 40, P.bIFS[0] + 60] }, { go: 'cic', t: 'CIC box plant', r: [P.cS[0] - 40, CIC_X + 500] }];
+const MAP_PLACES = [{ go: 'pg', t: 'Prairie Grain', r: [P.gN[0] - 40, P.gM[0] + 40] }, { go: 'ifs', t: 'Farm Supply', r: [P.fS[0] - 40, P.bIFS[0] + 60] }, { go: 'cic', t: 'CIC box plant', r: [P.cS[0] - 40, CIC_X + 500] }];
 const MAP_GO = { ic: MAP_IC, yard: MAP_YARD, pg: MAP_PLACES[0].r, ifs: MAP_PLACES[1].r, cic: MAP_PLACES[2].r };
 function fit(range) { // range: [x0, x1] for the open map; default = the whole line if it fits legibly, else the yard (IC chip pans south)
   const padR = mapOpen ? 54 : 4, zOf = r => (MW - padR - 6) / (r[1] - r[0]);
@@ -9555,9 +9628,9 @@ function drawMap() {
     }
   }
   // blue flags: a small blue mark at each flag that's up
-  for (const K in BF) if (bfS()[K].up) { const [x, y] = xy(BF[K].seg, BF[K].d), [sx, sy] = w2s(x, y); g.fillStyle = '#1d4fd8'; g.fillRect(sx - 1, sy - 12, 2, 12); g.fillRect(sx + 1, sy - 12, 7, 5); }
+  for (const K in BF) if (bfS()[K].up) for (const m of bfMarks(BF[K])) { const [x, y] = xy(BF[K].seg, m.d), [sx, sy] = w2s(x, y); g.fillStyle = '#1d4fd8'; g.fillRect(sx - 1, sy - 12, 2, 12); g.fillRect(sx + 1, sy - 12, 7, 5); }
   // bumpers
-  for (const k of ['bEng', 'bHse', 'bCIC', 'bIFS', 'bG', 'bCab']) { const [x, y] = P[k]; line([[x, y - 9 / z], [x, y + 9 / z]], 5, '#2b2b2b'); }
+  for (const k of ['bEng', 'bHse', 'bCIC', 'bIFS', 'bCab']) { const [x, y] = P[k]; line([[x, y - 9 / z], [x, y + 9 / z]], 5, '#2b2b2b'); }
   // what the main view is looking at
   { const sF = dsc(view.ys), wx = ix => PV.XC + (ix - PV.XC) / sF; const [a, b] = w2s(wx(view.x - VW / 2 / ZS), -45), [c2, d] = w2s(wx(view.x + VW / 2 / ZS), 228); if (!mapOpen) { g.fillStyle = 'rgba(28,43,80,.10)'; g.fillRect(a, b, c2 - a, d - b); } g.strokeStyle = 'rgba(28,43,80,.45)'; g.lineWidth = 1.5; g.setLineDash(mapOpen ? [5, 4] : []); g.strokeRect(a, b, c2 - a, d - b); g.setLineDash([]); }
   if (!mapOpen) { for (const v of Object.values(state.veh)) { const T = TYPES[v.type]; line(vehPath(v), 5, state.job.car && v.id === state.job.car && !state.job.done ? '#f0c23a' : T.color); } return; }
@@ -9966,7 +10039,7 @@ const RDX = P.iM[0] + 230; // the south road crossing (was at x 1030; moved sout
   SCENERY.push({ key: -10, x0: RDX + 90, x1: RDX + 100, y: -10, draw: g => ylSign(g, RDX + 96, -10) }); // south yard limit: beyond the IC interchange and the road
   SCENERY.push({ key: -24, x0: ICC_X + 130, x1: ICC_X + 150, y: -24, draw: g => icSign(g, ICC_X + 140, -24) }); // BEGIN ILLINOIS CENTRAL, beside the IC Connection a little past switch ICC
   // blue flags (Danny's blue-flag.png @2x, 10.1 px/ft, bottom row = tie top, staff centre 0.6 ft in, flag flies +x): between the rails just inside each customer's switch
-  for (const K in BF) { const [fx, fy] = xy(BF[K].seg, BF[K].d); SCENERY.push({ key: fy - 0.2, x0: fx - 3, x1: fx + 4, y: fy, draw: g => { if (!state.bf || !state.bf[K] || !state.bf[K].up) return; artAt(g, 'blue-flag', fx - 0.6, fy, 10.1) || blueFlag(g, fx, fy); } }); }
+  for (const K in BF) for (const m of bfMarks(BF[K])) { const [fx, fy] = xy(BF[K].seg, m.d); SCENERY.push({ key: fy - 0.2, x0: fx - 3, x1: fx + 4, y: fy, draw: g => { if (!state.bf || !state.bf[K] || !state.bf[K].up) return; artAt(g, 'blue-flag', fx - 0.6, fy, 10.1) || blueFlag(g, fx, fy); } }); }
   // customers north of town: the approved gamescale pictures (5.05 px/ft), registered to their spur's near rail
   const CIC_W = 2445 / 5.05, IFS_W = 2859 / 5.05, IFS_BACK = 6;
   SCENERY.push({ key: 20.6, x0: CIC_X, x1: CIC_X + CIC_W, y: 20, draw: g => bldImg(g, 'cic-back', SI.CIC, artD('CIC', 132.67, 0), 0, 250) });
@@ -10495,7 +10568,7 @@ function drawBumper(g, node) {
   const a = up(near, 4.8), b = up(near, 3.2); g.fillStyle = '#f0c419'; g.fillRect(a[0] - 1.6 * k, a[1], 3.2 * k, (b[1] - a[1]) * 0.45);
 }
 // straight (label-able) stretch of each named track: [y, x from, x to]
-const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Prairie Grain run-around': [20, PG_X - 419, PG_X + 450], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'ICG Interchange 1': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'ICG Interchange 2': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'ICG Tail': [P.bT[1], IT_X + IT_LEN + 10, P.iN[0] - 10], 'ICG Connection': [-40, ICC_X + 200, ICC_X + 320] };
+const LABS = { 'Box plant spur (CIC)': [20, CIC_X - 8, P.bCIC[0]], 'Illini Farm Supply spur': [20, IFS_X - 8, P.bIFS[0]], 'Farm Supply run-around': [-14, IFS_X + 56, IFS_X + 224], 'Prairie Grain loading track': [34, P.gW[0] + 4, P.gE[0] - 4], 'Main line': [0, NW_X, P.nE[0]], ...Object.fromEntries(Array.from({ length: NY }, (_, i) => ['Yard ' + (i + 1), [YD(i + 1), P['L' + (i + 1)][0] + DX8, (i + 1 === NY ? P.ET[0] : P['E' + (i + 1)][0] - DX8)]])), 'House track': [Y_H, P.H[0] + DX8, P.bHse[0]], 'Engine track': [Y_E, P.T[0], P.bEng[0]], 'ICG Interchange 1': [P.bIn[1], P.bIn[0], P.iJ[0] - 230], 'ICG Interchange 2': [P.bOut[1], P.bOut[0] + 140, P.iJ[0]], 'ICG Tail': [P.bT[1], IT_X + IT_LEN + 10, P.iN[0] - 10], 'ICG Connection': [-40, ICC_X + 200, ICC_X + 320] };
 function drawLabels(g) {
   const lab = (t, x, y, sz, col) => { g.font = `700 ${sz}px -apple-system,Segoe UI,Roboto,Arial`; g.textAlign = 'left'; g.textBaseline = 'middle'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.75)'; g.strokeText(t, x, y); g.fillStyle = col; g.fillText(t, x, y); g.textBaseline = 'alphabetic'; };
   const fy = view.ys;
@@ -10540,7 +10613,7 @@ function drawScene(dt) {
   for (const o of SCENERY) { if (!visX(o.x0, o.x1, o.y)) continue; const fr = o.y < ly - 8 && hides(pr(o.x0, o.y)[0], pr(o.x1, o.y)[0]);
     items.push({ key: o.key, f: fr ? g2 => { g2.globalAlpha = 0.3; o.draw(g2); g2.globalAlpha = 1; } : o.draw }); }
   for (const k of SWITCHES) { const [x, y] = standPos(k); if (!visX(x - 3, x + 3, y)) continue; items.push({ key: y, f: g2 => drawStand(g2, k) }); }
-  for (const b of ['bEng', 'bHse', 'bG']) { const [x, y] = P[b]; if (!visX(x - 5, x + 5, y)) continue; items.push({ key: y - 3, f: g2 => drawBumper(g2, b) }); }
+  for (const b of ['bEng', 'bHse']) { const [x, y] = P[b]; if (!visX(x - 5, x + 5, y)) continue; items.push({ key: y - 3, f: g2 => drawBumper(g2, b) }); }
   for (const v of Object.values(state.veh)) { try { // Nov 16 fix: one car that cannot be drawn is skipped, it no longer stops the whole picture (Stephen: Mattoon froze when scrolling)
     const own = v.cid === c.id, q = vehScreen(v); if (Math.max(q.Pl[0], q.Pr[0]) < -20 || Math.min(q.Pl[0], q.Pr[0]) > VW + 20) continue;
     const ghost = !own && q.depth < ly - 10 && hides(q.Pl[0], q.Pr[0]);
@@ -10561,8 +10634,8 @@ function drawScene(dt) {
   if (!job.done && jv) { const q = vehScreen(jv), cx = TR[jv.id] ? TR[jv.id].cx : (q.Pl[0] + q.Pr[0]) / 2, cy = TR[jv.id] ? TR[jv.id].y - 3 : Math.min(q.Pl[1], q.Pr[1]) - 16.5 * q.k - 6;
     if (cx > -10 && cx < VW + 10) { g.globalAlpha = q.depth < ly - 10 && jv.cid !== c.id && hides(q.Pl[0], q.Pr[0]) ? 0.5 : 1; poly(g, [[cx - 9, cy - 14], [cx + 9, cy - 14], [cx, cy]], '#f0c23a', '#6b4e00', 1.5); HIT.ptr = { id: jv.id, x: cx, y: cy - 7 };
       if (q.k > 0.8) { g.font = '700 12px -apple-system,Segoe UI,Roboto,Arial'; g.textAlign = 'center'; g.lineWidth = 3; g.strokeStyle = 'rgba(255,255,255,.85)'; const lx = Math.max(40, Math.min(VW - 96, cx)); g.strokeText('Waybill car', lx, cy - 18); g.fillStyle = '#6b3a12'; g.fillText('Waybill car', lx, cy - 18); } g.globalAlpha = 1; } }
-  // freight house spot markers (only when that's where the car goes)
-  if (!job.done && job.type === 'house') for (const d of [FH.d0, FH.d1]) { const p = pr(...railPt(FH.s, d, -6.5)), t = up(p, 6); g.strokeStyle = '#ea7424'; g.lineWidth = Math.max(2, 0.4 * p[2]); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(t[0], t[1]); g.stroke(); poly(g, [t, [t[0] + 3 * p[2] * (d === FH.d0 ? 1 : -1), t[1] + 1 * p[2]], [t[0], t[1] + 2 * p[2]]], '#ea7424'); }
+  // freight house spot markers (only when that's where the car goes): orange pennants at the two door ends (FH.d0 / FH.d1). Decorative; spotting still uses FH. NII_SHARED.HOUSE_DOOR_FLAGS is the one switch (false = hide everywhere).
+  if (NII_SHARED.HOUSE_DOOR_FLAGS && !job.done && job.type === 'house') for (const d of [FH.d0, FH.d1]) { const p = pr(...railPt(FH.s, d, -6.5)), t = up(p, 6); g.strokeStyle = '#ea7424'; g.lineWidth = Math.max(2, 0.4 * p[2]); g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(t[0], t[1]); g.stroke(); poly(g, [t, [t[0] + 3 * p[2] * (d === FH.d0 ? 1 : -1), t[1] + 1 * p[2]], [t[0], t[1] + 2 * p[2]]], '#ea7424'); }
   drawTapFlash(g);
   if (HOVER && PTR_MOUSE) { const pk = scenePick(HOVER.x, HOVER.y, true); sceneC.style.cursor = pk ? 'pointer' : 'grab';
     if (pk && pk.kind !== 'coupler') drawPickHi(g, pk.kind === 'car' ? { kind: 'car', car: pk.car, hover: true } : pk.kind === 'stand' ? { kind: 'stand', k: pk.k } : { kind: 'track', s: pk.s, d: pk.d, hover: true }, 0.55); }
@@ -11235,7 +11308,7 @@ function frame(t) {
 function fixEnginePG() {
   if (VISIT || !/[?&]fix=engine(&|$)/.test(location.search)) return false;
   const dropUrl = () => { try { const u = new URL(location.href); u.searchParams.delete('fix'); history.replaceState(null, '', u.pathname + (u.search || '') + u.hash); } catch (e) { } };
-  const PG = new Set([SI.GLD, SI.GRA, SI.GL, SI.GT]), onPG = v => PG.has(v.f.s) || PG.has(v.r.s);
+  const PG = new Set([SI.GLD, SI.GRA, SI.GL]), onPG = v => PG.has(v.f.s) || PG.has(v.r.s);
   for (const v of Object.values(state.veh)) { // undo wrongly started Prairie loading even if the engine wasn't coupled
     if (v.dest !== 'GRAIN' || !v.work) continue; if (carWhere(v).spot('GRAIN')) continue; delete v.work; delete v.spotT; delete v.wb; try { waybillOf(v); } catch (e) { } }
   const c = locoCons(); if (!c) { dropUrl(); return false; }
@@ -11251,14 +11324,15 @@ function fixEnginePG() {
     c.veh = keep; keep.forEach(id => { V(id).cid = c.id; });
   }
   c.v = 0; state.ap = null; state.ctl.notch = 0; state.ctl.brake = 1; state.ctl.dir = 0;
-  // park on the Prairie Grain run-around if clear, else on the main north of switch G, clear of other cars and the switch
+  // park on the Prairie Grain loading track if clear, else on the main north of G1 or between the two #10s
   const lenOf = ids => ids.reduce((n, id) => n + V(id).L, 0), need = lenOf(c.veh) + 4;
   const clearOn = (s, d0, d1) => { for (const v of Object.values(state.veh)) { if (c.veh.includes(v.id)) continue; if (v.f.s !== s && v.r.s !== s) continue; const lo = Math.min(v.f.d, v.r.d), hi = Math.max(v.f.d, v.r.d); if (hi >= d0 - 2 && lo <= d1 + 2) return false; } return true; };
   const putAt = (s, dFront, dir) => { let p = { s, d: dFront, dir }; for (const id of c.veh) { const v = V(id); v.f = { ...p }; v.r = retreat(p, v.L); p = { ...v.r }; } };
   let parked = false;
-  if (SEG[SI.GRA] && clearOn(SI.GRA, 40, SEG[SI.GRA].len - 40) && SEG[SI.GRA].len > need + 80) { putAt(SI.GRA, Math.min(SEG[SI.GRA].len - 20, 80 + need), -1); parked = true; }
-  if (!parked) { const s = SI.MN4, L = SEG[s].len; // main north of G toward Champaign; stay ≥80 ft from switch G (end b)
+  if (SEG[SI.GLD] && clearOn(SI.GLD, 40, SEG[SI.GLD].len - 40) && SEG[SI.GLD].len > need + 80) { putAt(SI.GLD, 40 + need, 1); parked = true; }
+  if (!parked) { const s = SI.MN4, L = SEG[s].len; // main north of G1 toward Champaign; stay clear of the north switch (end b)
     for (const dFront of [L - 100, L - 200, L - 300, 200, 400]) { if (dFront < need + 10 || dFront > L - 10) continue; const dR = dFront - need; if (dR < 10) continue; if (!clearOn(s, dR, dFront)) continue; putAt(s, dFront, -1); parked = true; break; } }
+  if (!parked && SI.MN5 != null) { const s = SI.MN5, L = SEG[s].len; for (const dFront of [L / 2 + need / 2, 100 + need, L - 100]) { if (dFront < need + 10 || dFront > L - 10) continue; if (!clearOn(s, dFront - need, dFront)) continue; putAt(s, dFront, 1); parked = true; break; } }
   if (!parked) { const s = SI.MN3, L = SEG[s].len; for (const dFront of [100 + need, 200 + need, L / 2]) { if (dFront > L - 10) continue; if (!clearOn(s, dFront - need, dFront)) continue; putAt(s, dFront, 1); parked = true; break; } }
   reindex(); save(); dropUrl();
   showModal('<h2>Engine moved</h2><p>Engine moved clear of the cars at Prairie Grain. Your cars, money, reputation, time and jobs are unchanged. Spot empties under the elevator spout yourself (the game no longer pulls them).</p><div class="btns"><button data-act="close">OK</button></div>');
@@ -11307,7 +11381,7 @@ function boot() {
   requestAnimationFrame(frame);
 }
 // test hooks
-window.__game = { mapSnap, fixEnginePG, showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
+window.__game = { mapSnap, fixEnginePG, migratePG, showTasks, neogaStatus, cabExempt, icSetOut, endDayM: () => endDay(), BFX, bfTick, inBF, bfAhead, carDest, cicNext, needOf, bfNear: K => trainNearBF(K, locoCons()), BF, segName: i => SEG[i].name, segLen: i => SEG[i].len, segEnds: i => [SEG[i].a, SEG[i].b], icCut, crossStart, get crossGo() { return state.crossGo; },
   get state() { return state; }, myEngineId, setMyEngine, claimEngine, releaseEngine, startJSON: () => START, restart, carTag: id => carTag(V(id)), carLoad: id => carLoad(V(id)), FH_FREIGHT, tagsDrawn: () => TAGS_DRAWN.slice(), get tagsOn() { return tagsOn; }, setTags, SUBDIVS, DEST, SEG, SI, tapTarget, covered: n => !!(COVER[n] && COVER[n].size), planRoute: (car) => planRoute(locoCons(), { car: V(car).cid }), planEnd: (car, end) => { const t0 = performance.now(), r = planRoute(locoCons(), { car: V(car).cid, end: end === 'f' ? 'A' : 'B' }); return { ms: performance.now() - t0, n: r.legs ? r.legs.length : 0, hit: r.hit, msg: r.msg, segs: r.legs && r.legs.map(L => L.segs.map(i => SEG[i].name).join('>')) }; }, bestEnd: car => { const r = planRoute(locoCons(), { car: V(car).cid }); return r.hit === 'A' ? 'f' : r.hit === 'B' ? 'r' : null; }, sideName: (car, end) => sideName(V(car).cid, end === 'f' ? 'A' : 'B'), setMode, NODES, P, FH, PAD, TYPES, MPH,
   pause(p) { paused = p; }, advance(sec) { advanceTime(sec); sceneCam(1); drawMap(); drawScene(0); updateUI(); },
   w2s, xy, locoCons, jobStatus, atPad, scan: (p, d, s) => scan(p, d, s), front, rear, reindex, save, load: () => { load(); reindex(); },
